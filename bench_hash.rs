@@ -1,23 +1,63 @@
+//! # StringWa.rs Hashing Benchmarks
+//!
+//! This file contains benchmarks for various Rust hashing libraries using Criterion.
+//!
+//! The benchmarks compare the performance of different hash functions including:
+//!
+//! - StringZilla (`bytesum`, `hash`, and incremental `hash` variants)
+//! - aHash (both incremental and single-entry variants)
+//! - gxhash (gxhash64)
+//! - Blake3 (default cryptographic hash)
+//! - xxHash (xxh3) through the third-party `xxhash-rust` crate
+//!
+//! ## Environment Variables
+//!
+//! The benchmarks use two environment variables to control the input dataset and mode:
+//!
+//! - `STRINGWARS_DATASET`: Path to the input dataset file.
+//! - `STRINGWARS_MODE`: Specifies how to interpret the input. Allowed values:
+//!   - `lines`: Process the dataset line by line.
+//!   - `words`: Process the dataset word by word.
+//!   - `file`: Process the entire file as a single unit.
+//!
+//! You should also set the `RUSTFLAGS` environment variable to enable the appropriate CPU features.
+//!
+//! ## Usage Examples
+//!
+//! To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
+//!
+//! ```sh
+//! STRINGWARS_MODE=file STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_hash bench_hash --jobs 8
+//! STRINGWARS_MODE=lines STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_hash bench_hash --jobs 8
+//! STRINGWARS_MODE=words STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_hash bench_hash --jobs 8
+//! ```
+//!
+//! ## Notes
+//!
+//! - Ensure your CPU supports the required AES and SSE2 instructions when using `gxhash`.
+//! - The benchmarks aggregate hashing over the dataset for more realistic throughput measurements.
 use std::env;
 use std::fs;
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+
+use ahash::RandomState;
+use blake3;
+use gxhash;
 use std::hash::{BuildHasher, Hasher};
-
-use stringzilla::sz::{checksum as sz_checksum, hash as sz_hash};
-use stringzilla::StringZilla;
-
-use ahash::AHasher;
-use xxhash_rust::const_xxh3::xxh3_64 as const_xxh3;
+use stringzilla::sz::{
+    bytesum as sz_bytesum, //
+    capabilities as sz_capabilities,
+    dynamic_dispatch as sz_dynamic_dispatch,
+    hash as sz_hash,
+    version as sz_version,
+};
 use xxhash_rust::xxh3::xxh3_64;
 
-// Mode: "lines", "words", "file"
-// STRINGWARS_MODE controls how we interpret the input data.
 fn configure_bench() -> Criterion {
     Criterion::default()
-        .sample_size(1000) // Number of iterations per benchmark.
-        .warm_up_time(std::time::Duration::from_secs(10)) // Let CPU frequencies settle.
-        .measurement_time(std::time::Duration::from_secs(120)) // Actual measurement time.
+        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
+        .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
 }
 
 fn bench_hash(c: &mut Criterion) {
@@ -43,68 +83,102 @@ fn bench_hash(c: &mut Criterion) {
         panic!("No data found for hashing in the provided dataset.");
     }
 
-    // Calculate total bytes processed for throughput reporting
+    // Calculate total bytes processed for throughput reporting.
     let total_bytes: usize = units.iter().map(|u| u.len()).sum();
-
     let mut g = c.benchmark_group("hash");
     g.throughput(Throughput::Bytes(total_bytes as u64));
-
     perform_hashing_benchmarks(&mut g, &units);
-
     g.finish();
 }
 
 fn perform_hashing_benchmarks(
-    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     units: &[&str],
 ) {
-    // Benchmark StringZilla checksums
-    let mut index = 0;
-    g.bench_function("stringzilla::checksum", |b| {
+    // Benchmark: StringZilla bytesum
+    group.bench_function("stringzilla::bytesum", |b| {
         b.iter(|| {
-            let unit = units[index];
-            let _hash = sz_checksum(unit.as_bytes());
-            index = (index + 1) % units.len();
+            for unit in units {
+                // Using black_box to prevent compiler optimizations.
+                let _hash = sz_bytesum(black_box(unit.as_bytes()));
+            }
         })
     });
 
-    // Benchmark StringZilla hashing
-    let mut index = 0;
-    g.bench_function("stringzilla::hash", |b| {
+    // Benchmark: StringZilla hash
+    group.bench_function("stringzilla::hash", |b| {
         b.iter(|| {
-            let unit = units[index];
-            let _hash = sz_hash(unit.as_bytes());
-            index = (index + 1) % units.len();
+            for unit in units {
+                let _hash = sz_hash(black_box(unit.as_bytes()));
+            }
         })
     });
 
-    // Benchmark aHash
-    let mut index = 0;
-    let ahash_builder = ahash::RandomState::new();
-    g.bench_function("aHash", |b| {
+    // Benchmark: std::hash::BuildHasher (SipHash)
+    group.bench_function("std::hash::BuildHasher (SipHash)", |b| {
+        let std_builder = std::collections::hash_map::RandomState::new();
         b.iter(|| {
-            let unit = units[index];
-            let mut hasher = ahash_builder.build_hasher();
-            hasher.write(unit.as_bytes());
-            let _hash = hasher.finish();
-            index = (index + 1) % units.len();
+            for unit in units {
+                let mut hasher = std_builder.build_hasher();
+                hasher.write(unit.as_bytes());
+                let _hash = black_box(hasher.finish());
+            }
         })
     });
 
-    // Benchmark xxHash (xxh3)
-    let mut index = 0;
-    g.bench_function("xxh3", |b| {
+    // Benchmark: aHash (hash_one)
+    group.bench_function("aHash (hash_one)", |b| {
+        let hash_builder = RandomState::with_seed(42);
         b.iter(|| {
-            let unit = units[index];
-            let _hash = xxh3_64(unit.as_bytes());
-            index = (index + 1) % units.len();
+            for unit in units {
+                let _hash = black_box(hash_builder.hash_one(unit.as_bytes()));
+            }
+        })
+    });
+
+    // Benchmark: xxHash (xxh3)
+    group.bench_function("xxh3", |b| {
+        b.iter(|| {
+            for unit in units {
+                let _hash = black_box(xxh3_64(unit.as_bytes()));
+            }
+        })
+    });
+
+    // Benchmark: Blake3
+    group.bench_function("blake3", |b| {
+        b.iter(|| {
+            for unit in units {
+                let _hash = black_box(blake3::hash(unit.as_bytes()));
+            }
+        })
+    });
+
+    // Benchmark: gxhash
+    group.bench_function("gxhash", |b| {
+        b.iter(|| {
+            for unit in units {
+                let _hash = black_box(gxhash::gxhash64(unit.as_bytes(), 42));
+            }
         })
     });
 }
 
-criterion_group! {
-    name = bench_hash_group;
-    config = configure_bench();
-    targets = bench_hash
+fn main() {
+    // Log the library version info before running benchmarks.
+    let sz_v = sz_version();
+    println!(
+        "StringZilla version: {}.{}.{}",
+        sz_v.major, sz_v.minor, sz_v.patch
+    );
+    println!(
+        "StringZilla uses dynamic dispatch: {}",
+        sz_dynamic_dispatch()
+    );
+    println!("StringZilla capabilities: {}", sz_capabilities().as_str());
+
+    // Create a Criterion instance using any desired configuration.
+    let mut criterion = Criterion::default().configure_from_args();
+    bench_hash(&mut criterion);
+    criterion.final_summary();
 }
-criterion_main!(bench_hash_group);

@@ -1,5 +1,7 @@
 {
   "cSpell.words": [
+    "ahash",
+    "bytesum",
     "memchr",
     "memmem",
     "rapidfuzz",

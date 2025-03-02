@@ -13,7 +13,7 @@ stringzilla = { path = "../StringZilla-dev" }
 [features]
 bench_find = ["memchr"]
 bench_levenshtein = ["rapidfuzz"]
-bench_hash = ["ahash", "xxhash-rust"]
+bench_hash = ["ahash", "xxhash-rust", "blake3", "gxhash"]
 
 [dependencies.memchr]
 version = "2.7.1"
@@ -22,6 +22,14 @@ optional = true
 
 [dependencies.rapidfuzz]
 version = "0.5.0"
+optional = true
+
+[dependencies.blake3]
+version = "1.6.1"
+optional = true
+
+[dependencies.gxhash]
+version = "3.4.1"
 optional = true
 
 [dependencies.ahash]
