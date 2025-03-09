@@ -22,9 +22,9 @@
 //!
 use std::env;
 use std::fs;
+use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-
+use criterion::{black_box, Criterion, Throughput};
 use memchr::memmem;
 use stringzilla::sz::{
     capabilities as sz_capabilities, //
@@ -48,8 +48,8 @@ fn log_stringzilla_metadata() {
 fn configure_bench() -> Criterion {
     Criterion::default()
         .sample_size(1000) // Test this many needles.
-        .warm_up_time(std::time::Duration::from_secs(10)) // Let the CPU frequencies settle.
-        .measurement_time(std::time::Duration::from_secs(120)) // Actual measurement time.
+        .warm_up_time(Duration::from_secs(10)) // Let the CPU frequencies settle.
+        .measurement_time(Duration::from_secs(120)) // Actual measurement time.
 }
 
 fn bench_find(c: &mut Criterion) {
