@@ -85,31 +85,29 @@ fn perform_forward_benchmarks(
     needles: &[&str],
     haystack: &[u8],
 ) {
-    // Benchmark for StringZilla forward search
-    let mut token_index: usize = 0;
+    // Benchmark for StringZilla forward search using a cycle iterator.
+    let mut tokens = needles.iter().cycle();
     g.bench_function("stringzilla::find", |b| {
         b.iter(|| {
-            let token = needles[token_index];
-            let token_bytes = token.as_bytes();
+            let token = black_box(*tokens.next().unwrap());
+            let token_bytes = black_box(token.as_bytes());
             let mut pos: usize = 0;
-            while let Some(found) = (&haystack[pos..]).sz_find(token_bytes) {
+            while let Some(found) = sz::find(&haystack[pos..], token_bytes) {
                 pos += found + token_bytes.len();
             }
-            token_index = (token_index + 1) % needles.len();
         })
     });
 
-    // Benchmark for memchr (forward search)
-    let mut token_index: usize = 0; // Reset token index for the next benchmark
+    // Benchmark for memmem forward search using a cycle iterator.
+    let mut tokens = needles.iter().cycle();
     g.bench_function("memmem::find", |b| {
         b.iter(|| {
-            let token = needles[token_index];
-            let token_bytes = token.as_bytes();
+            let token = black_box(*tokens.next().unwrap());
+            let token_bytes = black_box(token.as_bytes());
             let mut pos: usize = 0;
             while let Some(found) = memmem::find(&haystack[pos..], token_bytes) {
                 pos += found + token_bytes.len();
             }
-            token_index = (token_index + 1) % needles.len();
         })
     });
 }
@@ -119,39 +117,37 @@ fn perform_reverse_benchmarks(
     needles: &[&str],
     haystack: &[u8],
 ) {
-    // Benchmark for StringZilla reverse search
-    let mut token_index: usize = 0;
+    // Benchmark for StringZilla reverse search using a cycle iterator.
+    let mut tokens = needles.iter().cycle();
     g.bench_function("stringzilla::rfind", |b| {
         b.iter(|| {
-            let token = needles[token_index];
-            let token_bytes = token.as_bytes();
+            let token = black_box(*tokens.next().unwrap());
+            let token_bytes = black_box(token.as_bytes());
             let mut pos: Option<usize> = Some(haystack.len());
             while let Some(end) = pos {
-                if let Some(found) = (&haystack[..end]).sz_rfind(token_bytes) {
-                    pos = Some(found); // Update position to the start of the found token for the next search.
+                if let Some(found) = sz::rfind(&haystack[..end], token_bytes) {
+                    pos = Some(found);
                 } else {
-                    break; // No more occurrences found.
+                    break;
                 }
             }
-            token_index = (token_index + 1) % needles.len();
         })
     });
 
-    // Benchmark for memchr reverse search
-    let mut token_index: usize = 0;
+    // Benchmark for memmem reverse search using a cycle iterator.
+    let mut tokens = needles.iter().cycle();
     g.bench_function("memmem::rfind", |b| {
         b.iter(|| {
-            let token = needles[token_index];
-            let token_bytes = token.as_bytes();
+            let token = black_box(*tokens.next().unwrap());
+            let token_bytes = black_box(token.as_bytes());
             let mut pos: Option<usize> = Some(haystack.len());
             while let Some(end) = pos {
                 if let Some(found) = memmem::rfind(&haystack[..end], token_bytes) {
-                    pos = Some(found); // Update position to the start of the found token for the next search.
+                    pos = Some(found);
                 } else {
-                    break; // No more occurrences found.
+                    break;
                 }
             }
-            token_index = (token_index + 1) % needles.len();
         })
     });
 }
