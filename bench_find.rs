@@ -1,3 +1,25 @@
+//! # StringWa.rs Search Benchmarks
+//!
+//! This file benchmarks the forward and reverse search functionality provided by
+//! the StringZilla library and the memchr crate. The benchmarks read an input file
+//! (specified by the `STRINGWARS_DATASET` environment variable), tokenize its contents
+//! by whitespace into search needles, and then run forward and reverse search benchmarks.
+//!
+//! ## Usage
+//!
+//! Set the environment variable `STRINGWARS_DATASET` to the path of your input file.
+//! Then run the benchmarks with:
+//!
+//! ```sh
+//! STRINGWARS_DATASET=<path_to_dataset> cargo bench --features bench_search
+//! ```
+//!
+//! ## Library Metadata
+//!
+//! Before running the benchmarks, this binary logs the StringZilla metadata (version,
+//! dynamic dispatch status, and capabilities) so that you can verify that the library
+//! is configured correctly for your CPU.
+//!
 use std::env;
 use std::fs;
 
