@@ -26,7 +26,24 @@ use std::fs;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
 use memchr::memmem;
-use stringzilla::StringZilla;
+use stringzilla::sz::{
+    capabilities as sz_capabilities, //
+    dynamic_dispatch as sz_dynamic_dispatch,
+    version as sz_version,
+};
+
+fn log_stringzilla_metadata() {
+    let sz_v = sz_version();
+    println!(
+        "StringZilla version: {}.{}.{}",
+        sz_v.major, sz_v.minor, sz_v.patch
+    );
+    println!(
+        "StringZilla uses dynamic dispatch: {}",
+        sz_dynamic_dispatch()
+    );
+    println!("StringZilla capabilities: {}", sz_capabilities().as_str());
+}
 
 fn configure_bench() -> Criterion {
     Criterion::default()
@@ -139,9 +156,9 @@ fn perform_reverse_benchmarks(
     });
 }
 
-criterion_group! {
-    name = bench_find_group;
-    config = configure_bench();
-    targets = bench_find
+fn main() {
+    log_stringzilla_metadata();
+    let mut criterion = configure_bench();
+    bench_find(&mut criterion);
+    criterion.final_summary();
 }
-criterion_main!(bench_find_group);
