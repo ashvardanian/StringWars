@@ -63,7 +63,7 @@ fn log_stringzilla_metadata() {
 
 fn configure_bench() -> Criterion {
     Criterion::default()
-        .sample_size(1000) // Test this many needles.
+        .sample_size(10) // Each loop scans the whole dataset.
         .warm_up_time(Duration::from_secs(10)) // Let the CPU frequencies settle.
         .measurement_time(Duration::from_secs(120)) // Actual measurement time.
 }
@@ -221,78 +221,77 @@ fn bench_byteset_forward(
     const BYTES_DIGITS: &[u8] = b"0123456789";
 
     // Benchmark for StringZilla forward search using a cycle iterator.
-    let mut tokens = needles.iter().cycle();
     let sz_tabs = Byteset::from(BYTES_TABS);
     let sz_html = Byteset::from(BYTES_HTML);
     let sz_digits = Byteset::from(BYTES_DIGITS);
     g.bench_function("sz::find_byteset", |b| {
         b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let token_bytes = black_box(token.as_bytes());
-            let mut pos: usize = 0;
-            while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_tabs) {
-                pos += found + 1;
-            }
-            pos = 0;
-            while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_html) {
-                pos += found + 1;
-            }
-            pos = 0;
-            while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_digits) {
-                pos += found + 1;
+            for token in needles.iter() {
+                let token_bytes = black_box(token.as_bytes());
+                let mut pos: usize = 0;
+                while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_tabs) {
+                    pos += found + 1;
+                }
+                pos = 0;
+                while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_html) {
+                    pos += found + 1;
+                }
+                pos = 0;
+                while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_digits) {
+                    pos += found + 1;
+                }
             }
         })
     });
 
     // Benchmark for bstr's byteset search.
-    let mut tokens = needles.iter().cycle();
     g.bench_function("bstr::iter", |b| {
         b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let token_bytes = black_box(token.as_bytes());
-            let mut pos: usize = 0;
-            // Inline search for `BYTES_TABS`.
-            while let Some(found) = token_bytes[pos..]
-                .iter()
-                .position(|&c| BYTES_TABS.contains(&c))
-            {
-                pos += found + 1;
-            }
-            pos = 0;
-            // Inline search for `BYTES_HTML`.
-            while let Some(found) = token_bytes[pos..]
-                .iter()
-                .position(|&c| BYTES_HTML.contains(&c))
-            {
-                pos += found + 1;
-            }
-            pos = 0;
-            // Inline search for `BYTES_DIGITS`.
-            while let Some(found) = token_bytes[pos..]
-                .iter()
-                .position(|&c| BYTES_DIGITS.contains(&c))
-            {
-                pos += found + 1;
+            for token in needles.iter() {
+                let token_bytes = black_box(token.as_bytes());
+                let mut pos: usize = 0;
+                // Inline search for `BYTES_TABS`.
+                while let Some(found) = token_bytes[pos..]
+                    .iter()
+                    .position(|&c| BYTES_TABS.contains(&c))
+                {
+                    pos += found + 1;
+                }
+                pos = 0;
+                // Inline search for `BYTES_HTML`.
+                while let Some(found) = token_bytes[pos..]
+                    .iter()
+                    .position(|&c| BYTES_HTML.contains(&c))
+                {
+                    pos += found + 1;
+                }
+                pos = 0;
+                // Inline search for `BYTES_DIGITS`.
+                while let Some(found) = token_bytes[pos..]
+                    .iter()
+                    .position(|&c| BYTES_DIGITS.contains(&c))
+                {
+                    pos += found + 1;
+                }
             }
         })
     });
 
     // Benchmark for Regex-based byteset search.
-    let mut tokens = needles.iter().cycle();
     let re_tabs = Regex::new("[\n\r\x0B\x0C]").unwrap();
     let re_html = Regex::new("[</>&'\"=\\[\\]]").unwrap();
     let re_digits = Regex::new("[0-9]").unwrap();
     g.bench_function("regex::find_iter", |b| {
         b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            black_box(re_tabs.find_iter(token.as_bytes()).count());
-            black_box(re_html.find_iter(token.as_bytes()).count());
-            black_box(re_digits.find_iter(token.as_bytes()).count());
+            for token in needles.iter() {
+                black_box(re_tabs.find_iter(token.as_bytes()).count());
+                black_box(re_html.find_iter(token.as_bytes()).count());
+                black_box(re_digits.find_iter(token.as_bytes()).count());
+            }
         })
     });
 
     // Benchmark for Aho–Corasick-based byteset search.
-    let mut tokens: std::iter::Cycle<std::slice::Iter<'_, &str>> = needles.iter().cycle();
     let ac_tabs = AhoCorasick::new(
         &BYTES_TABS
             .iter()
@@ -316,10 +315,11 @@ fn bench_byteset_forward(
     .expect("failed to create AhoCorasick FSA");
     g.bench_function("aho_corasick::find_iter", |b| {
         b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            black_box(ac_tabs.find_iter(token).count());
-            black_box(ac_html.find_iter(token).count());
-            black_box(ac_digits.find_iter(token).count());
+            for token in needles.iter() {
+                black_box(ac_tabs.find_iter(token).count());
+                black_box(ac_html.find_iter(token).count());
+                black_box(ac_digits.find_iter(token).count());
+            }
         })
     });
 }
