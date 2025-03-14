@@ -90,17 +90,17 @@ fn bench_hash(c: &mut Criterion) {
 
     // Calculate total bytes processed for throughput reporting.
     let total_bytes: usize = units.iter().map(|u| u.len()).sum();
-    let mut g = c.benchmark_group("hash");
+    let mut g = c.benchmark_group("stateless");
     g.throughput(Throughput::Bytes(total_bytes as u64));
-    perform_hashing_benchmarks(&mut g, &units);
+    stateless_benchmarks(&mut g, &units);
     g.finish();
 }
 
-fn perform_hashing_benchmarks(
+fn stateless_benchmarks(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     units: &[&str],
 ) {
-    // Benchmark: StringZilla bytesum
+    // Benchmark: StringZilla `bytesum`
     group.bench_function("stringzilla::bytesum", |b| {
         b.iter(|| {
             for unit in units {
@@ -110,7 +110,7 @@ fn perform_hashing_benchmarks(
         })
     });
 
-    // Benchmark: StringZilla hash
+    // Benchmark: StringZilla `hash`
     group.bench_function("stringzilla::hash", |b| {
         b.iter(|| {
             for unit in units {
@@ -119,8 +119,8 @@ fn perform_hashing_benchmarks(
         })
     });
 
-    // Benchmark: std::hash::BuildHasher (SipHash)
-    group.bench_function("std::hash::BuildHasher (SipHash)", |b| {
+    // Benchmark: SipHash via `std::hash::BuildHasher`
+    group.bench_function("std::hash::BuildHasher", |b| {
         let std_builder = std::collections::hash_map::RandomState::new();
         b.iter(|| {
             for unit in units {
@@ -131,8 +131,8 @@ fn perform_hashing_benchmarks(
         })
     });
 
-    // Benchmark: aHash (hash_one)
-    group.bench_function("aHash (hash_one)", |b| {
+    // Benchmark: aHash (`hash_one`)
+    group.bench_function("aHash::hash_one", |b| {
         let hash_builder = RandomState::with_seed(42);
         b.iter(|| {
             for unit in units {
@@ -141,8 +141,8 @@ fn perform_hashing_benchmarks(
         })
     });
 
-    // Benchmark: xxHash (xxh3)
-    group.bench_function("xxh3", |b| {
+    // Benchmark: xxHash (`xxh3`)
+    group.bench_function("xxh3::xxh3_64", |b| {
         b.iter(|| {
             for unit in units {
                 let _hash = black_box(xxh3_64(unit.as_bytes()));
@@ -151,7 +151,7 @@ fn perform_hashing_benchmarks(
     });
 
     // Benchmark: gxhash
-    group.bench_function("gxhash", |b| {
+    group.bench_function("gxhash::gxhash64", |b| {
         b.iter(|| {
             for unit in units {
                 let _hash = black_box(gxhash::gxhash64(unit.as_bytes(), 42));
