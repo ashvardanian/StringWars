@@ -1,11 +1,11 @@
-//! # StringWa.rs: String Sorting Benchmarks
+//! # StringWa.rs: String Sequence Operations Benchmarks
 //!
 //! This file benchmarks various libraries for processing string-identifiable collections.
 //! Including sorting arrays of strings:
 //!
-//! - `sz::sort` from the StringZilla library
-//! - The standard library’s `sort_unstable`
-//! - Rayon’s parallel sort (`par_sort_unstable`)
+//! - StringZilla's `sz::argsort_permutation`
+//! - The standard library's `sort_unstable`
+//! - Rayon's parallel `par_sort_unstable`
 //!
 //! Intersecting string collections, similar to "STRICT INNER JOIN" in SQL databases.
 //!
@@ -21,19 +21,48 @@
 //! To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
 //!
 //! ```sh
-//! STRINGWARS_TOKENS=lines STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_sort bench_sort --jobs 8
-//! STRINGWARS_TOKENS=words STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_sort bench_sort --jobs 8
+//! RUSTFLAGS="-C target-cpu=native" \
+//!     RAYON_NUM_THREADS=1 \
+//!     STRINGWARS_DATASET=README.md \
+//!     STRINGWARS_TOKENS=lines \
+//!     cargo criterion --features bench_sequence bench_sequence --jobs 8
 //! ```
 
 use std::env;
 use std::fs;
+use std::sync::Arc;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode};
+
+use arrow::array::{ArrayRef, StringArray, UInt32Array};
+use arrow::compute::{lexsort_to_indices, SortColumn, SortOptions};
+use arrow::error::Result;
 use rayon::prelude::*;
+use stringzilla::sz::{
+    argsort_permutation as sz_argsort_permutation,
+    argsort_permutation_by as sz_argsort_permutation_by,
+};
 
-// Import the specialized sort from StringZilla. It is assumed that `sz::sort`
-// sorts a mutable slice of `String` in place.
-use stringzilla::sz::sort as sz_sort;
+use stringzilla::sz::{
+    // Pull some metadata logging functionality
+    capabilities as sz_capabilities,
+    dynamic_dispatch as sz_dynamic_dispatch,
+    version as sz_version,
+};
+
+fn log_stringzilla_metadata() {
+    let v = sz_version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz_dynamic_dispatch());
+    println!("- capabilities: {}", sz_capabilities().as_str());
+}
+
+fn configure_bench() -> Criterion {
+    Criterion::default()
+        .sample_size(10) // Each loop processes the whole dataset.
+        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
+        .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
+}
 
 fn load_data() -> Vec<String> {
     let dataset_path =
@@ -55,48 +84,78 @@ fn load_data() -> Vec<String> {
     data
 }
 
-fn bench_sort(c: &mut Criterion) {
+fn bench_argsort(c: &mut Criterion) {
     // Load the dataset once; each benchmark iteration will clone this unsorted data.
     let unsorted = load_data();
-
     if unsorted.is_empty() {
         panic!("No data found in dataset for sorting benchmark.");
     }
 
     let mut group = c.benchmark_group("sorting");
+    //? We have a very long benchmark, flat sampling is what we need.
+    //? https://bheisler.github.io/criterion.rs/book/user_guide/advanced_configuration.html#sampling-mode
+    group.sampling_mode(SamplingMode::Flat);
+    //? For comparison-based sorting algorithms, we can report throughput in terms of comparisons,
+    //? which is proportional to the number of elements in the array multiplied by the logarithm of
+    //? the number of elements.
+    let throughput = unsorted.len() as f64 * (unsorted.len() as f64).log2();
+    group.throughput(criterion::Throughput::Elements(throughput as u64));
 
-    // Benchmark: Specialized sort from StringZilla.
-    group.bench_function("sz::sort", |b| {
+    // Benchmark: StringZilla's argsort
+    group.bench_function("sz::argsort_permutation", |b| {
         b.iter(|| {
-            // Clone to ensure each sort works on an unsorted vector.
-            let mut data = unsorted.clone();
-            // Perform the specialized sort.
-            sz_sort(black_box(&mut data));
-            black_box(&data);
+            let mut indices: Vec<usize> = (0..unsorted.len()).collect();
+            match sz_argsort_permutation(&unsorted, &mut indices) {
+                Ok(_) => black_box(&indices),
+                Err(e) => panic!("StringZilla argsort failed: {:?}", e),
+            }
         })
     });
 
-    // Benchmark: Standard library sort_unstable.
-    group.bench_function("std::sort_unstable", |b| {
+    // Benchmark: Apache Arrow's `lexsort_to_indices`
+    // https://arrow.apache.org/rust/arrow/compute/fn.lexsort.html
+    // https://arrow.apache.org/rust/arrow/compute/fn.lexsort_to_indices.html
+    let array = Arc::new(StringArray::from(unsorted.clone())) as ArrayRef;
+    group.bench_function("arrow::lexsort_to_indices", |b| {
         b.iter(|| {
-            let mut data = unsorted.clone();
-            data.sort_unstable();
-            black_box(&data);
+            let column_to_sort = SortColumn {
+                values: array.clone(),
+                options: Some(SortOptions {
+                    descending: false,
+                    nulls_first: true,
+                }),
+            };
+            match lexsort_to_indices(&[column_to_sort], None) {
+                Ok(indices) => black_box(&indices),
+                Err(e) => panic!("Arrow lexsort failed: {:?}", e),
+            }
         })
     });
 
-    // Benchmark: Rayon parallel sort_unstable.
-    group.bench_function("rayon::par_sort_unstable", |b| {
+    // Benchmark: Standard library argsort using `sort_unstable_by_key`
+    group.bench_function("std::sort_unstable_by_key", |b| {
         b.iter(|| {
-            let mut data = unsorted.clone();
-            // Parallel sort requires the `rayon` crate and the ParallelSliceMut trait.
-            data.par_sort_unstable();
-            black_box(&data);
+            let mut indices: Vec<usize> = (0..unsorted.len()).collect();
+            indices.sort_unstable_by_key(|&i| &unsorted[i]);
+            black_box(&indices);
+        })
+    });
+
+    // Benchmark: Parallel argsort using Rayon
+    group.bench_function("rayon::par_sort_unstable_by_key", |b| {
+        b.iter(|| {
+            let mut indices: Vec<usize> = (0..unsorted.len()).collect();
+            indices.par_sort_unstable_by_key(|&i| &unsorted[i]);
+            black_box(&indices);
         })
     });
 
     group.finish();
 }
 
-criterion_group!(benches, bench_sort);
-criterion_main!(benches);
+fn main() {
+    log_stringzilla_metadata();
+    let mut criterion = configure_bench();
+    bench_argsort(&mut criterion);
+    criterion.final_summary();
+}

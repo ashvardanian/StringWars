@@ -85,3 +85,9 @@ name = "bench_hash"
 path = "bench_hash.rs"
 harness = false
 required-features = ["bench_hash"]
+
+[[bench]]
+name = "bench_sequence"
+path = "bench_sequence.rs"
+harness = false
+required-features = ["bench_sequence"]
