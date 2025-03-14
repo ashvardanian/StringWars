@@ -18,6 +18,31 @@ So, to accelerate the development of the [`stringzilla`](https://github.com/ashv
 Of course, the functionality of the projects is different, as are the APIs and the usage patterns.
 So, I focus on the workloads for which StringZilla was designed and compare the throughput of the core operations.
 
+## String Hashing Benchmarks
+
+Many great hashing libraries exist in Rust, C, and C++.
+Typical top choices are `aHash`, `xxHash`, `blake3`, `gxhash`, `CityHash`, `MurmurHash`, or the native `std::hash`.
+Many of them have similar pitfalls:
+
+- They are not always documented to have a certain reproducible output and are recommended for use only for local in-memory construction of hash tables, not for serialization or network communication.
+- They don't always support streaming and require the whole input to be available in memory at once.
+- They rarely benefit from predicated SIMD instructions on modern hardware like AVX-512 on x86 or SVE on Arm.
+- They don't always pass the SMHasher test suite, especially with `--extra` checks enabled.
+
+StringZilla addresses those issues and seems to provide competitive performance.
+On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
+
+| Benchmark              |       Lines |      Words |
+| ---------------------- | ----------: | ---------: |
+| `std::hash` (SipHash)  |  3.74 GiB/s | 0.43 GiB/s |
+| `stringzilla::bytesum` | 11.65 GiB/s | 2.16 GiB/s |
+| `stringzilla::hash`    | 11.23 GiB/s | 1.84 GiB/s |
+| `aHash::hash_one`      |  8.61 GiB/s | 1.23 GiB/s |
+| `xxh3`                 |  9.48 GiB/s | 1.08 GiB/s |
+| `blake3`               |  1.97 GiB/s |  N/A GiB/s |
+| `gxhash`               | 10.81 GiB/s |  N/A GiB/s |
+
+
 ## Substring Search Benchmarks 
 
 Substring search is one of the most common operations in text processing, and one of the slowest.
