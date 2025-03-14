@@ -1,48 +1,48 @@
-//! # StringWa.rs Search Benchmarks
+//! # StringWa.rs: Substring Search Benchmarks
 //!
-//! This file benchmarks the forward and reverse search functionality provided by
-//! the StringZilla library and the memchr crate. The benchmarks read an input file
-//! (specified by the `STRINGWARS_DATASET` environment variable), tokenize its contents
-//! by whitespace into search needles, and then run forward and reverse search benchmarks.
+//! This file benchmarks the forward and reverse exact substring search functionality provided by
+//! the StringZilla library and the memchr crate. The input file is treated as a haystack and all
+//! of its tokens as needles. The throughput numbers are reported in Gigabytes per Second and for
+//! any sampled token - all of its inclusions in a string are located.
 //!
-//! ## Usage
+//! ## Usage Examples
 //!
-//! Set the environment variable `STRINGWARS_DATASET` to the path of your input file.
-//! Then run the benchmarks with:
+//! The benchmarks use two environment variables to control the input dataset and mode:
+//!
+//! - `STRINGWARS_DATASET`: Path to the input dataset file.
+//! - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
+//!   - `lines`: Process the dataset line by line.
+//!   - `words`: Process the dataset word by word.
+//!
+//! To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
 //!
 //! ```sh
-//! STRINGWARS_DATASET=<path_to_dataset> cargo bench --features bench_search
+//! RUSTFLAGS="-C target-cpu=native" \
+//!     STRINGWARS_DATASET=README.md \
+//!     STRINGWARS_TOKENS=lines \
+//!     cargo criterion --features bench_find bench_find --jobs 8
 //! ```
-//!
-//! ## Library Metadata
-//!
-//! Before running the benchmarks, this binary logs the StringZilla metadata (version,
-//! dynamic dispatch status, and capabilities) so that you can verify that the library
-//! is configured correctly for your CPU.
-//!
 use std::env;
 use std::fs;
 use std::time::Duration;
 
 use criterion::{black_box, Criterion, Throughput};
+
 use memchr::memmem;
+use stringzilla::sz::{find as sz_find, rfind as sz_rfind};
+
 use stringzilla::sz::{
-    capabilities as sz_capabilities, //
+    // Pull some metadata logging functionality
+    capabilities as sz_capabilities,
     dynamic_dispatch as sz_dynamic_dispatch,
     version as sz_version,
 };
 
 fn log_stringzilla_metadata() {
-    let sz_v = sz_version();
-    println!(
-        "StringZilla version: {}.{}.{}",
-        sz_v.major, sz_v.minor, sz_v.patch
-    );
-    println!(
-        "StringZilla uses dynamic dispatch: {}",
-        sz_dynamic_dispatch()
-    );
-    println!("StringZilla capabilities: {}", sz_capabilities().as_str());
+    let v = sz_version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz_dynamic_dispatch());
+    println!("- capabilities: {}", sz_capabilities().as_str());
 }
 
 fn configure_bench() -> Criterion {
@@ -56,10 +56,19 @@ fn bench_find(c: &mut Criterion) {
     // Get the haystack path from the environment variable.
     let dataset_path =
         env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
+    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
     let haystack_content = fs::read_to_string(&dataset_path).expect("Could not read haystack");
 
-    // Tokenize the haystack content by white space.
-    let needles: Vec<&str> = haystack_content.split_whitespace().collect();
+    // Tokenize the haystack content by white space or lines.
+    let needles: Vec<&str> = match mode.as_str() {
+        "lines" => haystack_content.lines().collect(),
+        "words" => haystack_content.split_whitespace().collect(),
+        other => panic!(
+            "Unknown STRINGWARS_TOKENS: {}. Use 'lines' or 'words'.",
+            other
+        ),
+    };
+
     if needles.is_empty() {
         panic!("No tokens found in the haystack.");
     }
@@ -87,12 +96,12 @@ fn perform_forward_benchmarks(
 ) {
     // Benchmark for StringZilla forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("stringzilla::find", |b| {
+    g.bench_function("sz::find", |b| {
         b.iter(|| {
             let token = black_box(*tokens.next().unwrap());
             let token_bytes = black_box(token.as_bytes());
             let mut pos: usize = 0;
-            while let Some(found) = sz::find(&haystack[pos..], token_bytes) {
+            while let Some(found) = sz_find(&haystack[pos..], token_bytes) {
                 pos += found + token_bytes.len();
             }
         })
@@ -119,13 +128,13 @@ fn perform_reverse_benchmarks(
 ) {
     // Benchmark for StringZilla reverse search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("stringzilla::rfind", |b| {
+    g.bench_function("sz::rfind", |b| {
         b.iter(|| {
             let token = black_box(*tokens.next().unwrap());
             let token_bytes = black_box(token.as_bytes());
             let mut pos: Option<usize> = Some(haystack.len());
             while let Some(end) = pos {
-                if let Some(found) = sz::rfind(&haystack[..end], token_bytes) {
+                if let Some(found) = sz_rfind(&haystack[..end], token_bytes) {
                     pos = Some(found);
                 } else {
                     break;

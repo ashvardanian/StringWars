@@ -7,13 +7,14 @@ edition = "2018"
 rand = "0.8.5"
 criterion = "0.5.1"
 # stringzilla = { version = "3.3.0" }
-stringzilla = { path = "../StringZilla-dev" }
+stringzilla = { path = "../StringZilla/" }
 
 # Feature-based dependencies for benchmarks
 [features]
 bench_find = ["memchr"]
 bench_levenshtein = ["rapidfuzz"]
 bench_hash = ["ahash", "xxhash-rust", "blake3", "gxhash"]
+# bench_sequence = ["arrow-rs", "rayon"]
 
 [dependencies.memchr]
 version = "2.7.1"

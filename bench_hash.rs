@@ -1,41 +1,38 @@
-//! # StringWa.rs Hashing Benchmarks
+//! # StringWa.rs: String Hashing Benchmarks
 //!
 //! This file contains benchmarks for various Rust hashing libraries using Criterion.
 //!
 //! The benchmarks compare the performance of different hash functions including:
 //!
-//! - StringZilla (`bytesum`, `hash`, and incremental `hash` variants)
+//! - Standard `Hash` implementation
+//! - StringZilla (`bytesum`, `hash`, and incremental `hash` function variants)
 //! - aHash (both incremental and single-entry variants)
-//! - gxhash (gxhash64)
-//! - Blake3 (default cryptographic hash)
 //! - xxHash (xxh3) through the third-party `xxhash-rust` crate
+//! - gxhash (gxhash64)
+//! - Blake3 (the only cryptographic hash in the comparison, for reference)
 //!
-//! ## Environment Variables
+//! ## Usage Examples
 //!
 //! The benchmarks use two environment variables to control the input dataset and mode:
 //!
 //! - `STRINGWARS_DATASET`: Path to the input dataset file.
-//! - `STRINGWARS_MODE`: Specifies how to interpret the input. Allowed values:
+//! - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
 //!   - `lines`: Process the dataset line by line.
 //!   - `words`: Process the dataset word by word.
 //!   - `file`: Process the entire file as a single unit.
 //!
-//! You should also set the `RUSTFLAGS` environment variable to enable the appropriate CPU features.
-//!
-//! ## Usage Examples
-//!
 //! To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
 //!
 //! ```sh
-//! STRINGWARS_MODE=file STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_hash bench_hash --jobs 8
-//! STRINGWARS_MODE=lines STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_hash bench_hash --jobs 8
-//! STRINGWARS_MODE=words STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_hash bench_hash --jobs 8
+//! RUSTFLAGS="-C target-cpu=native" \
+//!     STRINGWARS_DATASET=README.md \
+//!     STRINGWARS_TOKENS=lines \
+//!     cargo criterion --features bench_hash bench_hash --jobs 8
 //! ```
 //!
 //! ## Notes
 //!
 //! - Ensure your CPU supports the required AES and SSE2 instructions when using `gxhash`.
-//! - The benchmarks aggregate hashing over the dataset for more realistic throughput measurements.
 use std::env;
 use std::fs;
 
@@ -45,14 +42,22 @@ use ahash::RandomState;
 use blake3;
 use gxhash;
 use std::hash::{BuildHasher, Hasher};
+use stringzilla::sz::{bytesum as sz_bytesum, hash as sz_hash};
+use xxhash_rust::xxh3::xxh3_64;
+
 use stringzilla::sz::{
-    bytesum as sz_bytesum, //
+    // Pull some metadata logging functionality
     capabilities as sz_capabilities,
     dynamic_dispatch as sz_dynamic_dispatch,
-    hash as sz_hash,
     version as sz_version,
 };
-use xxhash_rust::xxh3::xxh3_64;
+
+fn log_stringzilla_metadata() {
+    let v = sz_version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz_dynamic_dispatch());
+    println!("- capabilities: {}", sz_capabilities().as_str());
+}
 
 fn configure_bench() -> Criterion {
     Criterion::default()
@@ -63,7 +68,7 @@ fn configure_bench() -> Criterion {
 fn bench_hash(c: &mut Criterion) {
     let dataset_path =
         env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
-    let mode = env::var("STRINGWARS_MODE").unwrap_or_else(|_| "lines".to_string());
+    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
 
     let content = fs::read_to_string(&dataset_path).expect("Could not read dataset");
     let units: Vec<&str> = match mode.as_str() {
@@ -74,7 +79,7 @@ fn bench_hash(c: &mut Criterion) {
             vec![&content]
         }
         other => panic!(
-            "Unknown STRINGWARS_MODE: {}. Use 'lines', 'words', or 'file'.",
+            "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
             other
         ),
     };
@@ -165,19 +170,7 @@ fn perform_hashing_benchmarks(
 }
 
 fn main() {
-    // Log the library version info before running benchmarks.
-    let sz_v = sz_version();
-    println!(
-        "StringZilla version: {}.{}.{}",
-        sz_v.major, sz_v.minor, sz_v.patch
-    );
-    println!(
-        "StringZilla uses dynamic dispatch: {}",
-        sz_dynamic_dispatch()
-    );
-    println!("StringZilla capabilities: {}", sz_capabilities().as_str());
-
-    // Create a Criterion instance using any desired configuration.
+    log_stringzilla_metadata();
     let mut criterion = Criterion::default().configure_from_args();
     bench_hash(&mut criterion);
     criterion.final_summary();

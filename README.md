@@ -67,8 +67,8 @@ To run them on Linux and MacOS, pass the dataset path as an environment variable
 - Edit Distance:
 
     ```bash
-    STRINGWARS_MODE=lines STRINGWARS_ERROR_BOUND=15 STRINGWARS_DATASET=README.md cargo criterion --features bench_levenshtein bench_levenshtein --jobs 8
-    STRINGWARS_MODE=words STRINGWARS_ERROR_BOUND=15 STRINGWARS_DATASET=README.md cargo criterion --features bench_levenshtein bench_levenshtein --jobs 8
+    STRINGWARS_TOKENS=lines STRINGWARS_ERROR_BOUND=15 STRINGWARS_DATASET=README.md cargo criterion --features bench_levenshtein bench_levenshtein --jobs 8
+    STRINGWARS_TOKENS=words STRINGWARS_ERROR_BOUND=15 STRINGWARS_DATASET=README.md cargo criterion --features bench_levenshtein bench_levenshtein --jobs 8
     ```
 
     Edit distance benchmarks compute the Levenshtein distance between consecutive pairs of whitespace-delimited words or newline-delimited lines.
@@ -78,9 +78,9 @@ To run them on Linux and MacOS, pass the dataset path as an environment variable
 - Hashing:
 
     ```bash
-    STRINGWARS_MODE=file STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
-    STRINGWARS_MODE=lines STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
-    STRINGWARS_MODE=words STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
+    STRINGWARS_TOKENS=file STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
+    STRINGWARS_TOKENS=lines STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
+    STRINGWARS_TOKENS=words STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
     ```
 
 - Document retrieval with [TF-IDF](https://en.wikipedia.org/wiki/Tf%E2%80%93idf):

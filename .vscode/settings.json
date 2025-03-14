@@ -1,13 +1,16 @@
 {
   "cSpell.words": [
     "ahash",
+    "Bioinformatics",
     "bytesum",
     "memchr",
     "memmem",
+    "Needleman",
     "rapidfuzz",
     "rfind",
     "stringwars",
     "stringzilla",
-    "tfidf"
+    "tfidf",
+    "Wunsch"
   ]
 }

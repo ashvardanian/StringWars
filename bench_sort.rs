@@ -1,26 +1,28 @@
-//! # Sorting Benchmarks
+//! # StringWa.rs: String Sorting Benchmarks
 //!
-//! This file benchmarks the performance of three different sorting routines for
-//! arrays of strings:
+//! This file benchmarks various libraries for processing string-identifiable collections.
+//! Including sorting arrays of strings:
 //!
 //! - `sz::sort` from the StringZilla library
 //! - The standard library’s `sort_unstable`
 //! - Rayon’s parallel sort (`par_sort_unstable`)
 //!
-//! ## Environment Variables
+//! Intersecting string collections, similar to "STRICT INNER JOIN" in SQL databases.
+//!
+//! ## Usage Example
 //!
 //! The benchmarks use two environment variables to control the input dataset and mode:
 //!
 //! - `STRINGWARS_DATASET`: Path to the input dataset file.
-//! - `STRINGWARS_MODE`: Specifies how to interpret the input. Allowed values:
+//! - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
 //!   - `lines`: Process the dataset line by line.
 //!   - `words`: Process the dataset word by word.
-//!   - `file`: Process the entire file as a single unit.
 //!
-//! ## Usage Example
+//! To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
 //!
 //! ```sh
-//! STRINGWARS_MODE=lines STRINGWARS_DATASET=path/to/dataset cargo bench --bench bench_sort
+//! STRINGWARS_TOKENS=lines STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_sort bench_sort --jobs 8
+//! STRINGWARS_TOKENS=words STRINGWARS_DATASET=README.md RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_sort bench_sort --jobs 8
 //! ```
 
 use std::env;
@@ -36,7 +38,7 @@ use stringzilla::sz::sort as sz_sort;
 fn load_data() -> Vec<String> {
     let dataset_path =
         env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
-    let mode = env::var("STRINGWARS_MODE").unwrap_or_else(|_| "lines".to_string());
+    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
 
     let content = fs::read_to_string(&dataset_path).expect("Could not read dataset");
     let data: Vec<String> = match mode.as_str() {
@@ -45,9 +47,8 @@ fn load_data() -> Vec<String> {
             .split_whitespace()
             .map(|word| word.to_string())
             .collect(),
-        "file" => vec![content],
         other => panic!(
-            "Unknown STRINGWARS_MODE: {}. Use 'lines', 'words', or 'file'.",
+            "Unknown STRINGWARS_TOKENS: {}. Use 'lines' or 'words'.",
             other
         ),
     };

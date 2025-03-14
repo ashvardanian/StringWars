@@ -1,9 +1,60 @@
+//! # StringWa.rs: String Similarity Benchmarks
+//!
+//! This file benchmarks different libraries implementing string alignment and edit
+//! distance calculation, for both generic Levenshtein distances and the weighted
+//! Needleman-Wunsch alignment scores used in Bioinformatics.
+//!
+//! The input file is tokenized into lines or words and each consecutive pair of tokens
+//! is evaluated for similarity. As most algorithms have quadratic complexity and use
+//! Dynamic Programming techniques, their throughput is evaluate in the number of CUPS,
+//! or Cell Updates Per Second.
+//!
+//! ## Usage Examples
+//!
+//! The benchmarks use two environment variables to control the input dataset and mode:
+//!
+//! - `STRINGWARS_DATASET`: Path to the input dataset file.
+//! - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
+//!   - `lines`: Process the dataset line by line.
+//!   - `words`: Process the dataset word by word.
+//! - `STRINGWARS_ERROR_BOUND`: Maximum error bound, defined as an integer percent.
+//!
+//! ```sh
+//! RUSTFLAGS="-C target-cpu=native" \
+//!     STRINGWARS_DATASET=README.md \
+//!     STRINGWARS_ERROR_BOUND=15 \
+//!     STRINGWARS_TOKENS=lines \
+//!     cargo criterion --features bench_similarity bench_similarity --jobs 8
+//! ```
+//!
 use std::env;
 use std::fs;
 
 use criterion::{criterion_group, criterion_main, Criterion};
+
 use rapidfuzz::distance::levenshtein;
-use stringzilla::StringZilla;
+use stringzilla::sz::{
+    alignment_score as sz_alignment_score, //
+    levenshtein_distance as sz_levenshtein_distance,
+    levenshtein_distance_bounded as sz_levenshtein_distance_bounded,
+    levenshtein_distance_utf8 as sz_levenshtein_distance_utf8,
+    levenshtein_distance_utf8_bounded as sz_levenshtein_distance_utf8_bounded,
+    unary_substitution_costs as sz_unary_substitution_costs,
+};
+
+use stringzilla::sz::{
+    // Pull some metadata logging functionality
+    capabilities as sz_capabilities,
+    dynamic_dispatch as sz_dynamic_dispatch,
+    version as sz_version,
+};
+
+fn log_stringzilla_metadata() {
+    let v = sz_version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz_dynamic_dispatch());
+    println!("- capabilities: {}", sz_capabilities().as_str());
+}
 
 fn configure_bench() -> Criterion {
     Criterion::default()
@@ -15,7 +66,7 @@ fn configure_bench() -> Criterion {
 fn bench_levenshtein(c: &mut Criterion) {
     let dataset_path =
         env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
-    let mode = env::var("STRINGWARS_MODE").unwrap_or_else(|_| "lines".to_string());
+    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
     let content = fs::read_to_string(&dataset_path).expect("Could not read dataset");
 
     let bound_percent = env::var("STRINGWARS_ERROR_BOUND")
@@ -32,7 +83,7 @@ fn bench_levenshtein(c: &mut Criterion) {
         "words" => content.split_whitespace().collect(),
         "lines" => content.lines().collect(),
         other => panic!(
-            "Unknown STRINGWARS_MODE: {}. Use 'lines' or 'words'.",
+            "Unknown STRINGWARS_TOKENS: {}. Use 'lines' or 'words'.",
             other
         ),
     };
@@ -60,6 +111,15 @@ fn bench_levenshtein(c: &mut Criterion) {
         pairs.truncate(max_pairs);
     }
 
+    // In "unbounded" benchmarks we report the total number of Dynamic
+    // Programming (DP) matrix evaluated by the algorithm, aka "CUPS".
+    let mut g = c.benchmark_group("unbounded");
+    g.throughput(Throughput::Bytes(haystack_length as u64));
+    perform_unbounded_benchmarks(&mut g, &pairs, &pair_bounds);
+    g.finish();
+
+    // In case of "bounded" benchmarks, only one band of the DP matrix
+    // needs to be evaluated, so the throughput is computed differently.
     let pair_bounds: Vec<usize> = pairs
         .iter()
         .map(|(a, b)| {
@@ -67,15 +127,9 @@ fn bench_levenshtein(c: &mut Criterion) {
             ((max_len as u64 * bound_percent) / 100) as usize
         })
         .collect();
-
-    let mut g = c.benchmark_group("levenshtein");
-
-    perform_levenshtein_benchmarks(&mut g, &pairs, &pair_bounds);
-
-    g.finish();
 }
 
-fn perform_levenshtein_benchmarks(
+fn perform_unbounded_benchmarks(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     pairs: &[(&str, &str)],
     pair_bounds: &[usize],
@@ -83,7 +137,7 @@ fn perform_levenshtein_benchmarks(
     // StringZilla, bytes-based, unbounded
     {
         let mut pair_index = 0;
-        g.bench_function("stringzilla::levenshtein_bytes_unbounded", |b| {
+        g.bench_function("sz::levenshtein_bytes_unbounded", |b| {
             b.iter(|| {
                 let (a, b_str) = pairs[pair_index];
                 let _distance = a.sz_edit_distance(b_str.as_bytes());
@@ -95,7 +149,7 @@ fn perform_levenshtein_benchmarks(
     // StringZilla, bytes-based, bounded
     {
         let mut pair_index = 0;
-        g.bench_function("stringzilla::levenshtein_bytes_bounded", |b| {
+        g.bench_function("sz::levenshtein_bytes_bounded", |b| {
             b.iter(|| {
                 let (a, b_str) = pairs[pair_index];
                 let bound = pair_bounds[pair_index];
@@ -110,7 +164,7 @@ fn perform_levenshtein_benchmarks(
     // StringZilla, UTF-8, unbounded
     {
         let mut pair_index = 0;
-        g.bench_function("stringzilla::levenshtein_utf8_unbounded", |b| {
+        g.bench_function("sz::levenshtein_utf8_unbounded", |b| {
             b.iter(|| {
                 let (a, b_str) = pairs[pair_index];
                 let _distance = a.as_bytes().sz_edit_distance_utf8(b_str.as_bytes());
@@ -122,7 +176,7 @@ fn perform_levenshtein_benchmarks(
     // StringZilla, UTF-8, bounded
     {
         let mut pair_index = 0;
-        g.bench_function("stringzilla::levenshtein_utf8_bounded", |b| {
+        g.bench_function("sz::levenshtein_utf8_bounded", |b| {
             b.iter(|| {
                 let (a, b_str) = pairs[pair_index];
                 let bound = pair_bounds[pair_index];
@@ -193,9 +247,9 @@ fn perform_levenshtein_benchmarks(
     }
 }
 
-criterion_group! {
-    name = bench_levenshtein_group;
-    config = configure_bench();
-    targets = bench_levenshtein
+fn main() {
+    log_stringzilla_metadata();
+    let mut criterion = configure_bench();
+    bench_levenshtein(&mut criterion);
+    criterion.final_summary();
 }
-criterion_main!(bench_levenshtein_group);
