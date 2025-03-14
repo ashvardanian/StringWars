@@ -150,20 +150,20 @@ fn perform_hashing_benchmarks(
         })
     });
 
-    // Benchmark: Blake3
-    group.bench_function("blake3", |b| {
-        b.iter(|| {
-            for unit in units {
-                let _hash = black_box(blake3::hash(unit.as_bytes()));
-            }
-        })
-    });
-
     // Benchmark: gxhash
     group.bench_function("gxhash", |b| {
         b.iter(|| {
             for unit in units {
                 let _hash = black_box(gxhash::gxhash64(unit.as_bytes(), 42));
+            }
+        })
+    });
+
+    // Benchmark: Blake3 - should be by far the slowest, as it's a cryptographic hash.
+    group.bench_function("blake3", |b| {
+        b.iter(|| {
+            for unit in units {
+                let _hash = black_box(blake3::hash(unit.as_bytes()));
             }
         })
     });
