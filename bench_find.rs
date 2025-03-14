@@ -107,7 +107,7 @@ fn perform_forward_benchmarks(
         })
     });
 
-    // Benchmark for memmem forward search using a cycle iterator.
+    // Benchmark for `memmem` forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
     g.bench_function("memmem::find", |b| {
         b.iter(|| {
@@ -116,6 +116,18 @@ fn perform_forward_benchmarks(
             let mut pos: usize = 0;
             while let Some(found) = memmem::find(&haystack[pos..], token_bytes) {
                 pos += found + token_bytes.len();
+            }
+        })
+    });
+
+    // Benchmark for default `std::str` forward search.
+    let mut tokens = needles.iter().cycle();
+    g.bench_function("std::str::find", |b| {
+        b.iter(|| {
+            let token = black_box(*tokens.next().unwrap());
+            let mut pos = 0;
+            while let Some(found) = haystack_str[pos..].find(token) {
+                pos += found + token.len();
             }
         })
     });
@@ -152,6 +164,22 @@ fn perform_reverse_benchmarks(
             let mut pos: Option<usize> = Some(haystack.len());
             while let Some(end) = pos {
                 if let Some(found) = memmem::rfind(&haystack[..end], token_bytes) {
+                    pos = Some(found);
+                } else {
+                    break;
+                }
+            }
+        })
+    });
+
+    // Benchmark for default `std::str` reverse search.
+    let mut tokens = needles.iter().cycle();
+    g.bench_function("std::str::rfind", |b| {
+        b.iter(|| {
+            let token = black_box(*tokens.next().unwrap());
+            let mut pos: Option<usize> = Some(haystack_str.len());
+            while let Some(end) = pos {
+                if let Some(found) = haystack_str[..end].rfind(token) {
                     pos = Some(found);
                 } else {
                     break;
