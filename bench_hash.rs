@@ -36,33 +36,20 @@
 use std::env;
 use std::fs;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{black_box, Criterion, Throughput};
 
-use ahash::RandomState;
+use ahash::{AHasher, RandomState};
 use blake3;
 use gxhash;
 use std::hash::{BuildHasher, Hasher};
-use stringzilla::sz::{bytesum as sz_bytesum, hash as sz_hash};
+use stringzilla::sz;
 use xxhash_rust::xxh3::xxh3_64;
 
-use stringzilla::sz::{
-    // Pull some metadata logging functionality
-    capabilities as sz_capabilities,
-    dynamic_dispatch as sz_dynamic_dispatch,
-    version as sz_version,
-};
-
 fn log_stringzilla_metadata() {
-    let v = sz_version();
+    let v = sz::version();
     println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
-    println!("- uses dynamic dispatch: {}", sz_dynamic_dispatch());
-    println!("- capabilities: {}", sz_capabilities().as_str());
-}
-
-fn configure_bench() -> Criterion {
-    Criterion::default()
-        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
-        .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
+    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
+    println!("- capabilities: {}", sz::capabilities().as_str());
 }
 
 fn bench_hash(c: &mut Criterion) {
@@ -90,6 +77,12 @@ fn bench_hash(c: &mut Criterion) {
 
     // Calculate total bytes processed for throughput reporting.
     let total_bytes: usize = units.iter().map(|u| u.len()).sum();
+
+    let mut g = c.benchmark_group("stateful");
+    g.throughput(Throughput::Bytes(total_bytes as u64));
+    stateful_benchmarks(&mut g, &units);
+    g.finish();
+
     let mut g = c.benchmark_group("stateless");
     g.throughput(Throughput::Bytes(total_bytes as u64));
     stateless_benchmarks(&mut g, &units);
@@ -105,7 +98,7 @@ fn stateless_benchmarks(
         b.iter(|| {
             for unit in units {
                 // Using black_box to prevent compiler optimizations.
-                let _hash = sz_bytesum(black_box(unit.as_bytes()));
+                let _hash = sz::bytesum(black_box(unit.as_bytes()));
             }
         })
     });
@@ -114,7 +107,7 @@ fn stateless_benchmarks(
     group.bench_function("stringzilla::hash", |b| {
         b.iter(|| {
             for unit in units {
-                let _hash = sz_hash(black_box(unit.as_bytes()));
+                let _hash = sz::hash(black_box(unit.as_bytes()));
             }
         })
     });
@@ -169,9 +162,64 @@ fn stateless_benchmarks(
     });
 }
 
+fn stateful_benchmarks(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    units: &[&str],
+) {
+    // Benchmark: StringZilla `bytesum`
+    group.bench_function("stringzilla::bytesum", |b| {
+        b.iter(|| {
+            let mut aggregate = 0u64;
+            for unit in units {
+                aggregate += sz::bytesum(unit.as_bytes());
+            }
+            black_box(aggregate);
+        })
+    });
+
+    // Benchmark: StringZilla `hash`
+    group.bench_function("stringzilla::HashState", |b| {
+        b.iter(|| {
+            let mut aggregate = sz::HashState::new(0);
+            for unit in units {
+                aggregate.stream(unit.as_bytes());
+            }
+            black_box(aggregate.fold());
+        })
+    });
+
+    // Benchmark: SipHash via `std::hash::BuildHasher`
+    group.bench_function("std::hash::BuildHasher", |b| {
+        let std_builder = std::collections::hash_map::RandomState::new();
+        b.iter(|| {
+            let mut aggregate = std_builder.build_hasher();
+            for unit in units {
+                aggregate.write(unit.as_bytes());
+            }
+            black_box(aggregate.finish());
+        })
+    });
+
+    // Benchmark: aHash (`hash_one`)
+    group.bench_function("aHash::AHasher", |b| {
+        b.iter(|| {
+            let mut aggregate = AHasher::default();
+            for unit in units {
+                aggregate.write(unit.as_bytes());
+            }
+            black_box(aggregate.finish());
+        })
+    });
+}
+
 fn main() {
     log_stringzilla_metadata();
-    let mut criterion = Criterion::default().configure_from_args();
+    let mut criterion = Criterion::default()
+        .configure_from_args()
+        .sample_size(10) // Number of samples to collect.
+        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
+        .measurement_time(std::time::Duration::from_secs(10)); // Actual measurement time.
+
     bench_hash(&mut criterion);
     criterion.final_summary();
 }
