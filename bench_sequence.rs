@@ -32,11 +32,10 @@ use std::env;
 use std::fs;
 use std::sync::Arc;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, SamplingMode};
+use criterion::{black_box, Criterion, SamplingMode};
 
-use arrow::array::{ArrayRef, StringArray, UInt32Array};
+use arrow::array::{ArrayRef, LargeStringArray};
 use arrow::compute::{lexsort_to_indices, SortColumn, SortOptions};
-use arrow::error::Result;
 use rayon::prelude::*;
 use stringzilla::sz::{
     argsort_permutation as sz_argsort_permutation,
@@ -105,17 +104,17 @@ fn bench_argsort(c: &mut Criterion) {
     group.bench_function("sz::argsort_permutation", |b| {
         b.iter(|| {
             let mut indices: Vec<usize> = (0..unsorted.len()).collect();
-            match sz_argsort_permutation(&unsorted, &mut indices) {
-                Ok(_) => black_box(&indices),
-                Err(e) => panic!("StringZilla argsort failed: {:?}", e),
-            }
+            sz_argsort_permutation(&unsorted, &mut indices).expect("StringZilla argsort failed");
+            black_box(indices);
         })
     });
 
     // Benchmark: Apache Arrow's `lexsort_to_indices`
     // https://arrow.apache.org/rust/arrow/compute/fn.lexsort.html
     // https://arrow.apache.org/rust/arrow/compute/fn.lexsort_to_indices.html
-    let array = Arc::new(StringArray::from(unsorted.clone())) as ArrayRef;
+    // ! We can't use the conventional `StringArray` in most of our workloads, as it will
+    // ! overflow the 32-bit tape offset capacity and panic.
+    let array = Arc::new(LargeStringArray::from(unsorted.clone())) as ArrayRef;
     group.bench_function("arrow::lexsort_to_indices", |b| {
         b.iter(|| {
             let column_to_sort = SortColumn {
@@ -126,7 +125,7 @@ fn bench_argsort(c: &mut Criterion) {
                 }),
             };
             match lexsort_to_indices(&[column_to_sort], None) {
-                Ok(indices) => black_box(&indices),
+                Ok(indices) => black_box(indices),
                 Err(e) => panic!("Arrow lexsort failed: {:?}", e),
             }
         })
