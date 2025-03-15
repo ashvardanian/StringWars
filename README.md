@@ -4,10 +4,10 @@
 
 _Not to pick a fight, but let there be String Wars!_ 😅
 Jokes aside, many __great__ libraries for string processing exist.
-_Mostly, of course, written in C and C++, but some in Rust as well._ 😅
+_Mostly, of course, written in Assembly, C, and C++, but some in Rust as well._ 😅
 
-Where Rust decimates C and C++, however, is the __simplicity__ of dependency management, making it great for benchmarking low-level software!
-So, to accelerate the development of the [`stringzilla`](https://github.com/ashvardanian/StringZilla) C library, I've created this repository to compare it against:
+Where Rust decimates C and C++, however, is the __simplicity__ of dependency management, making it great for benchmarking "Systems Software"!
+So, to accelerate the development of the [`StringZilla`](https://github.com/ashvardanian/StringZilla) C library, I've created this repository to compare it against some of my & communities most beloved Rust projects, like:
 
 - [`memchr`](https://github.com/BurntSushi/memchr) for substring search.
 - [`rapidfuzz`](https://github.com/rapidfuzz/rapidfuzz-rs) for edit distances.
@@ -17,6 +17,7 @@ So, to accelerate the development of the [`stringzilla`](https://github.com/ashv
 
 Of course, the functionality of the projects is different, as are the APIs and the usage patterns.
 So, I focus on the workloads for which StringZilla was designed and compare the throughput of the core operations.
+Notably, I also favor modern hardware with support for a wider range SIMD instructions, like mask-equipped AVX-512 on x86 starting from the 2015 Intel Skylake-X CPUs or more recent predicated variable-length SVE and SVE2 on Arm, that aren't supported by most of the existing libraries and Rust tooling.
 
 ## String Hashing Benchmarks
 
@@ -26,47 +27,100 @@ Many of them have similar pitfalls:
 
 - They are not always documented to have a certain reproducible output and are recommended for use only for local in-memory construction of hash tables, not for serialization or network communication.
 - They don't always support streaming and require the whole input to be available in memory at once.
-- They rarely benefit from predicated SIMD instructions on modern hardware like AVX-512 on x86 or SVE on Arm.
 - They don't always pass the SMHasher test suite, especially with `--extra` checks enabled.
+- They generally don't have a dynamic dispatch mechanism to simplify shipping of precompiled software to a wide range of users.
 
 StringZilla addresses those issues and seems to provide competitive performance.
 On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
 
-| Benchmark              |       Lines |      Words |
-| ---------------------- | ----------: | ---------: |
-| `std::hash` (SipHash)  |  3.74 GiB/s | 0.43 GiB/s |
-| `stringzilla::bytesum` | 11.65 GiB/s | 2.16 GiB/s |
-| `stringzilla::hash`    | 11.23 GiB/s | 1.84 GiB/s |
-| `aHash::hash_one`      |  8.61 GiB/s | 1.23 GiB/s |
-| `xxh3`                 |  9.48 GiB/s | 1.08 GiB/s |
-| `blake3`               |  1.97 GiB/s |  N/A GiB/s |
-| `gxhash`               | 10.81 GiB/s |  N/A GiB/s |
+| Library                |  Shorter Words |    Longer Lines |
+| ---------------------- | -------------: | --------------: |
+| `std::hash`            |     0.43 GiB/s |      3.74 GiB/s |
+| `xxh3::xxh3_64`        |     1.08 GiB/s |      9.48 GiB/s |
+| `aHash::hash_one`      |     1.23 GiB/s |      8.61 GiB/s |
+| `gxhash::gxhash64`     | __2.68 GiB/s__ |     10.81 GiB/s |
+| `stringzilla::hash`    |     1.84 GiB/s | __11.23 GiB/s__ |
+|                        |                |                 |
+| `blake3::hash`         |     0.10 GiB/s |      1.97 GiB/s |
+| `stringzilla::bytesum` |     2.16 GiB/s |     11.65 GiB/s |
 
+> Blake3 and byte-level summation are provided as a reference for expected lower and upper bounds.
+> Blake3 is a cryptographic hash function and is obliged to provide a certain level of security, which comes at a cost.
+> Byte-level summation is a simple operation, that is still sometimes used in practice, and is expected to be the fastest.
 
-## Substring Search Benchmarks 
+In larger systems, however, we often need the ability to incrementally hash the data.
+This is especially important in distributed systems, where the data is too large to fit into memory at once.
+
+| Library                    |  Shorter Words |   Longer Lines |
+| -------------------------- | -------------: | -------------: |
+| `std::hash::DefaultHasher` |     0.51 GiB/s |     3.92 GiB/s |
+| `aHash::AHasher`           | __1.30 GiB/s__ | __8.56 GiB/s__ |
+| `stringzilla::HashState`   |     0.89 GiB/s |     6.39 GiB/s |
+
+## Substring & Character-Set Search Benchmarks
 
 Substring search is one of the most common operations in text processing, and one of the slowest.
-StringZilla was designed to supersede LibC and implement those core operations in CPU-friendly manner, using branchless operations, SWAR, and SIMD assembly instructions.
-Notably, Rust has a `memchr` crate that provides a similar functionality, and it's used in many popular libraries.
-This repository provides basic benchmarking scripts for comparing the throughput of [`stringzilla`](https://github.com/ashvardanian/StringZilla) and [`memchr`](https://github.com/BurntSushi/memchr).
-For normal order and reverse order search, over ASCII and UTF8 input data, the following numbers can be expected.
+Most of the time, programmers don't think about replacing the `str::find` method, as it's already expected to be optimized.
+In many languages it's offloaded to the C standard library [`memmem`](https://man7.org/linux/man-pages/man3/memmem.3.html) or [`strstr`](https://en.cppreference.com/w/c/string/byte/strstr) for NULL-terminated strings.
+The C standard library is, however, also implemented by humans, and a better solution can be created.
 
-|               |         ASCII ⏩ |         ASCII ⏪ |         UTF8 ⏩ |          UTF8 ⏪ |
-| ------------- | --------------: | --------------: | -------------: | --------------: |
-| Intel:        |                 |                 |                |                 |
-| `memchr`      |       5.89 GB/s |       1.08 GB/s |      8.73 GB/s |       3.35 GB/s |
-| `stringzilla` |   __8.37__ GB/s |   __8.21__ GB/s | __11.21__ GB/s |  __11.20__ GB/s |
-| Arm:          |                 |                 |                |                 |
-| `memchr`      |       6.38 GB/s |       1.12 GB/s | __13.20__ GB/s |       3.56 GB/s |
-| `stringzilla` |   __6.56__ GB/s |   __5.56__ GB/s |      9.41 GB/s |   __8.17__ GB/s |
-|               |                 |                 |                |                 |
-| Average       | __1.2x__ faster | __6.2x__ faster |              - | __2.8x__ faster |
+| Library              |   Shorter Words |    Longer Lines |
+| -------------------- | --------------: | --------------: |
+| `std::str::find`     |      9.48 GiB/s |     10.88 GiB/s |
+| `memmem::find`       |      9.51 GiB/s |     10.83 GiB/s |
+| `stringzilla::find`  | __10.45 GiB/s__ | __10.89 GiB/s__ |
+|                      |                 |                 |
+| `std::str::rfind`    |      2.96 GiB/s |      3.65 GiB/s |
+| `memmem::rfind`      |      2.95 GiB/s |      3.71 GiB/s |
+| `stringzilla::rfind` |  __9.78 GiB/s__ | __10.43 GiB/s__ |
 
+> Higher-throughput evaluation with `memmem` is possible, if the "matcher" object is reused to iterate through the string instead of constructing a new one for each search.
 
-> For Intel the benchmark was run on AWS `r7iz` instances with Sapphire Rapids cores.
-> For Arm the benchmark was run on AWS `r7g` instances with Graviton 3 cores.
-> The ⏩ signifies forward search, and ⏪ signifies reverse order search.
-> At the time of writing, the latest versions of `memchr` and `stringzilla` were used - 2.7.1 and 3.3.0, respectively.
+Similarly, one can search a string for a set of characters.
+StringWa.rs takes a few representative examples of various character sets that appear in real parsing or string validation tasks:
+
+- tabulation characters, like `\n\r\v\f`;
+- HTML and XML markup characters, like `</>&'\"=[]`;
+- numeric characters, like `0123456789`.
+
+It's common in such cases, to pre-construct some library-specific filter-object or Finite State Machine (FSM) to search for a set of characters.
+Once that object is constructed, all of it's inclusions in each token (word or line) are counted.
+Current numbers should look like this:
+
+| Library                     |  Shorter Words |   Longer Lines |
+| --------------------------- | -------------: | -------------: |
+| `bstr::iter`                |     0.26 GiB/s |     0.25 GiB/s |
+| `regex::find_iter`          |     0.23 GiB/s |     5.22 GiB/s |
+| `aho_corasick::find_iter`   |     0.41 GiB/s |     0.50 GiB/s |
+| `stringzilla::find_byteset` | __1.61 GiB/s__ | __8.17 GiB/s__ |
+
+## Strings Sorting & Intersections Benchmarks
+
+Rust has several Dataframe libraries, DBMS and Search engines that heavily rely on string sorting and intersections.
+Those operations mostly are implemented using conventional algorithms:
+
+- Comparison-based Quicksort or Mergesort for sorting.
+- Hash-based or Tree-based algorithms for intersections.
+
+Assuming the comparisons can be accelerated with SIMD and so can be the hash functions, StringZilla could already provide a performance boost in such applications, but starting with v4 it also provides specialized algorithms for sorting and intersections.
+Those are directly compatible with arbitrary string-comparable collection types with a support of an indexed access to the elements.
+
+| Library                                     |      Shorter Words |      Longer Lines |
+| ------------------------------------------- | -----------------: | ----------------: |
+| `std::sort_unstable_by_key`                 |      54.35 Melem/s |     57.70 Melem/s |
+| `arrow::lexsort_to_indices`                 |                  ❌ |                 ❌ |
+| `rayon::par_sort_unstable_by_key` on 1 vCPU |                  ? |     50.35 Melem/s |
+| `stringzilla::argsort_permutation`          | __182.88 Melem/s__ | __74.64 Melem/s__ |
+
+## Random Generation & Lookup Tables
+
+Some of the most common operations in data processing are random generation and lookup tables.
+That's true not only for strings but for any data type, and StringZilla has been extensively used in Image Processing and Bioinformatics for those purposes.
+
+## String Edit Distance Benchmarks
+
+Edit Distance calculation is a common component of Search Engines, Data Cleaning, and Natural Language Processing, as well as in Bioinformatics.
+It's a computationally expensive operation, generally implemented using dynamic programming, with a quadratic time complexity upper bound.
 
 ## Replicating the Results
 
@@ -76,46 +130,29 @@ Before running benchmarks, you can test your Rust environment running:
 cargo install cargo-criterion --locked
 ```
 
-Each benchmark includes a warm-up, to ensure that the CPU caches are filled and the results are not affected by cold start or SIMD-related frequency scaling.
-To run them on Linux and MacOS, pass the dataset path as an environment variable:
+Wars always take long, and so do these benchmarks.
+Every one of them includes a few seconds of a warm-up phase to ensure that the CPU caches are filled and the results are not affected by cold start or SIMD-related frequency scaling.
+Each of them accepts a few environment variables to control the dataset, the tokenization, and the error bounds.
+You can log those by printing file-level documentation using `awk` on Linux:
 
-- Substring Search:
+```bash
+awk '/^\/\/!/ { print } !/^\/\/!/ { exit }' bench_find.rs
+```
 
-    ```bash
-    STRINGWARS_DATASET=README.md cargo criterion --features bench_find bench_find --jobs 8
-    ```
+Commonly used environment variables are:
 
-    As part of the benchmark, the input "haystack" file is whitespace-tokenized into an array of strings.
-    In every benchmark iteration, a new "needle" is taken from that array of tokens.
-    All inclusions of that token in the haystack are counted, and the throughput is calculated.
+- `STRINGWARS_DATASET` - the path to the textual dataset file.
+- `STRINGWARS_TOKENS` - the tokenization mode: `file`, `lines`, or `words`.
+- `STRINGWARS_ERROR_BOUND` - the maximum allowed error in the Levenshtein distance.
 
-- Edit Distance:
+Here is an example of a common benchmark run on a Unix-like system:
 
-    ```bash
-    STRINGWARS_TOKENS=lines STRINGWARS_ERROR_BOUND=15 STRINGWARS_DATASET=README.md cargo criterion --features bench_levenshtein bench_levenshtein --jobs 8
-    STRINGWARS_TOKENS=words STRINGWARS_ERROR_BOUND=15 STRINGWARS_DATASET=README.md cargo criterion --features bench_levenshtein bench_levenshtein --jobs 8
-    ```
-
-    Edit distance benchmarks compute the Levenshtein distance between consecutive pairs of whitespace-delimited words or newline-delimited lines.
-    They include byte-level and character-level operations and also run for the bounded case - when the maximum allowed distance is predefined.
-    By default, the maximum allowed distance is set to 15% of the longer string in each pair.
-
-- Hashing:
-
-    ```bash
-    STRINGWARS_TOKENS=file STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
-    STRINGWARS_TOKENS=lines STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
-    STRINGWARS_TOKENS=words STRINGWARS_DATASET=README.md cargo criterion --features bench_hash bench_hash --jobs 8
-    ```
-
-- Document retrieval with [TF-IDF](https://en.wikipedia.org/wiki/Tf%E2%80%93idf):
-
-    ```bash
-    STRINGWARS_DATASET=README.md cargo criterion --features bench_tfidf bench_tfidf --jobs 8
-    ```
-
-    The TF-IDF benchmarks compute the term frequency-inverse document frequency for each word in the input file.
-    The benchmark relies on a hybrid of StringZilla and SimSIMD to achieve the best performance.
+```bash
+RUSTFLAGS="-C target-cpu=native" \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_TOKENS=lines \
+    cargo criterion --features bench_hash bench_hash --jobs 8
+```
 
 On Windows using PowerShell you'd need to set the environment variable differently:
 
