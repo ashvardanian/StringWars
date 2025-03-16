@@ -1,38 +1,40 @@
-//! # StringWa.rs: String Hashing Benchmarks
-//!
-//! This file contains benchmarks for various Rust hashing libraries using Criterion.
-//!
-//! The benchmarks compare the performance of different hash functions including:
-//!
-//! - Standard `Hash` implementation
-//! - StringZilla (`bytesum`, `hash`, and incremental `hash` function variants)
-//! - aHash (both incremental and single-entry variants)
-//! - xxHash (xxh3) through the third-party `xxhash-rust` crate
-//! - gxhash (gxhash64)
-//! - Blake3 (the only cryptographic hash in the comparison, for reference)
-//!
-//! ## Usage Examples
-//!
-//! The benchmarks use two environment variables to control the input dataset and mode:
-//!
-//! - `STRINGWARS_DATASET`: Path to the input dataset file.
-//! - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
-//!   - `lines`: Process the dataset line by line.
-//!   - `words`: Process the dataset word by word.
-//!   - `file`: Process the entire file as a single unit.
-//!
-//! To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
-//!
-//! ```sh
-//! RUSTFLAGS="-C target-cpu=native" \
-//!     STRINGWARS_DATASET=README.md \
-//!     STRINGWARS_TOKENS=lines \
-//!     cargo criterion --features bench_hash bench_hash --jobs 8
-//! ```
-//!
-//! ## Notes
-//!
-//! - Ensure your CPU supports the required AES and SSE2 instructions when using `gxhash`.
+#![doc = r#"
+# StringWa.rs: String Hashing Benchmarks
+
+This file contains benchmarks for various Rust hashing libraries using Criterion.
+
+The benchmarks compare the performance of different hash functions including:
+
+- Standard `Hash` implementation
+- StringZilla (`bytesum`, `hash`, and incremental `hash` function variants)
+- aHash (both incremental and single-entry variants)
+- xxHash (xxh3) through the third-party `xxhash-rust` crate
+- gxhash (gxhash64)
+- Blake3 (the only cryptographic hash in the comparison, for reference)
+
+## Usage Examples
+
+The benchmarks use two environment variables to control the input dataset and mode:
+
+- `STRINGWARS_DATASET`: Path to the input dataset file.
+- `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
+  - `lines`: Process the dataset line by line.
+  - `words`: Process the dataset word by word.
+  - `file`: Process the entire file as a single unit.
+
+To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_TOKENS=lines \
+    cargo criterion --features bench_hash bench_hash --jobs 8
+```
+
+## Notes
+
+- Ensure your CPU supports the required AES and SSE2 instructions when using `gxhash`.
+"#]
 use std::env;
 use std::fs;
 
@@ -216,7 +218,7 @@ fn main() {
     log_stringzilla_metadata();
     let mut criterion = Criterion::default()
         .configure_from_args()
-        .sample_size(10) // Number of samples to collect.
+        .sample_size(30) // Number of samples to collect.
         .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
         .measurement_time(std::time::Duration::from_secs(10)); // Actual measurement time.
 

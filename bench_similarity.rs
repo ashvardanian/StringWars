@@ -1,36 +1,36 @@
-//! # StringWa.rs: String Similarity Benchmarks
-//!
-//! This file benchmarks different libraries implementing string alignment and edit
-//! distance calculation, for both generic Levenshtein distances and the weighted
-//! Needleman-Wunsch alignment scores used in Bioinformatics.
-//!
-//! The input file is tokenized into lines or words and each consecutive pair of tokens
-//! is evaluated for similarity. As most algorithms have quadratic complexity and use
-//! Dynamic Programming techniques, their throughput is evaluate in the number of CUPS,
-//! or Cell Updates Per Second.
-//!
-//! ## Usage Examples
-//!
-//! The benchmarks use two environment variables to control the input dataset and mode:
-//!
-//! - `STRINGWARS_DATASET`: Path to the input dataset file.
-//! - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
-//!   - `lines`: Process the dataset line by line.
-//!   - `words`: Process the dataset word by word.
-//! - `STRINGWARS_ERROR_BOUND`: Maximum error bound, defined as an integer percent.
-//!
-//! ```sh
-//! RUSTFLAGS="-C target-cpu=native" \
-//!     STRINGWARS_DATASET=README.md \
-//!     STRINGWARS_ERROR_BOUND=15 \
-//!     STRINGWARS_TOKENS=lines \
-//!     cargo criterion --features bench_similarity bench_similarity --jobs 8
-//! ```
-//!
+#![doc = r#"# StringWa.rs: String Similarity Benchmarks
+
+This file benchmarks different libraries implementing string alignment and edit
+distance calculation, for both generic Levenshtein distances and the weighted
+Needleman-Wunsch alignment scores used in Bioinformatics.
+
+The input file is tokenized into lines or words and each consecutive pair of tokens
+is evaluated for similarity. As most algorithms have quadratic complexity and use
+Dynamic Programming techniques, their throughput is evaluate in the number of CUPS,
+or Cell Updates Per Second.
+
+## Usage Examples
+
+The benchmarks use two environment variables to control the input dataset and mode:
+
+- `STRINGWARS_DATASET`: Path to the input dataset file.
+- `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
+  - `lines`: Process the dataset line by line.
+  - `words`: Process the dataset word by word.
+- `STRINGWARS_ERROR_BOUND`: Maximum error bound, defined as an integer percent.
+
+```sh
+RUSTFLAGS="-C target-cpu=native" \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_ERROR_BOUND=15 \
+    STRINGWARS_TOKENS=lines \
+    cargo criterion --features bench_similarity bench_similarity --jobs 8
+```
+"#]
 use std::env;
 use std::fs;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::Criterion;
 
 use rapidfuzz::distance::levenshtein;
 use stringzilla::sz::{

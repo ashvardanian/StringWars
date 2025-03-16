@@ -1,32 +1,33 @@
-//! # StringWa.rs: String Sequence Operations Benchmarks
-//!
-//! This file benchmarks various libraries for processing string-identifiable collections.
-//! Including sorting arrays of strings:
-//!
-//! - StringZilla's `sz::argsort_permutation`
-//! - The standard library's `sort_unstable`
-//! - Rayon's parallel `par_sort_unstable`
-//!
-//! Intersecting string collections, similar to "STRICT INNER JOIN" in SQL databases.
-//!
-//! ## Usage Example
-//!
-//! The benchmarks use two environment variables to control the input dataset and mode:
-//!
-//! - `STRINGWARS_DATASET`: Path to the input dataset file.
-//! - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
-//!   - `lines`: Process the dataset line by line.
-//!   - `words`: Process the dataset word by word.
-//!
-//! To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
-//!
-//! ```sh
-//! RUSTFLAGS="-C target-cpu=native" \
-//!     RAYON_NUM_THREADS=1 \
-//!     STRINGWARS_DATASET=README.md \
-//!     STRINGWARS_TOKENS=lines \
-//!     cargo criterion --features bench_sequence bench_sequence --jobs 8
-//! ```
+#![doc = r#"# StringWa.rs: String Sequence Operations Benchmarks
+
+This file benchmarks various libraries for processing string-identifiable collections.
+Including sorting arrays of strings:
+
+- StringZilla's `sz::argsort_permutation`
+- The standard library's `sort_unstable`
+- Rayon's parallel `par_sort_unstable`
+
+Intersecting string collections, similar to "STRICT INNER JOIN" in SQL databases.
+
+## Usage Example
+
+The benchmarks use two environment variables to control the input dataset and mode:
+
+- `STRINGWARS_DATASET`: Path to the input dataset file.
+- `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
+  - `lines`: Process the dataset line by line.
+  - `words`: Process the dataset word by word.
+
+To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" \
+    RAYON_NUM_THREADS=1 \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_TOKENS=lines \
+    cargo criterion --features bench_sequence bench_sequence --jobs 8
+```
+"#]
 
 use std::env;
 use std::fs;

@@ -108,9 +108,9 @@ Those are directly compatible with arbitrary string-comparable collection types 
 | Library                                     |      Shorter Words |      Longer Lines |
 | ------------------------------------------- | -----------------: | ----------------: |
 | `std::sort_unstable_by_key`                 |      54.35 Melem/s |     57.70 Melem/s |
-| `arrow::lexsort_to_indices`                 |                  ❌ |                 ❌ |
-| `rayon::par_sort_unstable_by_key` on 1 vCPU |                  ? |     50.35 Melem/s |
-| `stringzilla::argsort_permutation`          | __182.88 Melem/s__ | __74.64 Melem/s__ |
+| `rayon::par_sort_unstable_by_key` on 1 vCPU |      47.08 Melem/s |     50.35 Melem/s |
+| `arrow::lexsort_to_indices`                 |     122.20 Melem/s | __84.73 Melem/s__ |
+| `stringzilla::argsort_permutation`          | __182.88 Melem/s__ |     74.64 Melem/s |
 
 ## Random Generation & Lookup Tables
 

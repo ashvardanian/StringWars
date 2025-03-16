@@ -1,35 +1,37 @@
-//! # StringWa.rs: Substring Search Benchmarks
-//!
-//! This file benchmarks the forward and backward exact substring search functionality provided by
-//! the StringZilla library and the memchr crate. The input file is treated as a haystack and all
-//! of its tokens as needles. The throughput numbers are reported in Gigabytes per Second and for
-//! any sampled token - all of its inclusions in a string are located.
-//!
-//! The input file is treated as a haystack and all of its tokens as needles. For substring searches,
-//! each occurrence is located. For byteset searches, three separate operations are performed per token,
-//! looking for:
-//!
-//! - any of "\n\r\v\f" - the 4 tabulation characters
-//! - any of "</>&'\"=[]" - the 9 HTML-related characters
-//! - any of "0123456789" - the 10 numeric characters
-//!
-//! ## Usage Examples
-//!
-//! The benchmarks use two environment variables to control the input dataset and mode:
-//!
-//! - `STRINGWARS_DATASET`: Path to the input dataset file.
-//! - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
-//!   - `lines`: Process the dataset line by line.
-//!   - `words`: Process the dataset word by word.
-//!
-//! To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
-//!
-//! ```sh
-//! RUSTFLAGS="-C target-cpu=native" \
-//!     STRINGWARS_DATASET=README.md \
-//!     STRINGWARS_TOKENS=lines \
-//!     cargo criterion --features bench_find bench_find --jobs 8
-//! ```
+#![doc = r#"
+# StringWa.rs: Substring Search Benchmarks
+
+This file benchmarks the forward and backward exact substring search functionality provided by
+the StringZilla library and the memchr crate. The input file is treated as a haystack and all
+of its tokens as needles. The throughput numbers are reported in Gigabytes per Second and for
+any sampled token - all of its inclusions in a string are located.
+
+The input file is treated as a haystack and all of its tokens as needles. For substring searches,
+each occurrence is located. For byteset searches, three separate operations are performed per token,
+looking for:
+
+- any of "\n\r\v\f" - the 4 tabulation characters
+- any of "</>&'\"=[]" - the 9 HTML-related characters
+- any of "0123456789" - the 10 numeric characters
+
+## Usage Examples
+
+The benchmarks use two environment variables to control the input dataset and mode:
+
+- `STRINGWARS_DATASET`: Path to the input dataset file.
+- `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
+  - `lines`: Process the dataset line by line.
+  - `words`: Process the dataset word by word.
+
+To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_TOKENS=lines \
+    cargo criterion --features bench_find bench_find --jobs 8
+```
+"#]
 use std::env;
 use std::fs;
 use std::time::Duration;
