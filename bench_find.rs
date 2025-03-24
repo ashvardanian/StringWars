@@ -99,7 +99,7 @@ fn bench_substring_forward(
         })
     });
 
-    // Benchmark for `memmem` forward search using a cycle iterator.
+    // Benchmark for `memmem::find` forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
     g.bench_function("memmem::find", |b| {
         b.iter(|| {
@@ -111,7 +111,7 @@ fn bench_substring_forward(
         })
     });
 
-    // Benchmark for default `std::str` forward search.
+    // Benchmark for default `std::str::find` forward search.
     let mut tokens = needles.iter().cycle();
     g.bench_function("std::str::find", |b| {
         b.iter(|| {
@@ -119,6 +119,17 @@ fn bench_substring_forward(
             let mut pos = 0;
             while let Some(found) = haystack[pos..].find(token) {
                 pos += found + token.len();
+            }
+        })
+    });
+
+    // Benchmark for `memmem::find_iter` forward search using a cycle iterator.
+    let mut tokens = needles.iter().cycle();
+    g.bench_function("memmem::find_iter", |b| {
+        b.iter(|| {
+            let token = black_box(*tokens.next().unwrap());
+            for match_ in memmem::find_iter(haystack, token) {
+                black_box(match_);
             }
         })
     });
@@ -148,7 +159,7 @@ fn bench_substring_backward(
         })
     });
 
-    // Benchmark for memmem backward search using a cycle iterator.
+    // Benchmark for `memmem::rfind` backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
     g.bench_function("memmem::rfind", |b| {
         b.iter(|| {
@@ -164,7 +175,7 @@ fn bench_substring_backward(
         })
     });
 
-    // Benchmark for default `std::str` backward search.
+    // Benchmark for default `std::str::rfind` backward search.
     let mut tokens = needles.iter().cycle();
     g.bench_function("std::str::rfind", |b| {
         b.iter(|| {
@@ -176,6 +187,17 @@ fn bench_substring_backward(
                 } else {
                     break;
                 }
+            }
+        })
+    });
+
+    // Benchmark for `memmem::rfind_iter` forward search using a cycle iterator.
+    let mut tokens = needles.iter().cycle();
+    g.bench_function("memmem::rfind_iter", |b| {
+        b.iter(|| {
+            let token = black_box(*tokens.next().unwrap());
+            for match_ in memmem::rfind_iter(haystack, token) {
+                black_box(match_);
             }
         })
     });
@@ -305,8 +327,8 @@ fn main() {
     // Setup the default durations
     let mut criterion = Criterion::default()
         .sample_size(10) // Each loop scans the whole dataset, but this can't be under 10
-        .warm_up_time(Duration::from_secs(1)) // Let the CPU frequencies settle.
-        .measurement_time(Duration::from_secs(10)); // Actual measurement time.
+        .warm_up_time(Duration::from_secs(3)) // Let the CPU frequencies settle.
+        .measurement_time(Duration::from_secs(20)); // Actual measurement time.
 
     // Benchmarks for forward search
     let mut group = criterion.benchmark_group("substring-forward");
