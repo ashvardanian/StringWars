@@ -59,8 +59,14 @@ pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
 pub fn tokenize<'a>(haystack: &'a [u8]) -> Result<Vec<&'a [u8]>, Box<dyn Error>> {
     let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
     let tokens = match mode.as_str() {
-        "lines" => haystack.split(|&c| c == b'\n').collect(),
-        "words" => haystack.split(|&c| c == b'\n' || c == b' ').collect(),
+        "lines" => haystack
+            .split(|&c| c == b'\n')
+            .filter(|token| !token.is_empty())
+            .collect(),
+        "words" => haystack
+            .split(|&c| c == b'\n' || c == b' ')
+            .filter(|token| !token.is_empty())
+            .collect(),
         "file" => vec![haystack],
         other => {
             return Err(format!(
