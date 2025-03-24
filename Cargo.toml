@@ -4,17 +4,46 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-rand = "0.8.5"
 criterion = "0.5.1"
 # stringzilla = { version = "3.3.0" }
 stringzilla = { path = "../StringZilla/" }
 
 # Feature-based dependencies for benchmarks
 [features]
-bench_find = ["memchr", "bstr", "aho-corasick", "regex"]
-bench_hash = ["ahash", "xxhash-rust", "blake3", "gxhash"]
-bench_sequence = ["arrow", "rayon"]
-bench_similarity = ["rapidfuzz", "bio"]
+bench_find = [
+    "memchr",       # Substring Search
+    "bstr",         # Byteset Search
+    "aho-corasick", # Byteset Search
+    "regex",        # Byteset Search
+]
+bench_hash = [
+    "ahash",       # Hashing
+    "xxhash-rust", # One-Shot Hashing
+    "twox-hash",   # One-Shot Hashing (same algo as xxHash)
+    "gxhash",      # One-Shot Hashing
+    "blake3",      # Cryptographic Hashing Baseline
+]
+bench_sequence = [
+    "arrow", # Sorting
+    "rayon", # Parallel Sorting
+]
+bench_similarity = [
+    "rapidfuzz", # Levenshtein Distance (also `strsim`)
+    "bio",       # Needleman-Wunsch Score
+]
+bench_memory = [
+    # "opencv",    # Lookup Transform
+    "rand",         # Randomize Buffer
+    "zeroize",      # Obfuscate Buffer
+    "getrandom",    # Randomize Buffer via OS
+    "rand_chacha",  # Randomize Buffer
+    "rand_xoshiro", # Randomize Buffer
+]
+
+# TODO: String properties:
+# - `unicode-width`
+# - `textwrap`
+# - `unicode-segmentation`
 
 [dependencies.memchr]
 version = "2.7.1"
@@ -60,12 +89,40 @@ version = "0.8"
 optional = true
 features = ["xxh3", "const_xxh3"]
 
+[dependencies.twox-hash]
+version = "2.1.0"
+optional = true
+
 [dependencies.arrow]
 version = "54.2.1"
 optional = true
 
 [dependencies.rayon]
 version = "1.10.0"
+optional = true
+
+[dependencies.opencv]
+version = "0.94.2"
+optional = true
+
+[dependencies.zeroize]
+version = "1.8.1"
+optional = true
+
+[dependencies.getrandom]
+version = "0.3.1"
+optional = true
+
+[dependencies.rand]
+version = "0.9.0"
+optional = true
+
+[dependencies.rand_chacha]
+version = "0.9.0"
+optional = true
+
+[dependencies.rand_xoshiro]
+version = "0.7.0"
 optional = true
 
 [[bench]]
@@ -91,3 +148,9 @@ name = "bench_sequence"
 path = "bench_sequence.rs"
 harness = false
 required-features = ["bench_sequence"]
+
+[[bench]]
+name = "bench_memory"
+path = "bench_memory.rs"
+harness = false
+required-features = ["bench_memory"]
