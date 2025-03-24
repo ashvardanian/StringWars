@@ -1,10 +1,11 @@
 #![doc = r#"
-# StringWa.rs: Substring Search Benchmarks
+# StringWa.rs: Substring & Character-Set Search Benchmarks
 
 This file benchmarks the forward and backward exact substring search functionality provided by
 the StringZilla library and the memchr crate. The input file is treated as a haystack and all
 of its tokens as needles. The throughput numbers are reported in Gigabytes per Second and for
 any sampled token - all of its inclusions in a string are located.
+Be warned, for large files, it may take a while!
 
 The input file is treated as a haystack and all of its tokens as needles. For substring searches,
 each occurrence is located. For byteset searches, three separate operations are performed per token,
@@ -33,6 +34,7 @@ RUSTFLAGS="-C target-cpu=native" \
 ```
 "#]
 use std::env;
+use std::error::Error;
 use std::fs;
 use std::time::Duration;
 
@@ -42,91 +44,51 @@ use aho_corasick::AhoCorasick;
 use bstr::ByteSlice;
 use memchr::memmem;
 use regex::bytes::Regex;
-use stringzilla::sz::{
-    find as sz_find,
-    find_byteset as sz_find_byteset, //
-    rfind as sz_rfind,
-    Byteset,
-};
+use stringzilla::sz;
 
-use stringzilla::sz::{
-    // Pull some metadata logging functionality
-    capabilities as sz_capabilities,
-    dynamic_dispatch as sz_dynamic_dispatch,
-    version as sz_version,
-};
-
-fn log_stringzilla_metadata() {
-    let v = sz_version();
-    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
-    println!("- uses dynamic dispatch: {}", sz_dynamic_dispatch());
-    println!("- capabilities: {}", sz_capabilities().as_str());
+/// Loads the dataset from the file specified by the `STRINGWARS_DATASET` environment variable.
+pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
+    let dataset_path = env::var("STRINGWARS_DATASET")
+        .map_err(|_| "STRINGWARS_DATASET environment variable not set")?;
+    let content = fs::read(&dataset_path)?;
+    Ok(content)
 }
 
-fn configure_bench() -> Criterion {
-    Criterion::default()
-        .sample_size(10) // Each loop scans the whole dataset.
-        .warm_up_time(Duration::from_secs(10)) // Let the CPU frequencies settle.
-        .measurement_time(Duration::from_secs(120)) // Actual measurement time.
-}
-
-fn bench_find(c: &mut Criterion) {
-    // Get the haystack path from the environment variable.
-    let dataset_path =
-        env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
+/// Tokenizes the given haystack based on the `STRINGWARS_TOKENS` environment variable.
+/// Supported modes: "lines", "words", and "file".
+pub fn tokenize<'a>(haystack: &'a [u8]) -> Result<Vec<&'a [u8]>, Box<dyn Error>> {
     let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-    let haystack_content = fs::read_to_string(&dataset_path).expect("Could not read haystack");
-
-    // Tokenize the haystack content by white space or lines.
-    let needles: Vec<&str> = match mode.as_str() {
-        "lines" => haystack_content.lines().collect(),
-        "words" => haystack_content.split_whitespace().collect(),
-        other => panic!(
-            "Unknown STRINGWARS_TOKENS: {}. Use 'lines' or 'words'.",
-            other
-        ),
+    let tokens = match mode.as_str() {
+        "lines" => haystack.split(|&c| c == b'\n').collect(),
+        "words" => haystack.split(|&c| c == b'\n' || c == b' ').collect(),
+        "file" => vec![haystack],
+        other => {
+            return Err(format!(
+                "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
+                other
+            )
+            .into())
+        }
     };
-
-    if needles.is_empty() {
-        panic!("No tokens found in the haystack.");
-    }
-
-    let haystack = haystack_content.as_bytes();
-    let haystack_length = haystack.len();
-
-    // Benchmarks for forward search
-    let mut g = c.benchmark_group("substring-forward");
-    g.throughput(Throughput::Bytes(haystack_length as u64));
-    bench_substring_forward(&mut g, &needles, haystack);
-    g.finish();
-
-    // Benchmarks for backward search
-    let mut g = c.benchmark_group("substring-backward");
-    g.throughput(Throughput::Bytes(haystack_length as u64));
-    bench_substring_backward(&mut g, &needles, haystack);
-    g.finish();
-
-    // Benchmarks for byteset search
-    let mut g = c.benchmark_group("byteset-forward");
-    g.throughput(Throughput::Bytes(3 * haystack_length as u64));
-    bench_byteset_forward(&mut g, &needles);
-    g.finish();
+    Ok(tokens)
 }
 
+/// Benchmarks forward substring search using "StringZilla", "MemMem", and standard strings.
 fn bench_substring_forward(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    needles: &[&str],
     haystack: &[u8],
+    needles: &[&[u8]],
 ) {
+    g.throughput(Throughput::Bytes(haystack.len() as u64));
+
     // Benchmark for StringZilla forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
     g.bench_function("sz::find", |b| {
         b.iter(|| {
             let token = black_box(*tokens.next().unwrap());
-            let token_bytes = black_box(token.as_bytes());
             let mut pos: usize = 0;
-            while let Some(found) = sz_find(&haystack[pos..], token_bytes) {
-                pos += found + token_bytes.len();
+            while let Some(found) = sz::find(&haystack[pos..], token) {
+                pos += found + token.len();
             }
         })
     });
@@ -136,10 +98,9 @@ fn bench_substring_forward(
     g.bench_function("memmem::find", |b| {
         b.iter(|| {
             let token = black_box(*tokens.next().unwrap());
-            let token_bytes = black_box(token.as_bytes());
             let mut pos: usize = 0;
-            while let Some(found) = memmem::find(&haystack[pos..], token_bytes) {
-                pos += found + token_bytes.len();
+            while let Some(found) = memmem::find(&haystack[pos..], token) {
+                pos += found + token.len();
             }
         })
     });
@@ -157,20 +118,22 @@ fn bench_substring_forward(
     });
 }
 
+/// Benchmarks backward substring search using "StringZilla", "MemMem", and standard strings.
 fn bench_substring_backward(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    needles: &[&str],
     haystack: &[u8],
+    needles: &[&[u8]],
 ) {
+    g.throughput(Throughput::Bytes(haystack.len() as u64));
+
     // Benchmark for StringZilla backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
     g.bench_function("sz::rfind", |b| {
         b.iter(|| {
             let token = black_box(*tokens.next().unwrap());
-            let token_bytes = black_box(token.as_bytes());
             let mut pos: Option<usize> = Some(haystack.len());
             while let Some(end) = pos {
-                if let Some(found) = sz_rfind(&haystack[..end], token_bytes) {
+                if let Some(found) = sz::rfind(&haystack[..end], token) {
                     pos = Some(found);
                 } else {
                     break;
@@ -184,10 +147,9 @@ fn bench_substring_backward(
     g.bench_function("memmem::rfind", |b| {
         b.iter(|| {
             let token = black_box(*tokens.next().unwrap());
-            let token_bytes = black_box(token.as_bytes());
             let mut pos: Option<usize> = Some(haystack.len());
             while let Some(end) = pos {
-                if let Some(found) = memmem::rfind(&haystack[..end], token_bytes) {
+                if let Some(found) = memmem::rfind(&haystack[..end], token) {
                     pos = Some(found);
                 } else {
                     break;
@@ -213,33 +175,36 @@ fn bench_substring_backward(
     });
 }
 
+/// Benchmarks byteset search using "StringZilla", "bstr", "RegEx", and "AhoCorasick"
 fn bench_byteset_forward(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    needles: &[&str],
+    haystack: &[u8],
+    needles: &[&[u8]],
 ) {
+    g.throughput(Throughput::Bytes(3 * haystack.len() as u64));
+
     // Define the three bytesets we will analyze.
     const BYTES_TABS: &[u8] = b"\n\r\x0B\x0C";
     const BYTES_HTML: &[u8] = b"</>&'\"=[]";
     const BYTES_DIGITS: &[u8] = b"0123456789";
 
     // Benchmark for StringZilla forward search using a cycle iterator.
-    let sz_tabs = Byteset::from(BYTES_TABS);
-    let sz_html = Byteset::from(BYTES_HTML);
-    let sz_digits = Byteset::from(BYTES_DIGITS);
+    let sz_tabs = sz::Byteset::from(BYTES_TABS);
+    let sz_html = sz::Byteset::from(BYTES_HTML);
+    let sz_digits = sz::Byteset::from(BYTES_DIGITS);
     g.bench_function("sz::find_byteset", |b| {
         b.iter(|| {
             for token in needles.iter() {
-                let token_bytes = black_box(token.as_bytes());
                 let mut pos: usize = 0;
-                while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_tabs) {
+                while let Some(found) = sz::find_byteset(&token[pos..], sz_tabs) {
                     pos += found + 1;
                 }
                 pos = 0;
-                while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_html) {
+                while let Some(found) = sz::find_byteset(&token[pos..], sz_html) {
                     pos += found + 1;
                 }
                 pos = 0;
-                while let Some(found) = sz_find_byteset(&token_bytes[pos..], sz_digits) {
+                while let Some(found) = sz::find_byteset(&token[pos..], sz_digits) {
                     pos += found + 1;
                 }
             }
@@ -250,28 +215,19 @@ fn bench_byteset_forward(
     g.bench_function("bstr::iter", |b| {
         b.iter(|| {
             for token in needles.iter() {
-                let token_bytes = black_box(token.as_bytes());
                 let mut pos: usize = 0;
                 // Inline search for `BYTES_TABS`.
-                while let Some(found) = token_bytes[pos..]
-                    .iter()
-                    .position(|&c| BYTES_TABS.contains(&c))
-                {
+                while let Some(found) = token[pos..].iter().position(|&c| BYTES_TABS.contains(&c)) {
                     pos += found + 1;
                 }
                 pos = 0;
                 // Inline search for `BYTES_HTML`.
-                while let Some(found) = token_bytes[pos..]
-                    .iter()
-                    .position(|&c| BYTES_HTML.contains(&c))
-                {
+                while let Some(found) = token[pos..].iter().position(|&c| BYTES_HTML.contains(&c)) {
                     pos += found + 1;
                 }
                 pos = 0;
                 // Inline search for `BYTES_DIGITS`.
-                while let Some(found) = token_bytes[pos..]
-                    .iter()
-                    .position(|&c| BYTES_DIGITS.contains(&c))
+                while let Some(found) = token[pos..].iter().position(|&c| BYTES_DIGITS.contains(&c))
                 {
                     pos += found + 1;
                 }
@@ -327,8 +283,39 @@ fn bench_byteset_forward(
 }
 
 fn main() {
-    log_stringzilla_metadata();
-    let mut criterion = configure_bench();
-    bench_find(&mut criterion);
+    // Log StringZilla metadata
+    let v = sz::version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
+    println!("- capabilities: {}", sz::capabilities().as_str());
+
+    // Load the dataset defined by the environment variables, and panic if the content is missing
+    let haystack = load_dataset().unwrap();
+    let needles = tokenize(&haystack).unwrap();
+    if needles.is_empty() {
+        panic!("No tokens found in the dataset.");
+    }
+
+    // Setup the default durations
+    let mut criterion = Criterion::default()
+        .sample_size(10) // Each loop scans the whole dataset, but this can't be under 10
+        .warm_up_time(Duration::from_secs(1)) // Let the CPU frequencies settle.
+        .measurement_time(Duration::from_secs(10)); // Actual measurement time.
+
+    // Benchmarks for forward search
+    let mut group = criterion.benchmark_group("substring-forward");
+    bench_substring_forward(&mut group, &haystack, &needles);
+    group.finish();
+
+    // Benchmarks for backward search
+    let mut group = criterion.benchmark_group("substring-backward");
+    bench_substring_backward(&mut group, &haystack, &needles);
+    group.finish();
+
+    // Benchmarks for byteset search
+    let mut group = criterion.benchmark_group("byteset-forward");
+    bench_byteset_forward(&mut group, &haystack, &needles);
+    group.finish();
+
     criterion.final_summary();
 }
