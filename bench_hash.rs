@@ -1,7 +1,10 @@
 #![doc = r#"
 # StringWa.rs: String Hashing Benchmarks
 
-This file contains benchmarks for various Rust hashing libraries using Criterion.
+This file contains benchmarks for various Rust hashing libraries using Criterion,
+treating the inputs as binary strings without any UTF-8 validity constrains.
+For accurate stats aggregation, on each iteration, the whole file is scanned.
+Be warned, for large files, it may take a while!
 
 The benchmarks compare the performance of different hash functions including:
 
@@ -20,7 +23,7 @@ The benchmarks use two environment variables to control the input dataset and mo
 - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
   - `lines`: Process the dataset line by line.
   - `words`: Process the dataset word by word.
-  - `file`: Process the entire file as a single unit.
+  - `file`: Process the entire file as a single token.
 
 To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
 
@@ -31,11 +34,10 @@ RUSTFLAGS="-C target-cpu=native" \
     cargo criterion --features bench_hash bench_hash --jobs 8
 ```
 
-## Notes
-
-- Ensure your CPU supports the required AES and SSE2 instructions when using `gxhash`.
+For `gxhash`, ensure that your CPU supports the required AES and SSE2 instructions.
 "#]
 use std::env;
+use std::error::Error;
 use std::fs;
 
 use criterion::{black_box, Criterion, Throughput};
@@ -47,60 +49,48 @@ use std::hash::{BuildHasher, Hasher};
 use stringzilla::sz;
 use xxhash_rust::xxh3::xxh3_64;
 
-fn log_stringzilla_metadata() {
-    let v = sz::version();
-    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
-    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
-    println!("- capabilities: {}", sz::capabilities().as_str());
+/// Loads the dataset from the file specified by the `STRINGWARS_DATASET` environment variable.
+pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
+    let dataset_path = env::var("STRINGWARS_DATASET")
+        .map_err(|_| "STRINGWARS_DATASET environment variable not set")?;
+    let content = fs::read(&dataset_path)?;
+    Ok(content)
 }
 
-fn bench_hash(c: &mut Criterion) {
-    let dataset_path =
-        env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
+/// Tokenizes the given haystack based on the `STRINGWARS_TOKENS` environment variable.
+/// Supported modes: "lines", "words", and "file".
+pub fn tokenize<'a>(haystack: &'a [u8]) -> Result<Vec<&'a [u8]>, Box<dyn Error>> {
     let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-
-    let content = fs::read_to_string(&dataset_path).expect("Could not read dataset");
-    let units: Vec<&str> = match mode.as_str() {
-        "lines" => content.lines().collect(),
-        "words" => content.split_whitespace().collect(),
-        "file" => {
-            // In "file" mode, treat the entire content as a single unit.
-            vec![&content]
+    let tokens = match mode.as_str() {
+        "lines" => haystack.split(|&c| c == b'\n').collect(),
+        "words" => haystack.split(|&c| c == b'\n' || c == b' ').collect(),
+        "file" => vec![haystack],
+        other => {
+            return Err(format!(
+                "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
+                other
+            )
+            .into())
         }
-        other => panic!(
-            "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
-            other
-        ),
     };
-
-    if units.is_empty() {
-        panic!("No data found for hashing in the provided dataset.");
-    }
-
-    // Calculate total bytes processed for throughput reporting.
-    let total_bytes: usize = units.iter().map(|u| u.len()).sum();
-
-    let mut g = c.benchmark_group("stateful");
-    g.throughput(Throughput::Bytes(total_bytes as u64));
-    stateful_benchmarks(&mut g, &units);
-    g.finish();
-
-    let mut g = c.benchmark_group("stateless");
-    g.throughput(Throughput::Bytes(total_bytes as u64));
-    stateless_benchmarks(&mut g, &units);
-    g.finish();
+    Ok(tokens)
 }
 
-fn stateless_benchmarks(
+/// Benchmarks stateless hashes seeing the whole input at once
+fn bench_stateless(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    units: &[&str],
+    tokens: &[&[u8]],
 ) {
+    // Calculate total bytes processed for throughput reporting
+    let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
+    group.throughput(Throughput::Bytes(total_bytes as u64));
+
     // Benchmark: StringZilla `bytesum`
     group.bench_function("stringzilla::bytesum", |b| {
         b.iter(|| {
-            for unit in units {
+            for token in tokens {
                 // Using black_box to prevent compiler optimizations.
-                let _hash = sz::bytesum(black_box(unit.as_bytes()));
+                let _hash = sz::bytesum(black_box(token));
             }
         })
     });
@@ -108,8 +98,8 @@ fn stateless_benchmarks(
     // Benchmark: StringZilla `hash`
     group.bench_function("stringzilla::hash", |b| {
         b.iter(|| {
-            for unit in units {
-                let _hash = sz::hash(black_box(unit.as_bytes()));
+            for token in tokens {
+                let _hash = sz::hash(black_box(token));
             }
         })
     });
@@ -118,9 +108,9 @@ fn stateless_benchmarks(
     group.bench_function("std::hash::BuildHasher", |b| {
         let std_builder = std::collections::hash_map::RandomState::new();
         b.iter(|| {
-            for unit in units {
+            for token in tokens {
                 let mut hasher = std_builder.build_hasher();
-                hasher.write(unit.as_bytes());
+                hasher.write(token);
                 let _hash = black_box(hasher.finish());
             }
         })
@@ -130,8 +120,8 @@ fn stateless_benchmarks(
     group.bench_function("aHash::hash_one", |b| {
         let hash_builder = RandomState::with_seed(42);
         b.iter(|| {
-            for unit in units {
-                let _hash = black_box(hash_builder.hash_one(unit.as_bytes()));
+            for token in tokens {
+                let _hash = black_box(hash_builder.hash_one(token));
             }
         })
     });
@@ -139,8 +129,8 @@ fn stateless_benchmarks(
     // Benchmark: xxHash (`xxh3`)
     group.bench_function("xxh3::xxh3_64", |b| {
         b.iter(|| {
-            for unit in units {
-                let _hash = black_box(xxh3_64(unit.as_bytes()));
+            for token in tokens {
+                let _hash = black_box(xxh3_64(token));
             }
         })
     });
@@ -148,8 +138,8 @@ fn stateless_benchmarks(
     // Benchmark: gxhash
     group.bench_function("gxhash::gxhash64", |b| {
         b.iter(|| {
-            for unit in units {
-                let _hash = black_box(gxhash::gxhash64(unit.as_bytes(), 42));
+            for token in tokens {
+                let _hash = black_box(gxhash::gxhash64(token, 42));
             }
         })
     });
@@ -157,23 +147,28 @@ fn stateless_benchmarks(
     // Benchmark: Blake3 - should be by far the slowest, as it's a cryptographic hash.
     group.bench_function("blake3", |b| {
         b.iter(|| {
-            for unit in units {
-                let _hash = black_box(blake3::hash(unit.as_bytes()));
+            for token in tokens {
+                let _hash = black_box(blake3::hash(token));
             }
         })
     });
 }
 
-fn stateful_benchmarks(
+/// Benchmarks stateful hashes seeing one slice at a time
+fn bench_stateful(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    units: &[&str],
+    tokens: &[&[u8]],
 ) {
+    // Calculate total bytes processed for throughput reporting
+    let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
+    group.throughput(Throughput::Bytes(total_bytes as u64));
+
     // Benchmark: StringZilla `bytesum`
     group.bench_function("stringzilla::bytesum", |b| {
         b.iter(|| {
             let mut aggregate = 0u64;
-            for unit in units {
-                aggregate += sz::bytesum(unit.as_bytes());
+            for token in tokens {
+                aggregate += sz::bytesum(token);
             }
             black_box(aggregate);
         })
@@ -183,8 +178,8 @@ fn stateful_benchmarks(
     group.bench_function("stringzilla::HashState", |b| {
         b.iter(|| {
             let mut aggregate = sz::HashState::new(0);
-            for unit in units {
-                aggregate.stream(unit.as_bytes());
+            for token in tokens {
+                aggregate.stream(token);
             }
             black_box(aggregate.fold());
         })
@@ -195,8 +190,8 @@ fn stateful_benchmarks(
         let std_builder = std::collections::hash_map::RandomState::new();
         b.iter(|| {
             let mut aggregate = std_builder.build_hasher();
-            for unit in units {
-                aggregate.write(unit.as_bytes());
+            for token in tokens {
+                aggregate.write(token);
             }
             black_box(aggregate.finish());
         })
@@ -206,8 +201,8 @@ fn stateful_benchmarks(
     group.bench_function("aHash::AHasher", |b| {
         b.iter(|| {
             let mut aggregate = AHasher::default();
-            for unit in units {
-                aggregate.write(unit.as_bytes());
+            for token in tokens {
+                aggregate.write(token);
             }
             black_box(aggregate.finish());
         })
@@ -215,13 +210,34 @@ fn stateful_benchmarks(
 }
 
 fn main() {
-    log_stringzilla_metadata();
+    // Log StringZilla metadata
+    let v = sz::version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
+    println!("- capabilities: {}", sz::capabilities().as_str());
+
+    // Load the dataset defined by the environment variables, and panic if the content is missing
+    let dataset = load_dataset().unwrap();
+    let tokens = tokenize(&dataset).unwrap();
+    if tokens.is_empty() {
+        panic!("No tokens found in the dataset.");
+    }
+
     let mut criterion = Criterion::default()
         .configure_from_args()
         .sample_size(30) // Number of samples to collect.
         .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
         .measurement_time(std::time::Duration::from_secs(10)); // Actual measurement time.
 
-    bench_hash(&mut criterion);
+    // Profile hash functions that see the whole input at once
+    let mut group = criterion.benchmark_group("stateful");
+    bench_stateful(&mut group, &tokens);
+    group.finish();
+
+    // Profile incremental hash functions that see only a slice of data at a time
+    let mut group = criterion.benchmark_group("stateless");
+    bench_stateless(&mut group, &tokens);
+    group.finish();
+
     criterion.final_summary();
 }
