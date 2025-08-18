@@ -31,9 +31,10 @@ RUSTFLAGS="-C target-cpu=native" \
 
 use std::env;
 use std::fs;
+use std::hint::black_box;
 use std::sync::Arc;
 
-use criterion::{black_box, Criterion, SamplingMode};
+use criterion::{Criterion, SamplingMode};
 
 use arrow::array::{ArrayRef, LargeStringArray};
 use arrow::compute::{lexsort_to_indices, SortColumn, SortOptions};
