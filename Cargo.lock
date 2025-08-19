@@ -32,6 +32,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "allocator-api2"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78200ac3468a57d333cd0ea5dd398e25111194dcacd49208afca95c629a6311d"
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -761,6 +767,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
+name = "fork_union"
+version = "2.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc630732c5de7ab057b8b7f346776cc22797392f66221ab69942ac429ea57824"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "fxhash"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -824,7 +839,7 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "allocator-api2",
+ "allocator-api2 0.2.21",
  "equivalent",
  "foldhash",
 ]
@@ -1452,6 +1467,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
+name = "rust-tfidf"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba645a24c2f02d569e5bb4178e3ce8c82fce061888901e939d989ca67f2b4ce6"
+
+[[package]]
 name = "rustc_version"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1569,6 +1590,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "simhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd8e19fb8912cfcdc26507d2e38f53c9f7462b58bf7356f6f91acfb632d3a224"
+dependencies = [
+ "siphasher",
+]
+
+[[package]]
+name = "siphasher"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b8de496cf83d4ed58b6be86c3a275b8602f6ffe98d3024a869e124147a9a3ac"
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1587,6 +1623,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringtape"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b30ac50d35c42386e94714e7dee99ec54e4e53aaae3a07eeaa099c7421559ca8"
+dependencies = [
+ "allocator-api2 0.3.0",
+]
+
+[[package]]
 name = "stringwars"
 version = "0.1.0"
 dependencies = [
@@ -1597,6 +1642,7 @@ dependencies = [
  "blake3",
  "bstr",
  "criterion",
+ "fork_union",
  "getrandom 0.3.3",
  "gxhash",
  "memchr",
@@ -1607,6 +1653,9 @@ dependencies = [
  "rapidfuzz",
  "rayon",
  "regex",
+ "rust-tfidf",
+ "simhash",
+ "stringtape",
  "stringzilla",
  "twox-hash",
  "xxhash-rust",
@@ -1617,7 +1666,9 @@ dependencies = [
 name = "stringzilla"
 version = "3.11.3"
 dependencies = [
+ "allocator-api2 0.3.0",
  "cc",
+ "stringtape",
 ]
 
 [[package]]

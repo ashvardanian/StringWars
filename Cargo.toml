@@ -5,8 +5,9 @@ edition = "2018"
 
 [dependencies]
 criterion = "0.7.0"
-# stringzilla = { version = "3.3.0" }
-stringzilla = { path = "../StringZilla/" }
+# Prefer local checkout if present; enable StringZilla CPU backends.
+# If path is unavailable, switch to a crates.io version and keep features.
+stringzilla = { path = "../StringZilla/", features = ["cpus"] }
 
 # Feature-based dependencies for benchmarks
 [features]
@@ -27,11 +28,11 @@ bench_sequence = [
     "arrow", # Sorting
     "rayon", # Parallel Sorting
 ]
-bench_similarity = [
-    "rapidfuzz",   # Levenshtein Distance (also `strsim`)
-    "bio",         # Needleman-Wunsch Score
-    "fork_union",  # Parallelizing RapidFuzz calls
-    "stringtape",  # String and bytes tapes for StringZilla
+bench_similarities = [
+    "rapidfuzz",  # Levenshtein Distance (also `strsim`)
+    "bio",        # Needleman-Wunsch Score
+    "fork_union", # Parallelizing RapidFuzz calls
+    "stringtape", # String and bytes tapes for StringZilla
 ]
 bench_memory = [
     # "opencv",    # Lookup Transform
@@ -40,6 +41,10 @@ bench_memory = [
     "getrandom",    # Randomize Buffer via OS
     "rand_chacha",  # Randomize Buffer
     "rand_xoshiro", # Randomize Buffer
+]
+bench_fingerprints = [
+    "simhash",    # SimHash fingerprinting
+    "rust-tfidf", # TF-IDF feature extraction
 ]
 
 # TODO: String properties:
@@ -80,6 +85,14 @@ optional = true
 
 [dependencies.stringtape]
 version = "0.4"
+optional = true
+
+[dependencies.simhash]
+version = "0.2"
+optional = true
+
+[dependencies.rust-tfidf]
+version = "1.0"
 optional = true
 
 [dependencies.blake3]
@@ -142,10 +155,10 @@ harness = false
 required-features = ["bench_find"]
 
 [[bench]]
-name = "bench_similarity"
-path = "bench_similarity.rs"
+name = "bench_similarities"
+path = "bench_similarities.rs"
 harness = false
-required-features = ["bench_similarity"]
+required-features = ["bench_similarities"]
 
 [[bench]]
 name = "bench_hash"
@@ -164,3 +177,9 @@ name = "bench_memory"
 path = "bench_memory.rs"
 harness = false
 required-features = ["bench_memory"]
+
+[[bench]]
+name = "bench_fingerprints"
+path = "bench_fingerprints.rs"
+harness = false
+required-features = ["bench_fingerprints"]
