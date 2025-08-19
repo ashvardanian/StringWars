@@ -28,8 +28,10 @@ bench_sequence = [
     "rayon", # Parallel Sorting
 ]
 bench_similarity = [
-    "rapidfuzz", # Levenshtein Distance (also `strsim`)
-    "bio",       # Needleman-Wunsch Score
+    "rapidfuzz",   # Levenshtein Distance (also `strsim`)
+    "bio",         # Needleman-Wunsch Score
+    "fork_union",  # Parallelizing RapidFuzz calls
+    "stringtape",  # String and bytes tapes for StringZilla
 ]
 bench_memory = [
     # "opencv",    # Lookup Transform
@@ -70,6 +72,14 @@ optional = true
 
 [dependencies.rapidfuzz]
 version = "0.5.0"
+optional = true
+
+[dependencies.fork_union]
+version = "2.2"
+optional = true
+
+[dependencies.stringtape]
+version = "0.4"
 optional = true
 
 [dependencies.blake3]
