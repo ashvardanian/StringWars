@@ -47,6 +47,20 @@ use memchr::memmem;
 use regex::bytes::Regex;
 use stringzilla::sz;
 
+fn log_stringzilla_metadata() {
+    let v = sz::version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
+    println!("- capabilities: {}", sz::capabilities().as_str());
+}
+
+fn configure_bench() -> Criterion {
+    Criterion::default()
+        .sample_size(10) // Each loop scans the whole dataset, but this can't be under 10
+        .warm_up_time(Duration::from_secs(3)) // Let the CPU frequencies settle.
+        .measurement_time(Duration::from_secs(20)) // Actual measurement time.
+}
+
 /// Loads the dataset from the file specified by the `STRINGWARS_DATASET` environment variable.
 pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
     let dataset_path = env::var("STRINGWARS_DATASET")
@@ -312,11 +326,7 @@ fn bench_byteset_forward(
 }
 
 fn main() {
-    // Log StringZilla metadata
-    let v = sz::version();
-    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
-    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
-    println!("- capabilities: {}", sz::capabilities().as_str());
+    log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables, and panic if the content is missing
     let haystack = load_dataset().unwrap();
@@ -325,11 +335,7 @@ fn main() {
         panic!("No tokens found in the dataset.");
     }
 
-    // Setup the default durations
-    let mut criterion = Criterion::default()
-        .sample_size(10) // Each loop scans the whole dataset, but this can't be under 10
-        .warm_up_time(Duration::from_secs(3)) // Let the CPU frequencies settle.
-        .measurement_time(Duration::from_secs(20)); // Actual measurement time.
+    let mut criterion = configure_bench();
 
     // Benchmarks for forward search
     let mut group = criterion.benchmark_group("substring-forward");

@@ -41,6 +41,20 @@ use arrow::compute::{lexsort_to_indices, SortColumn, SortOptions};
 use rayon::prelude::*;
 use stringzilla::sz;
 
+fn log_stringzilla_metadata() {
+    let v = sz::version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
+    println!("- capabilities: {}", sz::capabilities().as_str());
+}
+
+fn configure_bench() -> Criterion {
+    Criterion::default()
+        .sample_size(10) // Each loop processes the whole dataset.
+        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
+        .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
+}
+
 /// Loads UTF-8 textual data from the file specified by the `STRINGWARS_DATASET` environment variable.
 fn load_dataset() -> Vec<String> {
     let dataset_path =
@@ -126,23 +140,15 @@ fn bench_argsort(
 }
 
 fn main() {
-    // Log StringZilla metadata
-    let v = sz::version();
-    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
-    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
-    println!("- capabilities: {}", sz::capabilities().as_str());
+    log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables, and panic if the content is missing
-    let tokens = load_dataset().unwrap();
+    let tokens = load_dataset();
     if tokens.is_empty() {
         panic!("No tokens found in the dataset.");
     }
 
-    // Setup the default durations
-    let mut criterion = Criterion::default()
-        .sample_size(10) // Each loop processes the whole dataset.
-        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
-        .measurement_time(std::time::Duration::from_secs(10)); // Actual measurement time.
+    let mut criterion = configure_bench();
 
     let mut group = criterion.benchmark_group("argsort");
     bench_argsort(&mut group, &tokens);

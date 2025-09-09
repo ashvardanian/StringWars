@@ -50,6 +50,21 @@ use std::hash::{BuildHasher, Hasher};
 use stringzilla::sz;
 use xxhash_rust::xxh3::xxh3_64;
 
+fn log_stringzilla_metadata() {
+    let v = sz::version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
+    println!("- capabilities: {}", sz::capabilities().as_str());
+}
+
+fn configure_bench() -> Criterion {
+    Criterion::default()
+        .configure_from_args()
+        .sample_size(30) // Number of samples to collect.
+        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
+        .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
+}
+
 /// Loads the dataset from the file specified by the `STRINGWARS_DATASET` environment variable.
 pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
     let dataset_path = env::var("STRINGWARS_DATASET")
@@ -211,11 +226,7 @@ fn bench_stateful(
 }
 
 fn main() {
-    // Log StringZilla metadata
-    let v = sz::version();
-    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
-    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
-    println!("- capabilities: {}", sz::capabilities().as_str());
+    log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables, and panic if the content is missing
     let dataset = load_dataset().unwrap();
@@ -224,11 +235,7 @@ fn main() {
         panic!("No tokens found in the dataset.");
     }
 
-    let mut criterion = Criterion::default()
-        .configure_from_args()
-        .sample_size(30) // Number of samples to collect.
-        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
-        .measurement_time(std::time::Duration::from_secs(10)); // Actual measurement time.
+    let mut criterion = configure_bench();
 
     // Profile hash functions that see the whole input at once
     let mut group = criterion.benchmark_group("stateful");
