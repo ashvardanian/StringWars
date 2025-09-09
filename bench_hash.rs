@@ -86,7 +86,7 @@ fn bench_stateless(
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark: StringZilla `bytesum`
-    group.bench_function("stringzilla::bytesum", |b| {
+    group.bench_function("sz::bytesum", |b| {
         b.iter(|| {
             for token in tokens {
                 // Using black_box to prevent compiler optimizations.
@@ -96,7 +96,7 @@ fn bench_stateless(
     });
 
     // Benchmark: StringZilla `hash`
-    group.bench_function("stringzilla::hash", |b| {
+    group.bench_function("sz::hash", |b| {
         b.iter(|| {
             for token in tokens {
                 let _hash = sz::hash(black_box(token));
@@ -164,7 +164,7 @@ fn bench_stateful(
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark: StringZilla `bytesum`
-    group.bench_function("stringzilla::bytesum", |b| {
+    group.bench_function("sz::bytesum", |b| {
         b.iter(|| {
             let mut aggregate = 0u64;
             for token in tokens {
@@ -175,13 +175,13 @@ fn bench_stateful(
     });
 
     // Benchmark: StringZilla `hash`
-    group.bench_function("stringzilla::HashState", |b| {
+    group.bench_function("sz::Hasher", |b| {
         b.iter(|| {
-            let mut aggregate = sz::HashState::new(0);
+            let mut hasher = sz::Hasher::new(0);
             for token in tokens {
-                aggregate.stream(token);
+                hasher.write(token);
             }
-            black_box(aggregate.fold());
+            black_box(hasher.finish());
         })
     });
 

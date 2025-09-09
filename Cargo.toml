@@ -5,8 +5,10 @@ edition = "2018"
 
 [dependencies]
 criterion = "0.5.1"
-# stringzilla = { version = "3.3.0" }
-stringzilla = { path = "../StringZilla/" }
+stringzilla = { version = "4.0.0" }
+
+# To use a local version of StringZilla, set the path:
+# stringzilla = { path = "../StringZilla/" }
 
 # Feature-based dependencies for benchmarks
 [features]

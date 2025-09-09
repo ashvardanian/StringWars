@@ -38,33 +38,10 @@ use criterion::{black_box, Criterion, SamplingMode};
 use arrow::array::{ArrayRef, LargeStringArray};
 use arrow::compute::{lexsort_to_indices, SortColumn, SortOptions};
 use rayon::prelude::*;
-use stringzilla::sz::{
-    argsort_permutation as sz_argsort_permutation,
-    argsort_permutation_by as sz_argsort_permutation_by,
-};
+use stringzilla::sz;
 
-use stringzilla::sz::{
-    // Pull some metadata logging functionality
-    capabilities as sz_capabilities,
-    dynamic_dispatch as sz_dynamic_dispatch,
-    version as sz_version,
-};
-
-fn log_stringzilla_metadata() {
-    let v = sz_version();
-    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
-    println!("- uses dynamic dispatch: {}", sz_dynamic_dispatch());
-    println!("- capabilities: {}", sz_capabilities().as_str());
-}
-
-fn configure_bench() -> Criterion {
-    Criterion::default()
-        .sample_size(10) // Each loop processes the whole dataset.
-        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
-        .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
-}
-
-fn load_data() -> Vec<String> {
+/// Loads UTF-8 textual data from the file specified by the `STRINGWARS_DATASET` environment variable.
+fn load_dataset() -> Vec<String> {
     let dataset_path =
         env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
     let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
@@ -84,20 +61,16 @@ fn load_data() -> Vec<String> {
     data
 }
 
-fn bench_argsort(c: &mut Criterion) {
-    // Load the dataset once; each benchmark iteration will clone this unsorted data.
-    let unsorted = load_data();
-    if unsorted.is_empty() {
-        panic!("No data found in dataset for sorting benchmark.");
-    }
-
-    let mut group = c.benchmark_group("sorting");
-    //? We have a very long benchmark, flat sampling is what we need.
-    //? https://bheisler.github.io/criterion.rs/book/user_guide/advanced_configuration.html#sampling-mode
+fn bench_argsort(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    unsorted: &Vec<String>,
+) {
+    // ? We have a very long benchmark, flat sampling is what we need.
+    // ? https://bheisler.github.io/criterion.rs/book/user_guide/advanced_configuration.html#sampling-mode
     group.sampling_mode(SamplingMode::Flat);
-    //? For comparison-based sorting algorithms, we can report throughput in terms of comparisons,
-    //? which is proportional to the number of elements in the array multiplied by the logarithm of
-    //? the number of elements.
+    // ? For comparison-based sorting algorithms, we can report throughput in terms of comparisons,
+    // ? which is proportional to the number of elements in the array multiplied by the logarithm of
+    // ? the number of elements.
     let throughput = unsorted.len() as f64 * (unsorted.len() as f64).log2();
     group.throughput(criterion::Throughput::Elements(throughput as u64));
 
@@ -105,7 +78,7 @@ fn bench_argsort(c: &mut Criterion) {
     group.bench_function("sz::argsort_permutation", |b| {
         b.iter(|| {
             let mut indices: Vec<usize> = (0..unsorted.len()).collect();
-            sz_argsort_permutation(&unsorted, &mut indices).expect("StringZilla argsort failed");
+            sz::argsort_permutation(&unsorted, &mut indices).expect("StringZilla argsort failed");
             black_box(indices);
         })
     });
@@ -149,13 +122,30 @@ fn bench_argsort(c: &mut Criterion) {
             black_box(&indices);
         })
     });
-
-    group.finish();
 }
 
 fn main() {
-    log_stringzilla_metadata();
-    let mut criterion = configure_bench();
-    bench_argsort(&mut criterion);
+    // Log StringZilla metadata
+    let v = sz::version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
+    println!("- capabilities: {}", sz::capabilities().as_str());
+
+    // Load the dataset defined by the environment variables, and panic if the content is missing
+    let tokens = load_dataset().unwrap();
+    if tokens.is_empty() {
+        panic!("No tokens found in the dataset.");
+    }
+
+    // Setup the default durations
+    let mut criterion = Criterion::default()
+        .sample_size(10) // Each loop processes the whole dataset.
+        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
+        .measurement_time(std::time::Duration::from_secs(10)); // Actual measurement time.
+
+    let mut group = criterion.benchmark_group("argsort");
+    bench_argsort(&mut group, &tokens);
+    group.finish();
+
     criterion.final_summary();
 }
