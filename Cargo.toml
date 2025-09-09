@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-criterion = "0.5.1"
-stringzilla = { version = "4.0.0" }
+criterion = "0.7.0"
+stringzilla = { version = "4.0.0", features = ["cpus"] }
 
 # To use a local version of StringZilla, set the path:
-# stringzilla = { path = "../StringZilla/" }
+# stringzilla = { path = "../StringZilla/", features = ["cpus"] }
 
 # Feature-based dependencies for benchmarks
 [features]
@@ -29,9 +29,11 @@ bench_sequence = [
     "arrow", # Sorting
     "rayon", # Parallel Sorting
 ]
-bench_similarity = [
-    "rapidfuzz", # Levenshtein Distance (also `strsim`)
-    "bio",       # Needleman-Wunsch Score
+bench_similarities = [
+    "rapidfuzz",  # Levenshtein Distance (also `strsim`)
+    "bio",        # Needleman-Wunsch Score
+    "fork_union", # Parallelizing RapidFuzz calls
+    "stringtape", # String and bytes tapes for StringZilla
 ]
 bench_memory = [
     # "opencv",    # Lookup Transform
@@ -40,6 +42,10 @@ bench_memory = [
     "getrandom",    # Randomize Buffer via OS
     "rand_chacha",  # Randomize Buffer
     "rand_xoshiro", # Randomize Buffer
+]
+bench_fingerprints = [
+    "simhash",    # SimHash fingerprinting
+    "rust-tfidf", # TF-IDF feature extraction
 ]
 
 # TODO: String properties:
@@ -74,6 +80,22 @@ optional = true
 version = "0.5.0"
 optional = true
 
+[dependencies.fork_union]
+version = "2.2"
+optional = true
+
+[dependencies.stringtape]
+version = "0.4"
+optional = true
+
+[dependencies.simhash]
+version = "0.2"
+optional = true
+
+[dependencies.rust-tfidf]
+version = "1.0"
+optional = true
+
 [dependencies.blake3]
 version = "1.6.1"
 optional = true
@@ -96,7 +118,7 @@ version = "2.1.0"
 optional = true
 
 [dependencies.arrow]
-version = "54.2.1"
+version = "56.0.0"
 optional = true
 
 [dependencies.rayon]
@@ -104,7 +126,7 @@ version = "1.10.0"
 optional = true
 
 [dependencies.opencv]
-version = "0.94.2"
+version = "0.95.0"
 optional = true
 
 [dependencies.zeroize]
@@ -112,11 +134,11 @@ version = "1.8.1"
 optional = true
 
 [dependencies.getrandom]
-version = "0.3.1"
+version = "0.3.3"
 optional = true
 
 [dependencies.rand]
-version = "0.9.0"
+version = "0.9.2"
 optional = true
 
 [dependencies.rand_chacha]
@@ -134,10 +156,10 @@ harness = false
 required-features = ["bench_find"]
 
 [[bench]]
-name = "bench_similarity"
-path = "bench_similarity.rs"
+name = "bench_similarities"
+path = "bench_similarities.rs"
 harness = false
-required-features = ["bench_similarity"]
+required-features = ["bench_similarities"]
 
 [[bench]]
 name = "bench_hash"
@@ -156,3 +178,9 @@ name = "bench_memory"
 path = "bench_memory.rs"
 harness = false
 required-features = ["bench_memory"]
+
+[[bench]]
+name = "bench_fingerprints"
+path = "bench_fingerprints.rs"
+harness = false
+required-features = ["bench_fingerprints"]

@@ -39,8 +39,9 @@ For `gxhash`, ensure that your CPU supports the required AES and SSE2 instructio
 use std::env;
 use std::error::Error;
 use std::fs;
+use std::hint::black_box;
 
-use criterion::{black_box, Criterion, Throughput};
+use criterion::{Criterion, Throughput};
 
 use ahash::{AHasher, RandomState};
 use blake3;

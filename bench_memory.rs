@@ -28,9 +28,10 @@ RUSTFLAGS="-C target-cpu=native" \
 use std::env;
 use std::error::Error;
 use std::fs;
+use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{black_box, Criterion, Throughput};
+use criterion::{Criterion, Throughput};
 
 use getrandom;
 use rand;
