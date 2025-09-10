@@ -21,12 +21,12 @@ The benchmarks use environment variables to control the input dataset and mode:
 - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
   - `lines`: Process the dataset line by line.
   - `words`: Process the dataset word by word.
-- `STRINGWARS_BATCH`: Number of pairs to process in each batch (default: 1024).
+- `STRINGWARS_BATCH`: Number of pairs to process in each batch (default: 2048).
 
 ```sh
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
-    STRINGWARS_BATCH=1024 \
+    STRINGWARS_BATCH=2048 \
     STRINGWARS_TOKENS=lines \
     cargo criterion --features bench_similarities bench_similarities --jobs 8
 ```
@@ -44,31 +44,59 @@ use stringzilla::szs::{
 };
 
 // Pull some metadata logging functionality
-use stringzilla::sz::{
-    capabilities as sz_capabilities, dynamic_dispatch as sz_dynamic_dispatch, version as sz_version,
-};
+use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
+use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version};
 
 fn log_stringzilla_metadata() {
-    let v = sz_version();
+    let v = szs_version();
     println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
     println!("- uses dynamic dispatch: {}", sz_dynamic_dispatch());
-    println!("- capabilities: {}", sz_capabilities().as_str());
+    println!("- capabilities: {}", szs_capabilities().as_str());
 }
 
-fn log_stringzillas_metadata() {
-    // Log information about the StringZilla szs module capabilities
-    println!("StringZilla szs module:");
-    println!("- DeviceScope support: CPU cores, GPU devices");
-    println!("- Algorithms: LevenshteinDistances, LevenshteinDistancesUtf8");
-    println!("- Scoring: NeedlemanWunschScores, SmithWatermanScores");
-    println!("- Gap models: Uniform, Linear, Affine");
+fn make_batch_bytes<'a>(
+    pairs: &'a [(&'a str, &'a str)],
+    start_index: &mut usize,
+    batch_size: usize,
+) -> (Vec<&'a [u8]>, Vec<&'a [u8]>) {
+    let mut a_out = Vec::with_capacity(batch_size);
+    let mut b_out = Vec::with_capacity(batch_size);
+    let len = pairs.len();
+    let start = *start_index;
+    for i in 0..batch_size {
+        let idx = (start + i) % len;
+        let (a, b) = pairs[idx];
+        a_out.push(a.as_bytes());
+        b_out.push(b.as_bytes());
+    }
+    *start_index = (start + batch_size) % len;
+    (a_out, b_out)
+}
+
+fn make_batch_strs<'a>(
+    pairs: &'a [(&'a str, &'a str)],
+    start_index: &mut usize,
+    batch_size: usize,
+) -> (Vec<&'a str>, Vec<&'a str>) {
+    let mut a_out = Vec::with_capacity(batch_size);
+    let mut b_out = Vec::with_capacity(batch_size);
+    let len = pairs.len();
+    let start = *start_index;
+    for i in 0..batch_size {
+        let idx = (start + i) % len;
+        let (a, b) = pairs[idx];
+        a_out.push(a);
+        b_out.push(b);
+    }
+    *start_index = (start + batch_size) % len;
+    (a_out, b_out)
 }
 
 fn configure_bench() -> Criterion {
     Criterion::default()
-        .sample_size(1000)
-        .warm_up_time(std::time::Duration::from_secs(10))
-        .measurement_time(std::time::Duration::from_secs(120))
+        .sample_size(10)
+        .warm_up_time(std::time::Duration::from_secs(1))
+        .measurement_time(std::time::Duration::from_secs(10))
 }
 
 fn bench_similarities(c: &mut Criterion) {
@@ -78,7 +106,7 @@ fn bench_similarities(c: &mut Criterion) {
     let content = fs::read_to_string(&dataset_path).expect("Could not read dataset");
 
     let batch_size = env::var("STRINGWARS_BATCH")
-        .unwrap_or_else(|_| "1024".to_string())
+        .unwrap_or_else(|_| "2048".to_string())
         .parse::<usize>()
         .expect("STRINGWARS_BATCH must be a number");
 
@@ -119,29 +147,34 @@ fn bench_similarities(c: &mut Criterion) {
         pairs.truncate(max_pairs);
     }
 
-    // Calculate average matrix size for throughput reporting
-    let avg_matrix_size: u64 = pairs
+    // Calculate average matrix sizes for throughput reporting
+    // - bytes: number of bytes in each string product
+    // - utf8: number of Unicode scalar values (code points) product
+    let avg_cells_bytes: u64 = pairs
         .iter()
         .map(|(a, b)| (a.len() * b.len()) as u64)
         .sum::<u64>()
         / pairs.len() as u64;
 
+    let avg_cells_utf8: u64 = pairs
+        .iter()
+        .map(|(a, b)| (a.chars().count() as u64) * (b.chars().count() as u64))
+        .sum::<u64>()
+        / pairs.len() as u64;
+
     // Uniform cost benchmarks (classic Levenshtein: match=0, mismatch=1, open=1, extend=1)
     let mut g = c.benchmark_group("uniform");
-    g.throughput(Throughput::Elements(batch_size as u64 * avg_matrix_size));
-    perform_uniform_benchmarks(&mut g, &pairs, batch_size);
+    perform_uniform_benchmarks(&mut g, &pairs, batch_size, avg_cells_bytes, avg_cells_utf8);
     g.finish();
 
     // Linear gap cost benchmarks (NW/SW: match=2, mismatch=-1, open=-2, extend=-2)
     let mut g = c.benchmark_group("linear");
-    g.throughput(Throughput::Elements(batch_size as u64 * avg_matrix_size));
-    perform_linear_benchmarks(&mut g, &pairs, batch_size);
+    perform_linear_benchmarks(&mut g, &pairs, batch_size, avg_cells_bytes);
     g.finish();
 
     // Affine gap cost benchmarks (NW/SW: match=2, mismatch=-1, open=-5, extend=-1)
     let mut g = c.benchmark_group("affine");
-    g.throughput(Throughput::Elements(batch_size as u64 * avg_matrix_size));
-    perform_affine_benchmarks(&mut g, &pairs, batch_size);
+    perform_affine_benchmarks(&mut g, &pairs, batch_size, avg_cells_bytes);
     g.finish();
 }
 
@@ -150,6 +183,8 @@ fn perform_uniform_benchmarks(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     pairs: &[(&str, &str)],
     batch_size: usize,
+    avg_cells_bytes: u64,
+    avg_cells_utf8: u64,
 ) {
     // No tapes needed - use simple string arrays
 
@@ -173,165 +208,93 @@ fn perform_uniform_benchmarks(
         .as_ref()
         .ok()
         .and_then(|gpu| LevenshteinDistances::new(gpu, 0, 1, 1, 1).ok());
-    let maybe_lev_utf8_gpu = maybe_gpu
-        .as_ref()
-        .ok()
-        .and_then(|gpu| LevenshteinDistancesUtf8::new(gpu, 0, 1, 1, 1).ok());
 
-    // Note: Parallel RapidFuzz benchmarks removed for simplicity
+    let per_pair_bytes = avg_cells_bytes;
+    let per_pair_utf8 = avg_cells_utf8;
+    let per_batch_bytes = (batch_size as u64) * avg_cells_bytes;
+    let per_batch_utf8 = (batch_size as u64) * avg_cells_utf8;
 
-    // RapidFuzz baselines
+    // RapidFuzz baselines (no batching; scan one-by-one)
+    g.throughput(Throughput::Elements(per_pair_bytes));
     g.bench_function("rapidfuzz::levenshtein<Bytes>(1xCPU)", |b| {
         let mut pair_index = 0;
         b.iter(|| {
-            let mut results = Vec::with_capacity(batch_size);
-            for _ in 0..batch_size {
-                let (a, b_str) = pairs[pair_index % pairs.len()];
-                results.push(levenshtein::distance(a.bytes(), b_str.bytes()));
-                pair_index = (pair_index + 1) % pairs.len();
-            }
-            results
+            let (a, b_str) = pairs[pair_index % pairs.len()];
+            pair_index = (pair_index + 1) % pairs.len();
+            levenshtein::distance(a.bytes(), b_str.bytes())
         })
     });
 
+    g.throughput(Throughput::Elements(per_pair_utf8));
     g.bench_function("rapidfuzz::levenshtein<Chars>(1xCPU)", |b| {
         let mut pair_index = 0;
         b.iter(|| {
-            let mut results = Vec::with_capacity(batch_size);
-            for _ in 0..batch_size {
-                let (a, b_str) = pairs[pair_index % pairs.len()];
-                results.push(levenshtein::distance(a.chars(), b_str.chars()));
-                pair_index = (pair_index + 1) % pairs.len();
-            }
-            results
+            let (a, b_str) = pairs[pair_index % pairs.len()];
+            pair_index = (pair_index + 1) % pairs.len();
+            levenshtein::distance(a.chars(), b_str.chars())
         })
     });
 
     // StringZilla Binary Levenshtein Distance (uniform costs: 0,1,1,1)
+    g.throughput(Throughput::Elements(per_batch_bytes));
     g.bench_function("szs::LevenshteinDistances(1xCPU)", |b| {
         let mut start_index = 0;
         b.iter(|| {
-            let end_index = (start_index + batch_size).min(pairs.len());
-            let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(a, _)| a.as_bytes())
-                .collect();
-            let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(_, b)| b.as_bytes())
-                .collect();
-            let result = lev_single.compute(&cpu_single, &batch_a, &batch_b).unwrap();
-            start_index = (start_index + batch_size) % pairs.len();
-            result
+            let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+            lev_single.compute(&cpu_single, &batch_a, &batch_b).unwrap()
         })
     });
 
+    g.throughput(Throughput::Elements(per_batch_bytes));
     g.bench_function(
         &format!("szs::LevenshteinDistances({}xCPU)", num_cores),
         |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = lev_parallel
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                lev_parallel
                     .compute(&cpu_parallel, &batch_a, &batch_b)
-                    .unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                    .unwrap()
             })
         },
     );
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_lev_gpu.as_ref()) {
+        g.throughput(Throughput::Elements(per_batch_bytes));
         g.bench_function("szs::LevenshteinDistances(1xGPU)", |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = engine.compute(gpu, &batch_a, &batch_b).unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                engine.compute(gpu, &batch_a, &batch_b).unwrap()
             })
         });
     }
 
     // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
+    g.throughput(Throughput::Elements(per_batch_utf8));
     g.bench_function("szs::LevenshteinDistancesUtf8(1xCPU)", |b| {
         let mut start_index = 0;
         b.iter(|| {
-            let end_index = (start_index + batch_size).min(pairs.len());
-            let batch_a: Vec<&str> = pairs[start_index..end_index]
-                .iter()
-                .map(|(a, _)| a.as_ref())
-                .collect();
-            let batch_b: Vec<&str> = pairs[start_index..end_index]
-                .iter()
-                .map(|(_, b)| b.as_ref())
-                .collect();
-            let result = lev_utf8_single
+            let (batch_a, batch_b) = make_batch_strs(pairs, &mut start_index, batch_size);
+            lev_utf8_single
                 .compute(&cpu_single, &batch_a, &batch_b)
-                .unwrap();
-            start_index = (start_index + batch_size) % pairs.len();
-            result
+                .unwrap()
         })
     });
 
+    g.throughput(Throughput::Elements(per_batch_utf8));
     g.bench_function(
         &format!("szs::LevenshteinDistancesUtf8({}xCPU)", num_cores),
         |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&str> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_ref())
-                    .collect();
-                let batch_b: Vec<&str> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_ref())
-                    .collect();
-                let result = lev_utf8_parallel
+                let (batch_a, batch_b) = make_batch_strs(pairs, &mut start_index, batch_size);
+                lev_utf8_parallel
                     .compute(&cpu_parallel, &batch_a, &batch_b)
-                    .unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                    .unwrap()
             })
         },
     );
-
-    if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_lev_utf8_gpu.as_ref()) {
-        g.bench_function("szs::LevenshteinDistancesUtf8(1xGPU)", |b| {
-            let mut start_index = 0;
-            b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&str> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_ref())
-                    .collect();
-                let batch_b: Vec<&str> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_ref())
-                    .collect();
-                let result = engine.compute(gpu, &batch_a, &batch_b).unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
-            })
-        });
-    }
 }
 
 /// Linear gap cost benchmarks: NW/SW with linear penalties (match=2, mismatch=-1, open=-2, extend=-2)
@@ -339,6 +302,7 @@ fn perform_linear_benchmarks(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     pairs: &[(&str, &str)],
     batch_size: usize,
+    avg_cells_bytes: u64,
 ) {
     // No tapes needed - use simple string arrays
 
@@ -369,126 +333,74 @@ fn perform_linear_benchmarks(
         .ok()
         .and_then(|gpu| SmithWatermanScores::new(gpu, &matrix, -2, -2).ok());
 
+    let per_batch = (batch_size as u64) * avg_cells_bytes;
+
     // Needleman-Wunsch (Global alignment)
+    g.throughput(Throughput::Elements(per_batch));
     g.bench_function("szs::NeedlemanWunschScores(1xCPU)", |b| {
         let mut start_index = 0;
         b.iter(|| {
-            let end_index = (start_index + batch_size).min(pairs.len());
-            let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(a, _)| a.as_bytes())
-                .collect();
-            let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(_, b)| b.as_bytes())
-                .collect();
-            let result = nw_single.compute(&cpu_single, &batch_a, &batch_b).unwrap();
-            start_index = (start_index + batch_size) % pairs.len();
-            result
+            let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+            nw_single.compute(&cpu_single, &batch_a, &batch_b).unwrap()
         })
     });
 
+    g.throughput(Throughput::Elements(per_batch));
     g.bench_function(
         &format!("szs::NeedlemanWunschScores({}xCPU)", num_cores),
         |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = nw_parallel
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                nw_parallel
                     .compute(&cpu_parallel, &batch_a, &batch_b)
-                    .unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                    .unwrap()
             })
         },
     );
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_nw_gpu.as_ref()) {
+        g.throughput(Throughput::Elements(per_batch));
         g.bench_function("szs::NeedlemanWunschScores(1xGPU)", |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = engine.compute(gpu, &batch_a, &batch_b).unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                engine.compute(gpu, &batch_a, &batch_b).unwrap()
             })
         });
     }
 
     // Smith-Waterman (Local alignment)
+    g.throughput(Throughput::Elements(per_batch));
     g.bench_function("szs::SmithWatermanScores(1xCPU)", |b| {
         let mut start_index = 0;
         b.iter(|| {
-            let end_index = (start_index + batch_size).min(pairs.len());
-            let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(a, _)| a.as_bytes())
-                .collect();
-            let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(_, b)| b.as_bytes())
-                .collect();
-            let result = sw_single.compute(&cpu_single, &batch_a, &batch_b).unwrap();
-            start_index = (start_index + batch_size) % pairs.len();
-            result
+            let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+            sw_single.compute(&cpu_single, &batch_a, &batch_b).unwrap()
         })
     });
 
+    g.throughput(Throughput::Elements(per_batch));
     g.bench_function(
         &format!("szs::SmithWatermanScores({}xCPU)", num_cores),
         |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = sw_parallel
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                sw_parallel
                     .compute(&cpu_parallel, &batch_a, &batch_b)
-                    .unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                    .unwrap()
             })
         },
     );
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sw_gpu.as_ref()) {
-        g.bench_function("szs::SmithWatermanScores(gpu)", |b| {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function("szs::SmithWatermanScores(1xGPU)", |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = engine.compute(gpu, &batch_a, &batch_b).unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                engine.compute(gpu, &batch_a, &batch_b).unwrap()
             })
         });
     }
@@ -499,6 +411,7 @@ fn perform_affine_benchmarks(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     pairs: &[(&str, &str)],
     batch_size: usize,
+    avg_cells_bytes: u64,
 ) {
     // No tapes needed - use simple string arrays
 
@@ -529,126 +442,74 @@ fn perform_affine_benchmarks(
         .ok()
         .and_then(|gpu| SmithWatermanScores::new(gpu, &matrix, -5, -1).ok());
 
+    let per_batch = (batch_size as u64) * avg_cells_bytes;
+
     // Needleman-Wunsch (Global alignment)
+    g.throughput(Throughput::Elements(per_batch));
     g.bench_function("szs::NeedlemanWunschScores(1xCPU)", |b| {
         let mut start_index = 0;
         b.iter(|| {
-            let end_index = (start_index + batch_size).min(pairs.len());
-            let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(a, _)| a.as_bytes())
-                .collect();
-            let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(_, b)| b.as_bytes())
-                .collect();
-            let result = nw_single.compute(&cpu_single, &batch_a, &batch_b).unwrap();
-            start_index = (start_index + batch_size) % pairs.len();
-            result
+            let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+            nw_single.compute(&cpu_single, &batch_a, &batch_b).unwrap()
         })
     });
 
+    g.throughput(Throughput::Elements(per_batch));
     g.bench_function(
         &format!("szs::NeedlemanWunschScores({}xCPU)", num_cores),
         |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = nw_parallel
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                nw_parallel
                     .compute(&cpu_parallel, &batch_a, &batch_b)
-                    .unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                    .unwrap()
             })
         },
     );
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_nw_gpu.as_ref()) {
+        g.throughput(Throughput::Elements(per_batch));
         g.bench_function("szs::NeedlemanWunschScores(1xGPU)", |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = engine.compute(gpu, &batch_a, &batch_b).unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                engine.compute(gpu, &batch_a, &batch_b).unwrap()
             })
         });
     }
 
     // Smith-Waterman (Local alignment)
+    g.throughput(Throughput::Elements(per_batch));
     g.bench_function("szs::SmithWatermanScores(1xCPU)", |b| {
         let mut start_index = 0;
         b.iter(|| {
-            let end_index = (start_index + batch_size).min(pairs.len());
-            let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(a, _)| a.as_bytes())
-                .collect();
-            let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                .iter()
-                .map(|(_, b)| b.as_bytes())
-                .collect();
-            let result = sw_single.compute(&cpu_single, &batch_a, &batch_b).unwrap();
-            start_index = (start_index + batch_size) % pairs.len();
-            result
+            let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+            sw_single.compute(&cpu_single, &batch_a, &batch_b).unwrap()
         })
     });
 
+    g.throughput(Throughput::Elements(per_batch));
     g.bench_function(
         &format!("szs::SmithWatermanScores({}xCPU)", num_cores),
         |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = sw_parallel
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                sw_parallel
                     .compute(&cpu_parallel, &batch_a, &batch_b)
-                    .unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                    .unwrap()
             })
         },
     );
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sw_gpu.as_ref()) {
-        g.bench_function("szs::SmithWatermanScores(gpu)", |b| {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function("szs::SmithWatermanScores(1xGPU)", |b| {
             let mut start_index = 0;
             b.iter(|| {
-                let end_index = (start_index + batch_size).min(pairs.len());
-                let batch_a: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(a, _)| a.as_bytes())
-                    .collect();
-                let batch_b: Vec<&[u8]> = pairs[start_index..end_index]
-                    .iter()
-                    .map(|(_, b)| b.as_bytes())
-                    .collect();
-                let result = engine.compute(gpu, &batch_a, &batch_b).unwrap();
-                start_index = (start_index + batch_size) % pairs.len();
-                result
+                let (batch_a, batch_b) = make_batch_bytes(pairs, &mut start_index, batch_size);
+                engine.compute(gpu, &batch_a, &batch_b).unwrap()
             })
         });
     }
@@ -656,7 +517,6 @@ fn perform_affine_benchmarks(
 
 fn main() {
     log_stringzilla_metadata();
-    log_stringzillas_metadata();
     let mut criterion = configure_bench();
     bench_similarities(&mut criterion);
     criterion.final_summary();
