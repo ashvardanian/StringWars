@@ -31,6 +31,7 @@ RUSTFLAGS="-C target-cpu=native" \
     cargo criterion --features bench_similarities bench_similarities --jobs 8
 ```
 "#]
+use core::convert::TryInto;
 use std::env;
 use std::fs;
 
@@ -62,32 +63,38 @@ fn configure_bench() -> Criterion {
         .measurement_time(std::time::Duration::from_secs(10))
 }
 
-/// Creates batch subviews from tape views for processing
-fn get_batch_subviews<'a>(
+/// Creates batch subviews from bytes tape views for processing
+fn bytes_tape_slice<'a>(
     tape_a_view: &'a BytesTapeView<u64>,
     tape_b_view: &'a BytesTapeView<u64>,
-    start_idx: usize,
+    start_idx: &mut usize,
     batch_size: usize,
     pairs_count: usize,
 ) -> (BytesTapeView<'a, u64>, BytesTapeView<'a, u64>, usize) {
-    let end_idx = std::cmp::min(start_idx + batch_size, pairs_count);
-    let batch_a_view = tape_a_view.subview(start_idx, end_idx).unwrap();
-    let batch_b_view = tape_b_view.subview(start_idx, end_idx).unwrap();
-    (batch_a_view, batch_b_view, end_idx - start_idx)
+    let current_start = *start_idx;
+    let end_idx = std::cmp::min(current_start + batch_size, pairs_count);
+    let actual_batch_size = end_idx - current_start;
+    let batch_a_view = tape_a_view.subview(current_start, end_idx).unwrap();
+    let batch_b_view = tape_b_view.subview(current_start, end_idx).unwrap();
+    *start_idx = (current_start + actual_batch_size) % pairs_count;
+    (batch_a_view, batch_b_view, actual_batch_size)
 }
 
 /// Creates batch subviews from chars tape views for processing
-fn get_chars_batch_subviews<'a>(
+fn chars_tape_slice<'a>(
     chars_a_view: &'a CharsTapeView<u64>,
     chars_b_view: &'a CharsTapeView<u64>,
-    start_idx: usize,
+    start_idx: &mut usize,
     batch_size: usize,
     pairs_count: usize,
 ) -> (CharsTapeView<'a, u64>, CharsTapeView<'a, u64>, usize) {
-    let end_idx = std::cmp::min(start_idx + batch_size, pairs_count);
-    let batch_a_view = chars_a_view.subview(start_idx, end_idx).unwrap();
-    let batch_b_view = chars_b_view.subview(start_idx, end_idx).unwrap();
-    (batch_a_view, batch_b_view, end_idx - start_idx)
+    let current_start = *start_idx;
+    let end_idx = std::cmp::min(current_start + batch_size, pairs_count);
+    let actual_batch_size = end_idx - current_start;
+    let batch_a_view = chars_a_view.subview(current_start, end_idx).unwrap();
+    let batch_b_view = chars_b_view.subview(current_start, end_idx).unwrap();
+    *start_idx = (current_start + actual_batch_size) % pairs_count;
+    (batch_a_view, batch_b_view, actual_batch_size)
 }
 
 fn bench_similarities(c: &mut Criterion) {
@@ -145,27 +152,21 @@ fn bench_similarities(c: &mut Criterion) {
         .subview(1, units_tape.len())
         .expect("Failed to create tape_b_view");
 
-    // Create CharsTape views by casting from the same raw data (zero-copy)
-    let tape_a_raw = tape_a_view.as_raw_parts();
-    let tape_b_raw = tape_b_view.as_raw_parts();
-    let chars_a_view = unsafe {
-        CharsTapeView::from_raw_parts(
-            std::slice::from_raw_parts(tape_a_raw.data_ptr, tape_a_raw.data_len),
-            std::slice::from_raw_parts(tape_a_raw.offsets_ptr, tape_a_raw.items_count + 1),
-        )
-    };
-    let chars_b_view = unsafe {
-        CharsTapeView::from_raw_parts(
-            std::slice::from_raw_parts(tape_b_raw.data_ptr, tape_b_raw.data_len),
-            std::slice::from_raw_parts(tape_b_raw.offsets_ptr, tape_b_raw.items_count + 1),
-        )
-    };
+    // Create CharsTapeView from the full tape view (zero-copy view casting)
+    let full_chars_view: CharsTapeView<u64> = units_tape
+        .view()
+        .try_into()
+        .expect("Failed to convert to CharsTapeView");
+    let chars_a_view = full_chars_view
+        .subview(0, full_chars_view.len() - 1)
+        .expect("Failed to create chars_a_view");
+    let chars_b_view = full_chars_view
+        .subview(1, full_chars_view.len())
+        .expect("Failed to create chars_b_view");
 
     let pairs_count = tape_a_view.len();
 
     // Calculate average matrix sizes for throughput reporting
-    // - bytes: number of bytes in each string product
-    // - utf8: number of Unicode scalar values (code points) product
     let mut total_cells_bytes = 0u64;
     let mut total_cells_utf8 = 0u64;
 
@@ -174,9 +175,8 @@ fn bench_similarities(c: &mut Criterion) {
         let b_bytes = &tape_b_view[i];
         total_cells_bytes += (a_bytes.len() * b_bytes.len()) as u64;
 
-        // For UTF-8 calculation, convert bytes back to strings
-        let a_str = std::str::from_utf8(a_bytes).expect("Invalid UTF-8 in tape_a");
-        let b_str = std::str::from_utf8(b_bytes).expect("Invalid UTF-8 in tape_b");
+        let a_str = &chars_a_view[i];
+        let b_str = &chars_b_view[i];
         total_cells_utf8 += (a_str.chars().count() as u64) * (b_str.chars().count() as u64);
     }
 
@@ -292,10 +292,10 @@ fn perform_uniform_benchmarks(
         results.resize(batch_size, 0);
         let mut start_idx = 0;
         b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                 &tape_a_view,
                 &tape_b_view,
-                start_idx,
+                &mut start_idx,
                 batch_size,
                 pairs_count,
             );
@@ -307,7 +307,6 @@ fn perform_uniform_benchmarks(
                     &mut results[..actual_batch_size],
                 )
                 .unwrap();
-            start_idx = (start_idx + batch_size) % pairs_count;
             std::hint::black_box(&results);
         })
     });
@@ -320,10 +319,10 @@ fn perform_uniform_benchmarks(
             results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -335,7 +334,6 @@ fn perform_uniform_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         },
@@ -343,15 +341,15 @@ fn perform_uniform_benchmarks(
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_lev_gpu.as_ref()) {
         g.throughput(Throughput::Elements(per_batch_bytes));
+        let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
+        results.resize(batch_size, 0);
         g.bench_function("szs::LevenshteinDistances(1xGPU)", |b| {
-            let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
-            results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -363,7 +361,6 @@ fn perform_uniform_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         });
@@ -376,10 +373,10 @@ fn perform_uniform_benchmarks(
         results.resize(batch_size, 0);
         let mut start_idx = 0;
         b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = get_chars_batch_subviews(
+            let (batch_a_view, batch_b_view, actual_batch_size) = chars_tape_slice(
                 &chars_a_view,
                 &chars_b_view,
-                start_idx,
+                &mut start_idx,
                 batch_size,
                 pairs_count,
             );
@@ -391,7 +388,6 @@ fn perform_uniform_benchmarks(
                     &mut results[..actual_batch_size],
                 )
                 .unwrap();
-            start_idx = (start_idx + batch_size) % pairs_count;
             std::hint::black_box(&results);
         })
     });
@@ -404,18 +400,21 @@ fn perform_uniform_benchmarks(
             results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let end_idx = std::cmp::min(start_idx + batch_size, pairs_count);
-                let batch_a_view = chars_a_view.subview(start_idx, end_idx).unwrap();
-                let batch_b_view = chars_b_view.subview(start_idx, end_idx).unwrap();
+                let (batch_a_view, batch_b_view, actual_batch_size) = chars_tape_slice(
+                    &chars_a_view,
+                    &chars_b_view,
+                    &mut start_idx,
+                    batch_size,
+                    pairs_count,
+                );
                 lev_utf8_parallel
                     .compute_into(
                         &cpu_parallel,
                         AnyCharsTape::View64(batch_a_view),
                         AnyCharsTape::View64(batch_b_view),
-                        &mut results[..end_idx - start_idx],
+                        &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         },
@@ -467,10 +466,10 @@ fn perform_linear_benchmarks(
         results.resize(batch_size, 0);
         let mut start_idx = 0;
         b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                 &tape_a_view,
                 &tape_b_view,
-                start_idx,
+                &mut start_idx,
                 batch_size,
                 pairs_count,
             );
@@ -482,7 +481,6 @@ fn perform_linear_benchmarks(
                     &mut results[..actual_batch_size],
                 )
                 .unwrap();
-            start_idx = (start_idx + batch_size) % pairs_count;
             std::hint::black_box(&results);
         })
     });
@@ -495,10 +493,10 @@ fn perform_linear_benchmarks(
             results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -510,7 +508,6 @@ fn perform_linear_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         },
@@ -518,15 +515,15 @@ fn perform_linear_benchmarks(
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_nw_gpu.as_ref()) {
         g.throughput(Throughput::Elements(per_batch));
+        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+        results.resize(batch_size, 0);
         g.bench_function("szs::NeedlemanWunschScores(1xGPU)", |b| {
-            let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-            results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -538,7 +535,6 @@ fn perform_linear_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         });
@@ -551,10 +547,10 @@ fn perform_linear_benchmarks(
         results.resize(batch_size, 0);
         let mut start_idx = 0;
         b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                 &tape_a_view,
                 &tape_b_view,
-                start_idx,
+                &mut start_idx,
                 batch_size,
                 pairs_count,
             );
@@ -566,7 +562,6 @@ fn perform_linear_benchmarks(
                     &mut results[..actual_batch_size],
                 )
                 .unwrap();
-            start_idx = (start_idx + batch_size) % pairs_count;
             std::hint::black_box(&results);
         })
     });
@@ -579,10 +574,10 @@ fn perform_linear_benchmarks(
             results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -594,7 +589,6 @@ fn perform_linear_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         },
@@ -602,15 +596,15 @@ fn perform_linear_benchmarks(
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sw_gpu.as_ref()) {
         g.throughput(Throughput::Elements(per_batch));
+        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+        results.resize(batch_size, 0);
         g.bench_function("szs::SmithWatermanScores(1xGPU)", |b| {
-            let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-            results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -622,7 +616,6 @@ fn perform_linear_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         });
@@ -674,10 +667,10 @@ fn perform_affine_benchmarks(
         results.resize(batch_size, 0);
         let mut start_idx = 0;
         b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                 &tape_a_view,
                 &tape_b_view,
-                start_idx,
+                &mut start_idx,
                 batch_size,
                 pairs_count,
             );
@@ -689,7 +682,6 @@ fn perform_affine_benchmarks(
                     &mut results[..actual_batch_size],
                 )
                 .unwrap();
-            start_idx = (start_idx + batch_size) % pairs_count;
             std::hint::black_box(&results);
         })
     });
@@ -702,10 +694,10 @@ fn perform_affine_benchmarks(
             results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -717,7 +709,6 @@ fn perform_affine_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         },
@@ -725,15 +716,15 @@ fn perform_affine_benchmarks(
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_nw_gpu.as_ref()) {
         g.throughput(Throughput::Elements(per_batch));
+        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+        results.resize(batch_size, 0);
         g.bench_function("szs::NeedlemanWunschScores(1xGPU)", |b| {
-            let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-            results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -745,7 +736,6 @@ fn perform_affine_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         });
@@ -758,10 +748,10 @@ fn perform_affine_benchmarks(
         results.resize(batch_size, 0);
         let mut start_idx = 0;
         b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                 &tape_a_view,
                 &tape_b_view,
-                start_idx,
+                &mut start_idx,
                 batch_size,
                 pairs_count,
             );
@@ -773,7 +763,6 @@ fn perform_affine_benchmarks(
                     &mut results[..actual_batch_size],
                 )
                 .unwrap();
-            start_idx = (start_idx + batch_size) % pairs_count;
             std::hint::black_box(&results);
         })
     });
@@ -786,10 +775,10 @@ fn perform_affine_benchmarks(
             results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -801,7 +790,6 @@ fn perform_affine_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         },
@@ -809,15 +797,15 @@ fn perform_affine_benchmarks(
 
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sw_gpu.as_ref()) {
         g.throughput(Throughput::Elements(per_batch));
+        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+        results.resize(batch_size, 0);
         g.bench_function("szs::SmithWatermanScores(1xGPU)", |b| {
-            let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-            results.resize(batch_size, 0);
             let mut start_idx = 0;
             b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = get_batch_subviews(
+                let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
                     &tape_a_view,
                     &tape_b_view,
-                    start_idx,
+                    &mut start_idx,
                     batch_size,
                     pairs_count,
                 );
@@ -829,7 +817,6 @@ fn perform_affine_benchmarks(
                         &mut results[..actual_batch_size],
                     )
                     .unwrap();
-                start_idx = (start_idx + batch_size) % pairs_count;
                 std::hint::black_box(&results);
             })
         });
