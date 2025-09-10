@@ -5,10 +5,10 @@ edition = "2018"
 
 [dependencies]
 criterion = "0.7.0"
-stringzilla = { version = "4.0.0", features = ["cpus"] }
+# stringzilla = { version = "4.0.7", features = ["cuda"] }
 
 # To use a local version of StringZilla, set the path:
-# stringzilla = { path = "../StringZilla/", features = ["cpus"] }
+stringzilla = { path = "../StringZilla/", features = ["cuda"] }
 
 # Feature-based dependencies for benchmarks
 [features]
@@ -45,9 +45,9 @@ bench_memory = [
 ]
 bench_fingerprints = [
     "probabilistic-collections", # MinHash + CountMinSketch
-    "finch",                     # High-performance MinHash
-    "count-min-sketch",          # Dedicated CountMinSketch
-    "fork_union",                # CPU core counting for device scopes
+    # "finch",                   # Temporarily disabled (no dependency yet)
+    "count-min-sketch", # Dedicated CountMinSketch
+    "fork_union",       # CPU core counting for device scopes
 ]
 
 # TODO: String properties:
@@ -75,7 +75,7 @@ version = "1.1.3"
 optional = true
 
 [dependencies.regex]
-version = "1.11.1"
+version = "1.11.2"
 optional = true
 
 [dependencies.rapidfuzz]
@@ -83,11 +83,11 @@ version = "0.5.0"
 optional = true
 
 [dependencies.fork_union]
-version = "2.2"
+version = "2.2.7"
 optional = true
 
 [dependencies.stringtape]
-version = "0.4"
+version = "2.0.1"
 optional = true
 
 [dependencies.simhash]
@@ -149,6 +149,15 @@ optional = true
 
 [dependencies.rand_xoshiro]
 version = "0.7.0"
+optional = true
+
+# Fingerprinting-related optional deps (used by bench_fingerprints)
+[dependencies.probabilistic-collections]
+version = "*"
+optional = true
+
+[dependencies.count-min-sketch]
+version = "*"
 optional = true
 
 [[bench]]
