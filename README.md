@@ -122,6 +122,11 @@ That's true not only for strings but for any data type, and StringZilla has been
 Edit Distance calculation is a common component of Search Engines, Data Cleaning, and Natural Language Processing, as well as in Bioinformatics.
 It's a computationally expensive operation, generally implemented using dynamic programming, with a quadratic time complexity upper bound.
 
+## Bulk Fingerprinting Benchmarks
+
+In large-scale Retrieval workloads a common technique is to convert variable-length messy strings into some fixed-length representations.
+Those are often called "fingerprints" or "sketches", like "Min-Hashing" or "Count-Min-Sketching".
+
 ## Replicating the Results
 
 Before running benchmarks, you can test your Rust environment running:

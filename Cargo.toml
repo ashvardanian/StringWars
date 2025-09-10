@@ -43,8 +43,10 @@ bench_memory = [
     "rand_xoshiro", # Randomize Buffer
 ]
 bench_fingerprints = [
-    "simhash",    # SimHash fingerprinting
-    "rust-tfidf", # TF-IDF feature extraction
+    "probabilistic-collections", # MinHash + CountMinSketch
+    "finch",                     # High-performance MinHash
+    "count-min-sketch",          # Dedicated CountMinSketch
+    "fork_union",                # CPU core counting for device scopes
 ]
 
 # TODO: String properties:
