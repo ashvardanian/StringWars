@@ -5,9 +5,10 @@ edition = "2018"
 
 [dependencies]
 criterion = "0.7.0"
-# Prefer local checkout if present; enable StringZilla CPU backends.
-# If path is unavailable, switch to a crates.io version and keep features.
-stringzilla = { path = "../StringZilla/", features = ["cpus"] }
+stringzilla = { version = "4.0.0", features = ["cpus"] }
+
+# To use a local version of StringZilla, set the path:
+# stringzilla = { path = "../StringZilla/", features = ["cpus"] }
 
 # Feature-based dependencies for benchmarks
 [features]
