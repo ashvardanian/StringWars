@@ -58,9 +58,9 @@ fn log_stringzilla_metadata() {
 
 fn configure_bench() -> Criterion {
     Criterion::default()
-        .sample_size(10)
+        .sample_size(10) // smallest possible, that won't panic
         .warm_up_time(std::time::Duration::from_secs(1))
-        .measurement_time(std::time::Duration::from_secs(10))
+        .measurement_time(std::time::Duration::from_secs(5))
 }
 
 /// Creates batch subviews from bytes tape views for processing
@@ -71,11 +71,59 @@ fn bytes_tape_slice<'a>(
     batch_size: usize,
     pairs_count: usize,
 ) -> (BytesTapeView<'a, u64>, BytesTapeView<'a, u64>, usize) {
-    let current_start = *start_idx;
-    let end_idx = std::cmp::min(current_start + batch_size, pairs_count);
-    let actual_batch_size = end_idx - current_start;
-    let batch_a_view = tape_a_view.subview(current_start, end_idx).unwrap();
-    let batch_b_view = tape_b_view.subview(current_start, end_idx).unwrap();
+    if pairs_count == 0 {
+        panic!("pairs_count cannot be zero");
+    }
+    if batch_size == 0 {
+        panic!("batch_size cannot be zero");
+    }
+
+    // Ensure start_idx is within bounds
+    let current_start = *start_idx % pairs_count;
+
+    // Calculate how many pairs are available from current position
+    let available = pairs_count - current_start;
+    let actual_batch_size = std::cmp::min(batch_size, available);
+    let end_idx = current_start + actual_batch_size;
+
+    // Additional safety checks
+    assert!(
+        current_start < pairs_count,
+        "current_start {} >= pairs_count {}",
+        current_start,
+        pairs_count
+    );
+    assert!(
+        end_idx <= pairs_count,
+        "end_idx {} > pairs_count {}",
+        end_idx,
+        pairs_count
+    );
+    assert!(actual_batch_size > 0, "actual_batch_size must be > 0");
+
+    let batch_a_view = tape_a_view
+        .subview(current_start, end_idx)
+        .unwrap_or_else(|e| {
+            panic!(
+                "Failed to create tape_a subview({}, {}): {} (tape_len={})",
+                current_start,
+                end_idx,
+                e,
+                tape_a_view.len()
+            )
+        });
+    let batch_b_view = tape_b_view
+        .subview(current_start, end_idx)
+        .unwrap_or_else(|e| {
+            panic!(
+                "Failed to create tape_b subview({}, {}): {} (tape_len={})",
+                current_start,
+                end_idx,
+                e,
+                tape_b_view.len()
+            )
+        });
+
     *start_idx = (current_start + actual_batch_size) % pairs_count;
     (batch_a_view, batch_b_view, actual_batch_size)
 }
@@ -88,11 +136,59 @@ fn chars_tape_slice<'a>(
     batch_size: usize,
     pairs_count: usize,
 ) -> (CharsTapeView<'a, u64>, CharsTapeView<'a, u64>, usize) {
-    let current_start = *start_idx;
-    let end_idx = std::cmp::min(current_start + batch_size, pairs_count);
-    let actual_batch_size = end_idx - current_start;
-    let batch_a_view = chars_a_view.subview(current_start, end_idx).unwrap();
-    let batch_b_view = chars_b_view.subview(current_start, end_idx).unwrap();
+    if pairs_count == 0 {
+        panic!("pairs_count cannot be zero");
+    }
+    if batch_size == 0 {
+        panic!("batch_size cannot be zero");
+    }
+
+    // Ensure start_idx is within bounds
+    let current_start = *start_idx % pairs_count;
+
+    // Calculate how many pairs are available from current position
+    let available = pairs_count - current_start;
+    let actual_batch_size = std::cmp::min(batch_size, available);
+    let end_idx = current_start + actual_batch_size;
+
+    // Additional safety checks
+    assert!(
+        current_start < pairs_count,
+        "current_start {} >= pairs_count {}",
+        current_start,
+        pairs_count
+    );
+    assert!(
+        end_idx <= pairs_count,
+        "end_idx {} > pairs_count {}",
+        end_idx,
+        pairs_count
+    );
+    assert!(actual_batch_size > 0, "actual_batch_size must be > 0");
+
+    let batch_a_view = chars_a_view
+        .subview(current_start, end_idx)
+        .unwrap_or_else(|e| {
+            panic!(
+                "Failed to create chars_a subview({}, {}): {} (tape_len={})",
+                current_start,
+                end_idx,
+                e,
+                chars_a_view.len()
+            )
+        });
+    let batch_b_view = chars_b_view
+        .subview(current_start, end_idx)
+        .unwrap_or_else(|e| {
+            panic!(
+                "Failed to create chars_b subview({}, {}): {} (tape_len={})",
+                current_start,
+                end_idx,
+                e,
+                chars_b_view.len()
+            )
+        });
+
     *start_idx = (current_start + actual_batch_size) % pairs_count;
     (batch_a_view, batch_b_view, actual_batch_size)
 }
@@ -110,8 +206,7 @@ fn bench_similarities(c: &mut Criterion) {
 
     let max_pairs = env::var("STRINGWARS_MAX_PAIRS")
         .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(10000);
+        .and_then(|v| v.parse::<usize>().ok());
 
     let units: Vec<&str> = match mode.as_str() {
         "words" => content.split_whitespace().collect(),
@@ -126,10 +221,38 @@ fn bench_similarities(c: &mut Criterion) {
         panic!("Dataset must contain at least two items for comparisons.");
     }
 
+    // Log dataset statistics
+    let total_units = units.len();
+    let total_bytes: usize = units.iter().map(|s| s.len()).sum();
+    let total_chars: usize = units.iter().map(|s| s.chars().count()).sum();
+    let avg_bytes_per_unit = total_bytes as f64 / total_units as f64;
+    let avg_chars_per_unit = total_chars as f64 / total_units as f64;
+
+    println!("Dataset statistics:");
+    println!("- Source: {}", dataset_path);
+    println!("- Token mode: {}", mode);
+    println!("- Total tokens: {}", total_units);
+    println!(
+        "- Average token length: {:.1} bytes, {:.1} chars",
+        avg_bytes_per_unit, avg_chars_per_unit
+    );
+    println!(
+        "- Total dataset size: {} bytes, {} chars",
+        total_bytes, total_chars
+    );
+    println!("- Batch size: {}", batch_size);
+
     // Limit units if max_pairs is specified (since pairs = units.len() - 1)
     let mut truncated_units = units.clone();
-    if max_pairs < units.len() - 1 {
-        truncated_units.truncate(max_pairs + 1);
+    if let Some(max_p) = max_pairs {
+        if max_p < units.len() - 1 {
+            truncated_units.truncate(max_p + 1);
+            println!(
+                "- Max pairs limit: {} (truncated to {} tokens)",
+                max_p,
+                truncated_units.len()
+            );
+        }
     }
 
     if truncated_units.len() < 2 {
@@ -165,6 +288,11 @@ fn bench_similarities(c: &mut Criterion) {
         .expect("Failed to create chars_b_view");
 
     let pairs_count = tape_a_view.len();
+    println!("- Consecutive pairs to process: {}", pairs_count);
+
+    // Validate batch size against pairs count
+    let effective_batch_size = std::cmp::min(batch_size, pairs_count);
+    println!();
 
     // Calculate average matrix sizes for throughput reporting
     let mut total_cells_bytes = 0u64;
@@ -191,9 +319,10 @@ fn bench_similarities(c: &mut Criterion) {
         &tape_b_view,
         &chars_a_view,
         &chars_b_view,
-        batch_size,
+        effective_batch_size,
         avg_cells_bytes,
         avg_cells_utf8,
+        pairs_count,
     );
     g.finish();
 
@@ -203,7 +332,7 @@ fn bench_similarities(c: &mut Criterion) {
         &mut g,
         &tape_a_view,
         &tape_b_view,
-        batch_size,
+        effective_batch_size,
         avg_cells_bytes,
         pairs_count,
     );
@@ -215,7 +344,7 @@ fn bench_similarities(c: &mut Criterion) {
         &mut g,
         &tape_a_view,
         &tape_b_view,
-        batch_size,
+        effective_batch_size,
         avg_cells_bytes,
         pairs_count,
     );
@@ -232,6 +361,7 @@ fn perform_uniform_benchmarks(
     batch_size: usize,
     avg_cells_bytes: u64,
     avg_cells_utf8: u64,
+    pairs_count: usize,
 ) {
     // No tapes needed - use simple string arrays
 
@@ -262,7 +392,6 @@ fn perform_uniform_benchmarks(
     let per_batch_utf8 = (batch_size as u64) * avg_cells_utf8;
 
     // RapidFuzz baselines (no batching; scan one-by-one)
-    let pairs_count = tape_a_view.len();
     g.throughput(Throughput::Elements(per_pair_bytes));
     g.bench_function("rapidfuzz::levenshtein<Bytes>(1xCPU)", |b| {
         let mut pair_index = 0;
@@ -306,7 +435,12 @@ fn perform_uniform_benchmarks(
                     AnyBytesTape::View64(batch_b_view),
                     &mut results[..actual_batch_size],
                 )
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Failed to compute LevenshteinDistances on CPU (single-threaded): {}",
+                        e
+                    );
+                });
             std::hint::black_box(&results);
         })
     });
@@ -333,7 +467,12 @@ fn perform_uniform_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Failed to compute LevenshteinDistances on CPU (multi-threaded): {}",
+                            e
+                        );
+                    });
                 std::hint::black_box(&results);
             })
         },
@@ -360,7 +499,9 @@ fn perform_uniform_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", e);
+                    });
                 std::hint::black_box(&results);
             })
         });
@@ -387,7 +528,12 @@ fn perform_uniform_benchmarks(
                     AnyCharsTape::View64(batch_b_view),
                     &mut results[..actual_batch_size],
                 )
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Failed to compute LevenshteinDistancesUtf8 on CPU (single-threaded): {}",
+                        e
+                    );
+                });
             std::hint::black_box(&results);
         })
     });
@@ -414,7 +560,9 @@ fn perform_uniform_benchmarks(
                         AnyCharsTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!("Failed to compute LevenshteinDistancesUtf8 on CPU (multi-threaded): {}", e);
+                    });
                 std::hint::black_box(&results);
             })
         },
@@ -480,7 +628,9 @@ fn perform_linear_benchmarks(
                     AnyBytesTape::View64(batch_b_view),
                     &mut results[..actual_batch_size],
                 )
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    panic!("Failed to compute NeedlemanWunschScores (linear gap) on CPU (single-threaded): {}", e);
+                });
             std::hint::black_box(&results);
         })
     });
@@ -507,7 +657,12 @@ fn perform_linear_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
+                            e
+                        );
+                    });
                 std::hint::black_box(&results);
             })
         },
@@ -534,7 +689,9 @@ fn perform_linear_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", e);
+                    });
                 std::hint::black_box(&results);
             })
         });
@@ -561,7 +718,12 @@ fn perform_linear_benchmarks(
                     AnyBytesTape::View64(batch_b_view),
                     &mut results[..actual_batch_size],
                 )
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
+                        e
+                    );
+                });
             std::hint::black_box(&results);
         })
     });
@@ -588,7 +750,12 @@ fn perform_linear_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
+                            e
+                        );
+                    });
                 std::hint::black_box(&results);
             })
         },
@@ -615,7 +782,9 @@ fn perform_linear_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", e);
+                    });
                 std::hint::black_box(&results);
             })
         });
@@ -681,7 +850,9 @@ fn perform_affine_benchmarks(
                     AnyBytesTape::View64(batch_b_view),
                     &mut results[..actual_batch_size],
                 )
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    panic!("Failed to compute NeedlemanWunschScores (linear gap) on CPU (single-threaded): {}", e);
+                });
             std::hint::black_box(&results);
         })
     });
@@ -708,7 +879,12 @@ fn perform_affine_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
+                            e
+                        );
+                    });
                 std::hint::black_box(&results);
             })
         },
@@ -735,7 +911,9 @@ fn perform_affine_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", e);
+                    });
                 std::hint::black_box(&results);
             })
         });
@@ -762,7 +940,12 @@ fn perform_affine_benchmarks(
                     AnyBytesTape::View64(batch_b_view),
                     &mut results[..actual_batch_size],
                 )
-                .unwrap();
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
+                        e
+                    );
+                });
             std::hint::black_box(&results);
         })
     });
@@ -789,7 +972,12 @@ fn perform_affine_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
+                            e
+                        );
+                    });
                 std::hint::black_box(&results);
             })
         },
@@ -816,7 +1004,9 @@ fn perform_affine_benchmarks(
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", e);
+                    });
                 std::hint::black_box(&results);
             })
         });

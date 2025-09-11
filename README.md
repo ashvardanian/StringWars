@@ -108,7 +108,7 @@ Those are directly compatible with arbitrary string-comparable collection types 
 | Library                                     |      Shorter Words |      Longer Lines |
 | ------------------------------------------- | -----------------: | ----------------: |
 | `std::sort_unstable_by_key`                 |      54.35 Melem/s |     57.70 Melem/s |
-| `rayon::par_sort_unstable_by_key` on 1 vCPU |      47.08 Melem/s |     50.35 Melem/s |
+| `rayon::par_sort_unstable_by_key` on 1x CPU |      47.08 Melem/s |     50.35 Melem/s |
 | `arrow::lexsort_to_indices`                 |     122.20 Melem/s | __84.73 Melem/s__ |
 | `stringzilla::argsort_permutation`          | __182.88 Melem/s__ |     74.64 Melem/s |
 
@@ -122,6 +122,40 @@ That's true not only for strings but for any data type, and StringZilla has been
 Edit Distance calculation is a common component of Search Engines, Data Cleaning, and Natural Language Processing, as well as in Bioinformatics.
 It's a computationally expensive operation, generally implemented using dynamic programming, with a quadratic time complexity upper bound.
 
+| Library                                     | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ------------------------------------------- | ----------------: | -----------------: |
+| Binary inputs                               |                   |                    |
+| `rapidfuzz::levenshtein<Bytes>`             |       4'633 MCUPS |       14'316 MCUPS |
+| `szs::LevenshteinDistances` on 1x CPU       |       3'315 MCUPS |       13'084 MCUPS |
+| `szs::LevenshteinDistances` on 16x CPUs     |      29'430 MCUPS |      105'400 MCUPS |
+| `szs::LevenshteinDistances` on 1x GPU       |      31'913 MCUPS |      624'730 MCUPS |
+|                                             |                   |                    |
+| UTF-8 inputs                                |                   |                    |
+| `rapidfuzz::levenshtein<Chars>`             |       3'877 MCUPS |       13'179 MCUPS |
+| `szs::LevenshteinDistancesUtf8` on 1x CPU   |       3'283 MCUPS |       11'690 MCUPS |
+| `szs::LevenshteinDistancesUtf8` on 16x CPUs |      38'954 MCUPS |      103'500 MCUPS |
+
+For biological sequences, the Needleman-Wunsch and Smith-Waterman algorithms are more appropriate, as they allow overriding the default substitution costs.
+Another common adaptation is to used Gotoh's affine gap penalties, which better model the evolutionary events in DNA and Protein sequences.
+
+| Library                                  | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ---------------------------------------- | ----------------: | -----------------: |
+| Linear gaps                              |                   |                    |
+| `szs::NeedlemanWunschScores` on 1x CPU   |         278 MCUPS |          612 MCUPS |
+| `szs::NeedlemanWunschScores` on 16x CPUs |       4'057 MCUPS |        8'492 MCUPS |
+| `szs::NeedlemanWunschScores` on 1x GPU   |         131 MCUPS |       12'113 MCUPS |
+| `szs::SmithWatermanScores` on 1x CPU     |         263 MCUPS |          552 MCUPS |
+| `szs::SmithWatermanScores` on 16x CPUs   |       3'883 MCUPS |        8'011 MCUPS |
+| `szs::SmithWatermanScores` on 1x GPU     |         143 MCUPS |       12'921 MCUPS |
+|                                          |                   |                    |
+| Affine gaps                              |                   |                    |
+| `szs::NeedlemanWunschScores` on 1x CPU   |          83 MCUPS |          354 MCUPS |
+| `szs::NeedlemanWunschScores` on 16x CPUs |       1'267 MCUPS |        4'694 MCUPS |
+| `szs::NeedlemanWunschScores` on 1x GPU   |         128 MCUPS |       13'799 MCUPS |
+| `szs::SmithWatermanScores` on 1x CPU     |          79 MCUPS |          284 MCUPS |
+| `szs::SmithWatermanScores` on 16x CPUs   |       1'026 MCUPS |        3'776 MCUPS |
+| `szs::SmithWatermanScores` on 1x GPU     |         127 MCUPS |       13'205 MCUPS |
+
 ## Bulk Fingerprinting Benchmarks
 
 In large-scale Retrieval workloads a common technique is to convert variable-length messy strings into some fixed-length representations.
@@ -133,6 +167,13 @@ Before running benchmarks, you can test your Rust environment running:
 
 ```bash
 cargo install cargo-criterion --locked
+```
+
+To pull and compile all the dependencies, you can call:
+
+```bash
+cargo fetch --all-features
+cargo build --all-features
 ```
 
 Wars always take long, and so do these benchmarks.

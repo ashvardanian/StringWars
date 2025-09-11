@@ -8,6 +8,7 @@ criterion = "0.7.0"
 # stringzilla = { version = "4.0.7", features = ["cuda"] }
 
 # To use a local version of StringZilla, set the path:
+# stringzilla = { path = "../StringZilla/", features = ["cuda"] }
 stringzilla = { path = "../StringZilla/", features = ["cuda"] }
 
 # Feature-based dependencies for benchmarks
@@ -87,7 +88,7 @@ version = "2.2.7"
 optional = true
 
 [dependencies.stringtape]
-version = "2.0.1"
+version = "2.0.3"
 optional = true
 
 [dependencies.simhash]

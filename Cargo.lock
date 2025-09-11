@@ -1736,9 +1736,9 @@ dependencies = [
 
 [[package]]
 name = "stringtape"
-version = "2.0.1"
+version = "2.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fb832d47615c1da7577a8158541137cf7bb308dbf69c4acab3fb0be7460745a"
+checksum = "f0ea5814704d9321d7e6c5034791cde39fcf011539834db00416121178e80f1f"
 dependencies = [
  "allocator-api2 0.3.0",
 ]
