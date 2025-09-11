@@ -49,6 +49,7 @@ bench_fingerprints = [
     # "finch",                   # Temporarily disabled (no dependency yet)
     "count-min-sketch", # Dedicated CountMinSketch
     "fork_union",       # CPU core counting for device scopes
+    "stringtape",       # String and bytes tapes for StringZilla
 ]
 
 # TODO: String properties:

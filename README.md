@@ -151,7 +151,7 @@ It's a computationally expensive operation, generally implemented using dynamic 
 | `rapidfuzz::levenshtein<Bytes>`             |       4'633 MCUPS |       14'316 MCUPS |
 | `szs::LevenshteinDistances` on 1x CPU       |       3'315 MCUPS |       13'084 MCUPS |
 | `szs::LevenshteinDistances` on 16x CPUs     |      29'430 MCUPS |      105'400 MCUPS |
-| `szs::LevenshteinDistances` on 1x GPU       |      31'913 MCUPS |      624'730 MCUPS |
+| `szs::LevenshteinDistances` on 1x GPU       |      31'913 MCUPS |  __624'730 MCUPS__ |
 |                                             |                   |                    |
 | UTF-8 inputs                                |                   |                    |
 | `rapidfuzz::levenshtein<Chars>`             |       3'877 MCUPS |       13'179 MCUPS |
@@ -166,23 +166,30 @@ Another common adaptation is to used Gotoh's affine gap penalties, which better 
 | Linear gaps                              |                   |                    |
 | `szs::NeedlemanWunschScores` on 1x CPU   |         278 MCUPS |          612 MCUPS |
 | `szs::NeedlemanWunschScores` on 16x CPUs |       4'057 MCUPS |        8'492 MCUPS |
-| `szs::NeedlemanWunschScores` on 1x GPU   |         131 MCUPS |       12'113 MCUPS |
+| `szs::NeedlemanWunschScores` on 1x GPU   |         131 MCUPS |   __12'113 MCUPS__ |
 | `szs::SmithWatermanScores` on 1x CPU     |         263 MCUPS |          552 MCUPS |
 | `szs::SmithWatermanScores` on 16x CPUs   |       3'883 MCUPS |        8'011 MCUPS |
-| `szs::SmithWatermanScores` on 1x GPU     |         143 MCUPS |       12'921 MCUPS |
+| `szs::SmithWatermanScores` on 1x GPU     |         143 MCUPS |   __12'921 MCUPS__ |
 |                                          |                   |                    |
 | Affine gaps                              |                   |                    |
 | `szs::NeedlemanWunschScores` on 1x CPU   |          83 MCUPS |          354 MCUPS |
 | `szs::NeedlemanWunschScores` on 16x CPUs |       1'267 MCUPS |        4'694 MCUPS |
-| `szs::NeedlemanWunschScores` on 1x GPU   |         128 MCUPS |       13'799 MCUPS |
+| `szs::NeedlemanWunschScores` on 1x GPU   |         128 MCUPS |   __13'799 MCUPS__ |
 | `szs::SmithWatermanScores` on 1x CPU     |          79 MCUPS |          284 MCUPS |
 | `szs::SmithWatermanScores` on 16x CPUs   |       1'026 MCUPS |        3'776 MCUPS |
-| `szs::SmithWatermanScores` on 1x GPU     |         127 MCUPS |       13'205 MCUPS |
+| `szs::SmithWatermanScores` on 1x GPU     |         127 MCUPS |   __13'205 MCUPS__ |
 
-## Bulk Fingerprinting Benchmarks
+## Byte-level Fingerprinting & Sketching Benchmarks
 
 In large-scale Retrieval workloads a common technique is to convert variable-length messy strings into some fixed-length representations.
 Those are often called "fingerprints" or "sketches", like "Min-Hashing" or "Count-Min-Sketching".
+
+| Library                              | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ------------------------------------ | ----------------: | -----------------: |
+| `probabilistic_collections::MinHash` |        2.88 MiB/s |         2.81 MiB/s |
+| `szs::Fingerprints` on 1x CPU        |        0.56 MiB/s |         0.51 MiB/s |
+| `szs::Fingerprints` on 16x CPUs      |        6.62 MiB/s |         8.03 MiB/s |
+| `szs::Fingerprints` on 1x GPU        |  __102.07 MiB/s__ |   __392.37 MiB/s__ |
 
 ## Replicating the Results
 
