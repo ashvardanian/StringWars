@@ -19,6 +19,11 @@ Of course, the functionality of the projects is different, as are the APIs and t
 So, I focus on the workloads for which StringZilla was designed and compare the throughput of the core operations.
 Notably, I also favor modern hardware with support for a wider range SIMD instructions, like mask-equipped AVX-512 on x86 starting from the 2015 Intel Skylake-X CPUs or more recent predicated variable-length SVE and SVE2 on Arm, that aren't supported by most of the existing libraries and Rust tooling.
 
+> [!IMPORTANT]  
+> The numbers in the tables below are provided for reference only and may vary depending on the CPU, compiler, dataset, and tokenization method.
+> Most of them were obtained on Intel Sapphire Rapids CPUs and Nvidia H100 GPUs, using Rust with `-C target-cpu=native` optimization flag.
+> To replicate the results, please refer to the [Replicating the Results](#replicating-the-results) section below.
+
 ## String Hashing Benchmarks
 
 Many great hashing libraries exist in Rust, C, and C++.
@@ -29,20 +34,21 @@ Many of them have similar pitfalls:
 - They don't always support streaming and require the whole input to be available in memory at once.
 - They don't always pass the SMHasher test suite, especially with `--extra` checks enabled.
 - They generally don't have a dynamic dispatch mechanism to simplify shipping of precompiled software to a wide range of users.
+- They are rarely available for multiple programming languages.
 
 StringZilla addresses those issues and seems to provide competitive performance.
 On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
 
-| Library                |  Shorter Words |    Longer Lines |
-| ---------------------- | -------------: | --------------: |
-| `std::hash`            |     0.43 GiB/s |      3.74 GiB/s |
-| `xxh3::xxh3_64`        |     1.08 GiB/s |      9.48 GiB/s |
-| `aHash::hash_one`      |     1.23 GiB/s |      8.61 GiB/s |
-| `gxhash::gxhash64`     | __2.68 GiB/s__ |     10.81 GiB/s |
-| `stringzilla::hash`    |     1.84 GiB/s | __11.23 GiB/s__ |
-|                        |                |                 |
-| `blake3::hash`         |     0.10 GiB/s |      1.97 GiB/s |
-| `stringzilla::bytesum` |     2.16 GiB/s |     11.65 GiB/s |
+| Library                | Languages         |  Shorter Words |    Longer Lines |
+| ---------------------- | ----------------- | -------------: | --------------: |
+| `std::hash`            | Rs                |     0.43 GiB/s |      3.74 GiB/s |
+| `xxh3::xxh3_64`        | C, C++, Rs, Py... |     1.08 GiB/s |      9.48 GiB/s |
+| `aHash::hash_one`      | Rs                |     1.23 GiB/s |      8.61 GiB/s |
+| `gxhash::gxhash64`     | Rs                | __2.68 GiB/s__ |     10.81 GiB/s |
+| `stringzilla::hash`    | C, C++, Rs, Py... |     1.84 GiB/s | __11.23 GiB/s__ |
+|                        |                   |                |                 |
+| `blake3::hash`         | C, Rs, Py, Go     |     0.10 GiB/s |      1.97 GiB/s |
+| `stringzilla::bytesum` | C, C++, Rs, Py... |     2.16 GiB/s |     11.65 GiB/s |
 
 > Blake3 and byte-level summation are provided as a reference for expected lower and upper bounds.
 > Blake3 is a cryptographic hash function and is obliged to provide a certain level of security, which comes at a cost.
@@ -51,11 +57,11 @@ On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can 
 In larger systems, however, we often need the ability to incrementally hash the data.
 This is especially important in distributed systems, where the data is too large to fit into memory at once.
 
-| Library                    |  Shorter Words |   Longer Lines |
-| -------------------------- | -------------: | -------------: |
-| `std::hash::DefaultHasher` |     0.51 GiB/s |     3.92 GiB/s |
-| `aHash::AHasher`           | __1.30 GiB/s__ | __8.56 GiB/s__ |
-| `stringzilla::HashState`   |     0.89 GiB/s |     6.39 GiB/s |
+| Library                    | Languages         |  Shorter Words |   Longer Lines |
+| -------------------------- | ----------------- | -------------: | -------------: |
+| `std::hash::DefaultHasher` | Rs                |     0.51 GiB/s |     3.92 GiB/s |
+| `aHash::AHasher`           | Rs                | __1.30 GiB/s__ | __8.56 GiB/s__ |
+| `stringzilla::HashState`   | C, C++, Rs, Py... |     0.89 GiB/s |     6.39 GiB/s |
 
 ## Substring & Character-Set Search Benchmarks
 
@@ -108,7 +114,7 @@ Those are directly compatible with arbitrary string-comparable collection types 
 | Library                                     |      Shorter Words |      Longer Lines |
 | ------------------------------------------- | -----------------: | ----------------: |
 | `std::sort_unstable_by_key`                 |      54.35 Melem/s |     57.70 Melem/s |
-| `rayon::par_sort_unstable_by_key` on 1 vCPU |      47.08 Melem/s |     50.35 Melem/s |
+| `rayon::par_sort_unstable_by_key` on 1x CPU |      47.08 Melem/s |     50.35 Melem/s |
 | `arrow::lexsort_to_indices`                 |     122.20 Melem/s | __84.73 Melem/s__ |
 | `stringzilla::argsort_permutation`          | __182.88 Melem/s__ |     74.64 Melem/s |
 
@@ -116,11 +122,74 @@ Those are directly compatible with arbitrary string-comparable collection types 
 
 Some of the most common operations in data processing are random generation and lookup tables.
 That's true not only for strings but for any data type, and StringZilla has been extensively used in Image Processing and Bioinformatics for those purposes.
+Generating random byte-streams:
+
+| Library                        | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ------------------------------ | ----------------: | -----------------: |
+| `getrandom::fill`              |        0.18 GiB/s |         0.40 GiB/s |
+| `rand_chacha::ChaCha20Rng`     |        0.62 GiB/s |         1.72 GiB/s |
+| `rand_xoshiro::Xoshiro128Plus` |        2.66 GiB/s |         3.72 GiB/s |
+| `zeroize::zeroize`             |        4.62 GiB/s |         4.35 GiB/s |
+| `sz::fill_random`              |   __17.30 GiB/s__ |    __10.57 GiB/s__ |
+
+Performing in-place lookups in a precomputed table of 256 bytes:
+
+| Library              | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| -------------------- | ----------------: | -----------------: |
+| Serial Rust          |        1.64 GiB/s |         1.61 GiB/s |
+| `sz::lookup_inplace` |    __2.28 GiB/s__ |    __13.39 GiB/s__ |
+
 
 ## String Edit Distance Benchmarks
 
 Edit Distance calculation is a common component of Search Engines, Data Cleaning, and Natural Language Processing, as well as in Bioinformatics.
 It's a computationally expensive operation, generally implemented using dynamic programming, with a quadratic time complexity upper bound.
+
+| Library                                     | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ------------------------------------------- | ----------------: | -----------------: |
+| Binary inputs                               |                   |                    |
+| `rapidfuzz::levenshtein<Bytes>`             |       4'633 MCUPS |       14'316 MCUPS |
+| `szs::LevenshteinDistances` on 1x CPU       |       3'315 MCUPS |       13'084 MCUPS |
+| `szs::LevenshteinDistances` on 16x CPUs     |      29'430 MCUPS |      105'400 MCUPS |
+| `szs::LevenshteinDistances` on 1x GPU       |      31'913 MCUPS |  __624'730 MCUPS__ |
+|                                             |                   |                    |
+| UTF-8 inputs                                |                   |                    |
+| `rapidfuzz::levenshtein<Chars>`             |       3'877 MCUPS |       13'179 MCUPS |
+| `szs::LevenshteinDistancesUtf8` on 1x CPU   |       3'283 MCUPS |       11'690 MCUPS |
+| `szs::LevenshteinDistancesUtf8` on 16x CPUs |      38'954 MCUPS |      103'500 MCUPS |
+
+For biological sequences, the Needleman-Wunsch and Smith-Waterman algorithms are more appropriate, as they allow overriding the default substitution costs.
+Another common adaptation is to used Gotoh's affine gap penalties, which better model the evolutionary events in DNA and Protein sequences.
+
+| Library                                  | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ---------------------------------------- | ----------------: | -----------------: |
+| Linear gaps                              |                   |                    |
+| `szs::NeedlemanWunschScores` on 1x CPU   |         278 MCUPS |          612 MCUPS |
+| `szs::NeedlemanWunschScores` on 16x CPUs |       4'057 MCUPS |        8'492 MCUPS |
+| `szs::NeedlemanWunschScores` on 1x GPU   |         131 MCUPS |   __12'113 MCUPS__ |
+| `szs::SmithWatermanScores` on 1x CPU     |         263 MCUPS |          552 MCUPS |
+| `szs::SmithWatermanScores` on 16x CPUs   |       3'883 MCUPS |        8'011 MCUPS |
+| `szs::SmithWatermanScores` on 1x GPU     |         143 MCUPS |   __12'921 MCUPS__ |
+|                                          |                   |                    |
+| Affine gaps                              |                   |                    |
+| `szs::NeedlemanWunschScores` on 1x CPU   |          83 MCUPS |          354 MCUPS |
+| `szs::NeedlemanWunschScores` on 16x CPUs |       1'267 MCUPS |        4'694 MCUPS |
+| `szs::NeedlemanWunschScores` on 1x GPU   |         128 MCUPS |   __13'799 MCUPS__ |
+| `szs::SmithWatermanScores` on 1x CPU     |          79 MCUPS |          284 MCUPS |
+| `szs::SmithWatermanScores` on 16x CPUs   |       1'026 MCUPS |        3'776 MCUPS |
+| `szs::SmithWatermanScores` on 1x GPU     |         127 MCUPS |   __13'205 MCUPS__ |
+
+## Byte-level Fingerprinting & Sketching Benchmarks
+
+In large-scale Retrieval workloads a common technique is to convert variable-length messy strings into some fixed-length representations.
+Those are often called "fingerprints" or "sketches", like "Min-Hashing" or "Count-Min-Sketching".
+
+| Library                         | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ------------------------------- | ----------------: | -----------------: |
+| Serial Rolling Hashes           |        0.44 MiB/s |         0.47 MiB/s |
+| `szs::Fingerprints` on 1x CPU   |        0.56 MiB/s |         0.51 MiB/s |
+| `szs::Fingerprints` on 16x CPUs |        6.62 MiB/s |         8.03 MiB/s |
+| `szs::Fingerprints` on 1x GPU   |  __102.07 MiB/s__ |   __392.37 MiB/s__ |
 
 ## Replicating the Results
 
@@ -128,6 +197,13 @@ Before running benchmarks, you can test your Rust environment running:
 
 ```bash
 cargo install cargo-criterion --locked
+```
+
+To pull and compile all the dependencies, you can call:
+
+```bash
+cargo fetch --all-features
+cargo build --all-features
 ```
 
 Wars always take long, and so do these benchmarks.

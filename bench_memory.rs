@@ -41,6 +41,20 @@ use rand_xoshiro;
 use stringzilla::sz;
 use zeroize::Zeroize;
 
+fn log_stringzilla_metadata() {
+    let v = sz::version();
+    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
+    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
+    println!("- capabilities: {}", sz::capabilities().as_str());
+}
+
+fn configure_bench() -> Criterion {
+    Criterion::default()
+        .sample_size(10) // Each loop scans the whole dataset.
+        .warm_up_time(Duration::from_secs(1)) // Let the CPU frequencies settle.
+        .measurement_time(Duration::from_secs(20)) // Actual measurement time.
+}
+
 /// Loads the dataset from the file specified by the `STRINGWARS_DATASET` environment variable.
 pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
     let dataset_path = env::var("STRINGWARS_DATASET")
@@ -169,11 +183,7 @@ fn bench_generate_random(
 }
 
 fn main() {
-    // Log StringZilla metadata
-    let v = sz::version();
-    println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
-    println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
-    println!("- capabilities: {}", sz::capabilities().as_str());
+    log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables, and panic if the content is missing
     let mut dataset = load_dataset().unwrap();
@@ -182,11 +192,7 @@ fn main() {
         panic!("No tokens found in the dataset.");
     }
 
-    // Setup the default durations
-    let mut criterion = Criterion::default()
-        .sample_size(10) // Each loop scans the whole dataset.
-        .warm_up_time(Duration::from_secs(1)) // Let the CPU frequencies settle.
-        .measurement_time(Duration::from_secs(20)); // Actual measurement time.
+    let mut criterion = configure_bench();
 
     // Benchmarks for lookup table transform
     let mut group = criterion.benchmark_group("lookup-table");
