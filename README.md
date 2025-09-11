@@ -19,6 +19,11 @@ Of course, the functionality of the projects is different, as are the APIs and t
 So, I focus on the workloads for which StringZilla was designed and compare the throughput of the core operations.
 Notably, I also favor modern hardware with support for a wider range SIMD instructions, like mask-equipped AVX-512 on x86 starting from the 2015 Intel Skylake-X CPUs or more recent predicated variable-length SVE and SVE2 on Arm, that aren't supported by most of the existing libraries and Rust tooling.
 
+> [!IMPORTANT]  
+> The numbers in the tables below are provided for reference only and may vary depending on the CPU, compiler, dataset, and tokenization method.
+> Most of them were obtained on Intel Sapphire Rapids CPUs and Nvidia H100 GPUs, using Rust with `-C target-cpu=native` optimization flag.
+> To replicate the results, please refer to the [Replicating the Results](#replicating-the-results) section below.
+
 ## String Hashing Benchmarks
 
 Many great hashing libraries exist in Rust, C, and C++.
