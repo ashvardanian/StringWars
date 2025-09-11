@@ -45,11 +45,9 @@ bench_memory = [
     "rand_xoshiro", # Randomize Buffer
 ]
 bench_fingerprints = [
-    "probabilistic-collections", # MinHash + CountMinSketch
-    # "finch",                   # Temporarily disabled (no dependency yet)
-    "count-min-sketch", # Dedicated CountMinSketch
-    "fork_union",       # CPU core counting for device scopes
-    "stringtape",       # String and bytes tapes for StringZilla
+    "probabilistic-collections", # MinHash
+    "fork_union",                # CPU core counting for device scopes
+    "stringtape",                # String and bytes tapes for StringZilla
 ]
 
 # TODO: String properties:
@@ -153,12 +151,7 @@ optional = true
 version = "0.7.0"
 optional = true
 
-# Fingerprinting-related optional deps (used by bench_fingerprints)
 [dependencies.probabilistic-collections]
-version = "*"
-optional = true
-
-[dependencies.count-min-sketch]
 version = "*"
 optional = true
 

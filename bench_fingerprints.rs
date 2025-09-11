@@ -20,9 +20,9 @@ Environment variables control dataset and processing:
 - `STRINGWARS_NDIM`: Total hash functions distributed across n-gram widths (default: 256).
 
 N-gram configuration:
-- Fixed window widths: [15, 33, 65, 129] bytes for multi-scale fingerprinting
+- Fixed window widths: [5, 9, 17, 33] bytes for multi-scale fingerprinting
 - Hash distribution: NDIM/4 hash functions per window width
-- Example: NDIM=256 → 64 hashes each for 3-byte, 5-byte, 7-byte, 15-byte n-grams
+- Example: NDIM=256 → 64 hashes each for 5-byte, 9-byte, 17-byte, 33-byte n-grams
 
 ```sh
 RUSTFLAGS="-C target-cpu=native" \
@@ -34,20 +34,23 @@ RUSTFLAGS="-C target-cpu=native" \
 "#]
 
 use core::convert::TryInto;
+use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::fs;
+use std::hash::{Hash, Hasher};
 
 use criterion::{Criterion, Throughput};
 use fork_union::count_logical_cores;
 
-use probabilistic_collections::similarity::MinHash;
+// use probabilistic_collections::similarity::MinHash; // ! Flawed implementation
+// use finch::sketch_schemes::mash::MashSketcher;
 use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
 use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version};
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
 // Fixed n-gram widths for multi-scale fingerprinting
-const NGRAM_WIDTHS: [usize; 4] = [15, 33, 65, 129];
+const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
 
 /// Simple iterator that generates n-byte-grams of a single specific width
 /// Compatible with `probabilistic_collections::MinHash` API
@@ -379,7 +382,8 @@ fn bench_fingerprints(c: &mut Criterion) {
         });
     }
 
-    // Probabilistic-Collections MinHash baseline with multi-width byte n-grams
+    // ! Flawed implementation
+    /*
     // Create separate MinHash instances for each n-gram width
     let hashes_per_width = ndim / NGRAM_WIDTHS.len();
     let minhashers: Vec<MinHash<ByteGrams, _>> = (0..NGRAM_WIDTHS.len())
@@ -427,6 +431,73 @@ fn bench_fingerprints(c: &mut Criterion) {
             std::hint::black_box(&out);
         })
     });
+    */
+
+    // Serial MinHash baseline implementing correct independent hash functions
+    // This addresses the flaw in probabilistic_collections where hash function index is ignored
+    g.throughput(Throughput::Bytes(per_batch_bytes));
+    g.bench_function("serial::MinHash<ByteGrams>", |b| {
+        // Pre-construct hash parameters for independent universal hash functions
+        // Each hash function uses: hash_i(x) = (a_i * hash(x) + b_i) mod mersenne_prime
+
+        const MERSENNE_PRIME: u64 = (1u64 << 61) - 1; // Large prime for universal hashing
+
+        // Generate independent hash function parameters
+        let hash_params: Vec<(u64, u64)> = (0..ndim)
+            .map(|i| {
+                let a = 2 * i as u64 + 1; // Odd number for universal hashing
+                let b = i as u64;
+                (a, b)
+            })
+            .collect();
+
+        let mut start_idx = 0;
+        b.iter(|| {
+            let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
+                &bytes_view,
+                &chars_view,
+                &mut start_idx,
+                batch_size,
+                tokens_count,
+            );
+
+            let mut out = Vec::with_capacity(actual);
+
+            // Process each line with serial MinHash
+            for i in 0..batch_bytes_view.len() {
+                let line_bytes: &[u8] = &batch_bytes_view[i];
+                if !line_bytes.is_empty() {
+                    // Initialize minimum hash values for each hash function
+                    let mut min_hashes = vec![u64::MAX; ndim];
+
+                    // Process all n-gram widths
+                    for &width in &NGRAM_WIDTHS {
+                        if line_bytes.len() >= width {
+                            // Generate n-grams of this width
+                            for window in line_bytes.windows(width) {
+                                // Compute base hash of the n-gram
+                                let mut hasher = DefaultHasher::new();
+                                window.hash(&mut hasher);
+                                let base_hash = hasher.finish();
+
+                                // Apply each independent hash function
+                                for (hash_idx, &(a, b)) in hash_params.iter().enumerate() {
+                                    let independent_hash =
+                                        (a.wrapping_mul(base_hash).wrapping_add(b))
+                                            % MERSENNE_PRIME;
+                                    min_hashes[hash_idx] =
+                                        min_hashes[hash_idx].min(independent_hash);
+                                }
+                            }
+                        }
+                    }
+
+                    out.push(min_hashes);
+                }
+            }
+            std::hint::black_box(&out);
+        })
+    });
 
     g.finish();
 }
@@ -435,7 +506,9 @@ fn main() {
     log_stringzilla_metadata();
     println!("Text Fingerprinting Benchmarks");
     println!("- szs::Fingerprints: CPU/GPU fingerprints with multi-width byte n-grams");
-    println!("- probabilistic_collections::MinHash<ByteGrams>: Probabilistic collections MinHash with byte n-gram iterator");
+
+    // ! Flawed implementation
+    // println!("- probabilistic_collections::MinHash<ByteGrams>: Probabilistic collections MinHash with byte n-gram iterator");
 
     let mut criterion = configure_bench();
     bench_fingerprints(&mut criterion);
