@@ -116,6 +116,23 @@ Those are directly compatible with arbitrary string-comparable collection types 
 
 Some of the most common operations in data processing are random generation and lookup tables.
 That's true not only for strings but for any data type, and StringZilla has been extensively used in Image Processing and Bioinformatics for those purposes.
+Generating random byte-streams:
+
+| Library                        | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ------------------------------ | ----------------: | -----------------: |
+| `getrandom::fill`              |        0.18 GiB/s |         0.40 GiB/s |
+| `rand_chacha::ChaCha20Rng`     |        0.62 GiB/s |         1.72 GiB/s |
+| `rand_xoshiro::Xoshiro128Plus` |        2.66 GiB/s |         3.72 GiB/s |
+| `zeroize::zeroize`             |        4.62 GiB/s |         4.35 GiB/s |
+| `sz::fill_random`              |   __17.30 GiB/s__ |    __10.57 GiB/s__ |
+
+Performing in-place lookups in a precomputed table of 256 bytes:
+
+| Library              | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| -------------------- | ----------------: | -----------------: |
+| Serial Rust          |        1.64 GiB/s |         1.61 GiB/s |
+| `sz::lookup_inplace` |    __2.28 GiB/s__ |    __13.39 GiB/s__ |
+
 
 ## String Edit Distance Benchmarks
 
