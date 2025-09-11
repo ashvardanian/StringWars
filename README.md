@@ -34,20 +34,21 @@ Many of them have similar pitfalls:
 - They don't always support streaming and require the whole input to be available in memory at once.
 - They don't always pass the SMHasher test suite, especially with `--extra` checks enabled.
 - They generally don't have a dynamic dispatch mechanism to simplify shipping of precompiled software to a wide range of users.
+- They are rarely available for multiple programming languages.
 
 StringZilla addresses those issues and seems to provide competitive performance.
 On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
 
-| Library                |  Shorter Words |    Longer Lines |
-| ---------------------- | -------------: | --------------: |
-| `std::hash`            |     0.43 GiB/s |      3.74 GiB/s |
-| `xxh3::xxh3_64`        |     1.08 GiB/s |      9.48 GiB/s |
-| `aHash::hash_one`      |     1.23 GiB/s |      8.61 GiB/s |
-| `gxhash::gxhash64`     | __2.68 GiB/s__ |     10.81 GiB/s |
-| `stringzilla::hash`    |     1.84 GiB/s | __11.23 GiB/s__ |
-|                        |                |                 |
-| `blake3::hash`         |     0.10 GiB/s |      1.97 GiB/s |
-| `stringzilla::bytesum` |     2.16 GiB/s |     11.65 GiB/s |
+| Library                | Languages         |  Shorter Words |    Longer Lines |
+| ---------------------- | ----------------- | -------------: | --------------: |
+| `std::hash`            | Rs                |     0.43 GiB/s |      3.74 GiB/s |
+| `xxh3::xxh3_64`        | C, C++, Rs, Py... |     1.08 GiB/s |      9.48 GiB/s |
+| `aHash::hash_one`      | Rs                |     1.23 GiB/s |      8.61 GiB/s |
+| `gxhash::gxhash64`     | Rs                | __2.68 GiB/s__ |     10.81 GiB/s |
+| `stringzilla::hash`    | C, C++, Rs, Py... |     1.84 GiB/s | __11.23 GiB/s__ |
+|                        |                   |                |                 |
+| `blake3::hash`         | C, Rs, Py, Go     |     0.10 GiB/s |      1.97 GiB/s |
+| `stringzilla::bytesum` | C, C++, Rs, Py... |     2.16 GiB/s |     11.65 GiB/s |
 
 > Blake3 and byte-level summation are provided as a reference for expected lower and upper bounds.
 > Blake3 is a cryptographic hash function and is obliged to provide a certain level of security, which comes at a cost.
@@ -56,11 +57,11 @@ On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can 
 In larger systems, however, we often need the ability to incrementally hash the data.
 This is especially important in distributed systems, where the data is too large to fit into memory at once.
 
-| Library                    |  Shorter Words |   Longer Lines |
-| -------------------------- | -------------: | -------------: |
-| `std::hash::DefaultHasher` |     0.51 GiB/s |     3.92 GiB/s |
-| `aHash::AHasher`           | __1.30 GiB/s__ | __8.56 GiB/s__ |
-| `stringzilla::HashState`   |     0.89 GiB/s |     6.39 GiB/s |
+| Library                    | Languages         |  Shorter Words |   Longer Lines |
+| -------------------------- | ----------------- | -------------: | -------------: |
+| `std::hash::DefaultHasher` | Rs                |     0.51 GiB/s |     3.92 GiB/s |
+| `aHash::AHasher`           | Rs                | __1.30 GiB/s__ | __8.56 GiB/s__ |
+| `stringzilla::HashState`   | C, C++, Rs, Py... |     0.89 GiB/s |     6.39 GiB/s |
 
 ## Substring & Character-Set Search Benchmarks
 
