@@ -31,7 +31,7 @@ To run the benchmarks with the appropriate CPU features enabled, you can use the
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_hash bench_hash --jobs 8
+    cargo criterion --features bench_hash bench_hash --jobs $(nproc)
 ```
 
 For `gxhash`, ensure that your CPU supports the required AES and SSE2 instructions.

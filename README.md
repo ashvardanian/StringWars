@@ -227,14 +227,14 @@ Here is an example of a common benchmark run on a Unix-like system:
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_hash bench_hash --jobs 8
+    cargo criterion --features bench_hash bench_hash --jobs $(nproc)
 ```
 
 On Windows using PowerShell you'd need to set the environment variable differently:
 
 ```powershell
 $env:STRINGWARS_DATASET="README.md"
-cargo criterion --jobs 8
+cargo criterion --jobs $(nproc)
 ```
 
 ## Datasets
@@ -246,7 +246,7 @@ It's 124 MB in size, 1'000'000 lines long, and contains 8'388'608 tokens of mean
 
 ```bash
 wget --no-clobber -O leipzig1M.txt https://introcs.cs.princeton.edu/python/42sort/leipzig1m.txt 
-STRINGWARS_DATASET=leipzig1M.txt cargo criterion --jobs 8
+STRINGWARS_DATASET=leipzig1M.txt cargo criterion --jobs $(nproc)
 ```
 
 ### UTF8 Corpus
@@ -258,5 +258,5 @@ To download, unpack, and run the benchmarks, execute the following bash script i
 ```bash
 wget --no-clobber -O xlsum.csv.gz https://github.com/ashvardanian/xl-sum/releases/download/v1.0.0/xlsum.csv.gz
 gzip -d xlsum.csv.gz
-STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs 8
+STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs $(nproc)
 ```

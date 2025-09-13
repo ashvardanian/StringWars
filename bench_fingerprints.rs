@@ -29,7 +29,7 @@ RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_BATCH=1024 \
     STRINGWARS_NDIM=256 \
-    cargo criterion --features bench_fingerprints bench_fingerprints --jobs 8
+    cargo criterion --features bench_fingerprints bench_fingerprints --jobs 1
 ```
 "#]
 

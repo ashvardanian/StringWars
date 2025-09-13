@@ -28,7 +28,7 @@ RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_BATCH=2048 \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_similarities bench_similarities --jobs 8
+    cargo criterion --features bench_similarities bench_similarities --jobs 1
 ```
 "#]
 use core::convert::TryInto;

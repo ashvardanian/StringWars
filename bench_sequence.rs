@@ -25,7 +25,7 @@ RUSTFLAGS="-C target-cpu=native" \
     RAYON_NUM_THREADS=1 \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_sequence bench_sequence --jobs 8
+    cargo criterion --features bench_sequence bench_sequence --jobs $(nproc)
 ```
 "#]
 

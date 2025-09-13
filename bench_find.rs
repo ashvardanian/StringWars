@@ -30,7 +30,7 @@ To run the benchmarks with the appropriate CPU features enabled, you can use the
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_find bench_find --jobs 8
+    cargo criterion --features bench_find bench_find --jobs $(nproc)
 ```
 "#]
 use std::env;
