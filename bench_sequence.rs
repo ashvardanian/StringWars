@@ -41,6 +41,9 @@ use arrow::compute::{lexsort_to_indices, SortColumn, SortOptions};
 use rayon::prelude::*;
 use stringzilla::sz;
 
+mod units_formatter;
+use units_formatter::ComparisonsWallTime;
+
 fn log_stringzilla_metadata() {
     let v = sz::version();
     println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
@@ -48,8 +51,9 @@ fn log_stringzilla_metadata() {
     println!("- capabilities: {}", sz::capabilities().as_str());
 }
 
-fn configure_bench() -> Criterion {
+fn configure_bench() -> Criterion<ComparisonsWallTime> {
     Criterion::default()
+        .with_measurement(ComparisonsWallTime::default())
         .sample_size(10) // Each loop processes the whole dataset.
         .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
         .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
@@ -77,7 +81,7 @@ fn load_dataset() -> Vec<String> {
 }
 
 fn bench_argsort(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    group: &mut criterion::BenchmarkGroup<'_, ComparisonsWallTime>,
     unsorted: &Vec<String>,
 ) {
     // ? We have a very long benchmark, flat sampling is what we need.

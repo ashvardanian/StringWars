@@ -183,16 +183,25 @@ Another common adaptation is to used Gotoh's affine gap penalties, which better 
 
 In large-scale Retrieval workloads a common technique is to convert variable-length messy strings into some fixed-length representations.
 Those are often called "fingerprints" or "sketches", like "Min-Hashing" or "Count-Min-Sketching".
+There are a million variations of those algorithms, all resulting in different speed-vs-accuracy tradeoffs.
+Two of the approximations worth considering is the number of collisions of produced individual hashes withing fingerprints, and the bit-distribution entropy of the produced fingerprints.
+Adjusting all implementation to the same tokenization scheme, one my experience following numbers:
 
-| Library                                         | ≅ 100 bytes lines | ≅ 1000 bytes lines |
-| ----------------------------------------------- | ----------------: | -----------------: |
-| Serial Rolling Hashes                           |        0.44 MiB/s |         0.47 MiB/s |
-| `probabilistic_collections::MinHash<ByteGrams>` |        2.41 MiB/s |          ... MiB/s |
-| `szs::Fingerprints` on 1x CPU                   |        0.56 MiB/s |         0.51 MiB/s |
-| `szs::Fingerprints` on 16x CPUs                 |        6.62 MiB/s |         8.03 MiB/s |
-| `szs::Fingerprints` on 1x GPU                   |  __102.07 MiB/s__ |   __392.37 MiB/s__ |
-
-Comparing the quality of those fingerprints is a much more difficult task.
+| Library                         | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ------------------------------- | ----------------: | -----------------: |
+| Base MinHash for `<ByteGrams>`  |        0.44 MiB/s |         0.47 MiB/s |
+|                                 | 92.81% collisions |  94.58% collisions |
+|                                 |    0.8528 entropy |     0.7979 entropy |
+|                                 |                   |                    |
+| `pc::MinHash<ByteGrams>`        |        2.41 MiB/s |         3.16 MiB/s |
+|                                 | 91.80% collisions |  93.17% collisions |
+|                                 |    0.9343 entropy |     0.8779 entropy |
+|                                 |                   |                    |
+| `szs::Fingerprints` on 1x CPU   |        0.56 MiB/s |         0.51 MiB/s |
+| `szs::Fingerprints` on 16x CPUs |        6.62 MiB/s |         8.03 MiB/s |
+| `szs::Fingerprints` on 1x GPU   |  __102.07 MiB/s__ |   __392.37 MiB/s__ |
+|                                 | 86.80% collisions |  93.21% collisions |
+|                                 |    0.9992 entropy |     0.9967 entropy |
 
 ## Replicating the Results
 

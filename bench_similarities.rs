@@ -45,6 +45,9 @@ use stringzilla::szs::{
     LevenshteinDistancesUtf8, NeedlemanWunschScores, SmithWatermanScores, UnifiedAlloc, UnifiedVec,
 };
 
+mod units_formatter;
+use units_formatter::CupsWallTime;
+
 // Pull some metadata logging functionality
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
 use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version};
@@ -56,8 +59,9 @@ fn log_stringzilla_metadata() {
     println!("- capabilities: {}", szs_capabilities().as_str());
 }
 
-fn configure_bench() -> Criterion {
+fn configure_bench() -> Criterion<CupsWallTime> {
     Criterion::default()
+        .with_measurement(CupsWallTime::default())
         .sample_size(10) // smallest possible, that won't panic
         .warm_up_time(std::time::Duration::from_secs(1))
         .measurement_time(std::time::Duration::from_secs(5))
@@ -193,7 +197,7 @@ fn chars_tape_slice<'a>(
     (batch_a_view, batch_b_view, actual_batch_size)
 }
 
-fn bench_similarities(c: &mut Criterion) {
+fn bench_similarities(c: &mut Criterion<CupsWallTime>) {
     let dataset_path =
         env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
     let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
@@ -353,7 +357,7 @@ fn bench_similarities(c: &mut Criterion) {
 
 /// Uniform cost benchmarks: Classic Levenshtein distance (match=0, mismatch=1, open=1, extend=1)
 fn perform_uniform_benchmarks(
-    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    g: &mut criterion::BenchmarkGroup<'_, CupsWallTime>,
     tape_a_view: &BytesTapeView<u64>,
     tape_b_view: &BytesTapeView<u64>,
     chars_a_view: &CharsTapeView<u64>,
@@ -571,7 +575,7 @@ fn perform_uniform_benchmarks(
 
 /// Linear gap cost benchmarks: NW/SW with linear penalties (match=2, mismatch=-1, open=-2, extend=-2)
 fn perform_linear_benchmarks(
-    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    g: &mut criterion::BenchmarkGroup<'_, CupsWallTime>,
     tape_a_view: &BytesTapeView<u64>,
     tape_b_view: &BytesTapeView<u64>,
     batch_size: usize,
@@ -793,7 +797,7 @@ fn perform_linear_benchmarks(
 
 /// Affine gap cost benchmarks: NW/SW with affine penalties (match=2, mismatch=-1, open=-5, extend=-1)
 fn perform_affine_benchmarks(
-    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    g: &mut criterion::BenchmarkGroup<'_, CupsWallTime>,
     tape_a_view: &BytesTapeView<u64>,
     tape_b_view: &BytesTapeView<u64>,
     batch_size: usize,
