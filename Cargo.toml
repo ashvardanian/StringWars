@@ -152,7 +152,8 @@ version = "0.7.0"
 optional = true
 
 [dependencies.probabilistic-collections]
-version = "*"
+git = "https://github.com/ashvardanian/probabilistic-collections-rs"
+branch = "master"
 optional = true
 
 [[bench]]

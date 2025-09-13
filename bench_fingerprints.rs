@@ -42,8 +42,7 @@ use std::hash::{Hash, Hasher};
 use criterion::{Criterion, Throughput};
 use fork_union::count_logical_cores;
 
-// use probabilistic_collections::similarity::MinHash; // ! Flawed implementation
-// use finch::sketch_schemes::mash::MashSketcher;
+use probabilistic_collections::similarity::{ByteGrams, MinHash};
 use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
 use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version};
@@ -52,35 +51,186 @@ use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, Un
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
 
-/// Simple iterator that generates n-byte-grams of a single specific width
-/// Compatible with `probabilistic_collections::MinHash` API
-pub struct ByteGrams<'a> {
-    data: &'a [u8],
-    width: usize,
-    pos: usize,
+/// Calculate variance of hash values across dimensions (generic, no allocations)
+fn calculate_variance<T>(hash_matrix: &[Vec<T>]) -> f64
+where
+    T: Copy + ToF64,
+{
+    if hash_matrix.is_empty() || hash_matrix[0].is_empty() {
+        return 0.0;
+    }
+
+    let num_documents = hash_matrix.len();
+    let num_dimensions = hash_matrix[0].len();
+    let mut total_variance = 0.0;
+
+    // Calculate variance for each dimension without allocations
+    for dimension_index in 0..num_dimensions {
+        // Calculate mean for this dimension
+        let dimension_mean = hash_matrix
+            .iter()
+            .map(|document_hashes| document_hashes[dimension_index].to_f64())
+            .sum::<f64>()
+            / num_documents as f64;
+
+        // Calculate variance for this dimension
+        let dimension_variance = hash_matrix
+            .iter()
+            .map(|document_hashes| {
+                let hash_value = document_hashes[dimension_index].to_f64();
+                (hash_value - dimension_mean).powi(2)
+            })
+            .sum::<f64>()
+            / num_documents as f64;
+
+        total_variance += dimension_variance;
+    }
+
+    // Return average variance across all dimensions
+    total_variance / num_dimensions as f64
 }
 
-impl<'a> ByteGrams<'a> {
-    pub fn new(data: &'a [u8], width: usize) -> Self {
-        Self {
-            data,
-            width,
-            pos: 0,
-        }
+/// Trait for converting hash values to f64
+trait ToF64 {
+    fn to_f64(self) -> f64;
+}
+
+impl ToF64 for u32 {
+    #[inline]
+    fn to_f64(self) -> f64 {
+        self as f64
     }
 }
 
-impl<'a> Iterator for ByteGrams<'a> {
-    type Item = &'a [u8];
+impl ToF64 for u64 {
+    #[inline]
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+}
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.pos + self.width <= self.data.len() {
-            let gram = &self.data[self.pos..self.pos + self.width];
-            self.pos += 1;
-            Some(gram)
-        } else {
-            None
+/// Calculate bit entropy (how well distributed the bits are) - generic
+fn calculate_bit_entropy<T>(hash_matrix: &[Vec<T>]) -> f64
+where
+    T: Copy + Into<u64>,
+{
+    if hash_matrix.is_empty() || hash_matrix[0].is_empty() {
+        return 0.0;
+    }
+
+    // Determine bit width based on type
+    let bits_per_hash = std::mem::size_of::<T>() * 8;
+    let mut bit_ones_count = vec![0usize; bits_per_hash]; // Count of 1s for each bit position
+    let total_hash_values = hash_matrix.len() * hash_matrix[0].len();
+
+    for document_hashes in hash_matrix {
+        for &hash_value in document_hashes {
+            let hash_as_u64: u64 = hash_value.into();
+            for bit_position in 0..bits_per_hash {
+                if (hash_as_u64 >> bit_position) & 1 == 1 {
+                    bit_ones_count[bit_position] += 1;
+                }
+            }
         }
+    }
+
+    // Calculate entropy
+    let mut total_entropy = 0.0;
+    for ones_count in bit_ones_count {
+        let probability_of_one = ones_count as f64 / total_hash_values as f64;
+        if probability_of_one > 0.0 && probability_of_one < 1.0 {
+            total_entropy -= probability_of_one * probability_of_one.log2()
+                + (1.0 - probability_of_one) * (1.0 - probability_of_one).log2();
+        }
+    }
+
+    total_entropy / bits_per_hash as f64 // Normalize to [0, 1]
+}
+
+/// Calculate collision rate (duplicate hash values) - generic
+fn calculate_collision_rate<T>(hash_matrix: &[Vec<T>]) -> f64
+where
+    T: Copy + std::hash::Hash + Eq,
+{
+    use std::collections::HashSet;
+
+    if hash_matrix.is_empty() || hash_matrix[0].is_empty() {
+        return 0.0;
+    }
+
+    let mut unique_hash_values = HashSet::new();
+    let mut total_hash_count = 0;
+
+    for document_hashes in hash_matrix {
+        for &hash_value in document_hashes {
+            unique_hash_values.insert(hash_value);
+            total_hash_count += 1;
+        }
+    }
+
+    1.0 - (unique_hash_values.len() as f64 / total_hash_count as f64)
+}
+
+/// Calculate inter-dimension correlation (independence measure) - generic
+fn calculate_correlation<T>(hash_matrix: &[Vec<T>]) -> f64
+where
+    T: Copy + ToF64,
+{
+    if hash_matrix.is_empty() || hash_matrix[0].len() < 2 {
+        return 0.0;
+    }
+
+    let num_documents = hash_matrix.len();
+    let num_dimensions = hash_matrix[0].len();
+    let mut correlation_sum = 0.0;
+    let mut correlation_count = 0;
+
+    // Calculate correlation between adjacent hash functions (no allocations)
+    for dimension_index in 0..num_dimensions.min(64) {
+        // Limit to first 64 dimensions for performance
+        if dimension_index + 1 >= num_dimensions {
+            break;
+        }
+
+        // Calculate means for both dimensions
+        let dimension_x_mean = hash_matrix
+            .iter()
+            .map(|document_hashes| document_hashes[dimension_index].to_f64())
+            .sum::<f64>()
+            / num_documents as f64;
+        let dimension_y_mean = hash_matrix
+            .iter()
+            .map(|document_hashes| document_hashes[dimension_index + 1].to_f64())
+            .sum::<f64>()
+            / num_documents as f64;
+
+        // Calculate covariance and variances
+        let mut covariance = 0.0;
+        let mut variance_x = 0.0;
+        let mut variance_y = 0.0;
+
+        for document_hashes in hash_matrix {
+            let x_value = document_hashes[dimension_index].to_f64();
+            let y_value = document_hashes[dimension_index + 1].to_f64();
+            let x_deviation = x_value - dimension_x_mean;
+            let y_deviation = y_value - dimension_y_mean;
+
+            covariance += x_deviation * y_deviation;
+            variance_x += x_deviation * x_deviation;
+            variance_y += y_deviation * y_deviation;
+        }
+
+        if variance_x > 0.0 && variance_y > 0.0 {
+            let correlation = (covariance / (variance_x * variance_y).sqrt()).abs();
+            correlation_sum += correlation;
+            correlation_count += 1;
+        }
+    }
+
+    if correlation_count == 0 {
+        0.0
+    } else {
+        correlation_sum / correlation_count as f64
     }
 }
 
@@ -229,6 +379,17 @@ fn bench_fingerprints(c: &mut Criterion) {
     let avg_token_bytes: u64 = total_bytes as u64 / truncated_units.len() as u64;
     let per_batch_bytes = (batch_size as u64) * avg_token_bytes;
 
+    // Pre-allocated matrices for quality analysis: N_docs × N_dims (algorithm-specific types)
+    let total_documents = truncated_units.len();
+    let mut serial_matrix = vec![vec![0u64; ndim]; total_documents]; // u64 for serial MinHash
+    let mut pc_matrix = vec![vec![0u64; ndim]; total_documents]; // u64 for probabilistic_collections
+    let mut sz_matrix = vec![vec![0u32; ndim]; total_documents]; // u32 for StringZilla fingerprints
+
+    // Track which documents have been processed for each implementation
+    let mut serial_document_index = 0usize;
+    let mut pc_document_index = 0usize;
+    let mut sz_document_index = 0usize;
+
     let mut g = c.benchmark_group("fingerprinting");
 
     // StringZilla engines and device scopes (1xCPU, NxCPU, GPU?)
@@ -315,6 +476,7 @@ fn bench_fingerprints(c: &mut Criterion) {
                         e
                     )
                 });
+
             std::hint::black_box((&min_hashes[..actual * ndim], &min_counts[..actual * ndim]));
         })
     });
@@ -347,6 +509,19 @@ fn bench_fingerprints(c: &mut Criterion) {
                         num_cores, e
                     )
                 });
+
+            // Fill quality matrix - direct copy for StringZilla (u32 values)
+            for document_idx in 0..actual {
+                if sz_document_index < total_documents {
+                    let start = document_idx * ndim;
+                    let end = start + ndim;
+                    for (dim_idx, &hash_value) in min_hashes[start..end].iter().enumerate() {
+                        sz_matrix[sz_document_index][dim_idx] = hash_value;
+                    }
+                    sz_document_index += 1;
+                }
+            }
+
             std::hint::black_box((&min_hashes[..actual * ndim], &min_counts[..actual * ndim]));
         })
     });
@@ -382,8 +557,6 @@ fn bench_fingerprints(c: &mut Criterion) {
         });
     }
 
-    // ! Flawed implementation
-    /*
     // Create separate MinHash instances for each n-gram width
     let hashes_per_width = ndim / NGRAM_WIDTHS.len();
     let minhashers: Vec<MinHash<ByteGrams, _>> = (0..NGRAM_WIDTHS.len())
@@ -426,12 +599,18 @@ fn bench_fingerprints(c: &mut Criterion) {
                     }
 
                     out.push(combined_signature.clone());
+
+                    // Fill quality matrix - direct memcpy
+                    if pc_document_index < total_documents && combined_signature.len() == ndim {
+                        pc_matrix[pc_document_index].copy_from_slice(&combined_signature);
+                        pc_document_index += 1;
+                    }
                 }
             }
+
             std::hint::black_box(&out);
         })
     });
-    */
 
     // Serial MinHash baseline implementing correct independent hash functions
     // This addresses the flaw in probabilistic_collections where hash function index is ignored
@@ -492,23 +671,71 @@ fn bench_fingerprints(c: &mut Criterion) {
                         }
                     }
 
-                    out.push(min_hashes);
+                    out.push(min_hashes.clone());
+
+                    // Fill quality matrix - direct memcpy
+                    if serial_document_index < total_documents && min_hashes.len() == ndim {
+                        serial_matrix[serial_document_index].copy_from_slice(&min_hashes);
+                        serial_document_index += 1;
+                    }
                 }
             }
+
             std::hint::black_box(&out);
         })
     });
 
     g.finish();
+
+    // Compute and display quality metrics
+    println!("\n=== Hash Quality Analysis ===");
+    println!(
+        "Documents processed: PC={}, Serial={}, StringZilla={}",
+        pc_document_index, serial_document_index, sz_document_index
+    );
+
+    if pc_document_index > 0 {
+        let pc_slice = &pc_matrix[..pc_document_index];
+        println!("\nProbabilistic Collections MinHash (u64 double-hashing):");
+        println!("  Variance:     {:.2e}", calculate_variance(pc_slice));
+        println!("  Bit Entropy:  {:.4}", calculate_bit_entropy(pc_slice));
+        println!(
+            "  Collision:    {:.4}%",
+            calculate_collision_rate(pc_slice) * 100.0
+        );
+        println!("  Correlation:  {:.4}", calculate_correlation(pc_slice));
+    }
+
+    if serial_document_index > 0 {
+        let serial_slice = &serial_matrix[..serial_document_index];
+        println!("\nSerial MinHash (u64 universal hashing):");
+        println!("  Variance:     {:.2e}", calculate_variance(serial_slice));
+        println!("  Bit Entropy:  {:.4}", calculate_bit_entropy(serial_slice));
+        println!(
+            "  Collision:    {:.4}%",
+            calculate_collision_rate(serial_slice) * 100.0
+        );
+        println!("  Correlation:  {:.4}", calculate_correlation(serial_slice));
+    }
+
+    if sz_document_index > 0 {
+        let sz_slice = &sz_matrix[..sz_document_index];
+        println!("\nStringZilla Multi-core (u32 rolling hashes):");
+        println!("  Variance:     {:.2e}", calculate_variance(sz_slice));
+        println!("  Bit Entropy:  {:.4}", calculate_bit_entropy(sz_slice));
+        println!(
+            "  Collision:    {:.4}%",
+            calculate_collision_rate(sz_slice) * 100.0
+        );
+        println!("  Correlation:  {:.4}", calculate_correlation(sz_slice));
+    }
 }
 
 fn main() {
     log_stringzilla_metadata();
     println!("Text Fingerprinting Benchmarks");
     println!("- szs::Fingerprints: CPU/GPU fingerprints with multi-width byte n-grams");
-
-    // ! Flawed implementation
-    // println!("- probabilistic_collections::MinHash<ByteGrams>: Probabilistic collections MinHash with byte n-gram iterator");
+    println!("- probabilistic_collections::MinHash<ByteGrams>: MinHash with ByteGrams iterator");
 
     let mut criterion = configure_bench();
     bench_fingerprints(&mut criterion);

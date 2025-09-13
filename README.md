@@ -184,12 +184,15 @@ Another common adaptation is to used Gotoh's affine gap penalties, which better 
 In large-scale Retrieval workloads a common technique is to convert variable-length messy strings into some fixed-length representations.
 Those are often called "fingerprints" or "sketches", like "Min-Hashing" or "Count-Min-Sketching".
 
-| Library                         | ≅ 100 bytes lines | ≅ 1000 bytes lines |
-| ------------------------------- | ----------------: | -----------------: |
-| Serial Rolling Hashes           |        0.44 MiB/s |         0.47 MiB/s |
-| `szs::Fingerprints` on 1x CPU   |        0.56 MiB/s |         0.51 MiB/s |
-| `szs::Fingerprints` on 16x CPUs |        6.62 MiB/s |         8.03 MiB/s |
-| `szs::Fingerprints` on 1x GPU   |  __102.07 MiB/s__ |   __392.37 MiB/s__ |
+| Library                                         | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ----------------------------------------------- | ----------------: | -----------------: |
+| Serial Rolling Hashes                           |        0.44 MiB/s |         0.47 MiB/s |
+| `probabilistic_collections::MinHash<ByteGrams>` |        2.41 MiB/s |          ... MiB/s |
+| `szs::Fingerprints` on 1x CPU                   |        0.56 MiB/s |         0.51 MiB/s |
+| `szs::Fingerprints` on 16x CPUs                 |        6.62 MiB/s |         8.03 MiB/s |
+| `szs::Fingerprints` on 1x GPU                   |  __102.07 MiB/s__ |   __392.37 MiB/s__ |
+
+Comparing the quality of those fingerprints is a much more difficult task.
 
 ## Replicating the Results
 

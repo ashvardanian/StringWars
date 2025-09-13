@@ -1333,8 +1333,7 @@ dependencies = [
 [[package]]
 name = "probabilistic-collections"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10e885f79599b2c3fe1ad8ab539b4dbb0c6b801b5948696a6b0b6dee18675cea"
+source = "git+https://github.com/ashvardanian/probabilistic-collections-rs?branch=master#d78ab08ee1a75e04976d62d7befadeb2c4c15ece"
 dependencies = [
  "bincode",
  "byteorder",
