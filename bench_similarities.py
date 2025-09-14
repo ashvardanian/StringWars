@@ -690,11 +690,12 @@ def bench(
     batch_size: int = 2048,
     filter_pattern: Optional[Pattern] = None,
     bio: bool = False,
+    dataset_limit: Optional[str] = None,
 ):
     """Run similarity benchmarks."""
 
     # Load dataset
-    dataset = load_dataset(dataset_path)
+    dataset = load_dataset(dataset_path, size_limit=dataset_limit)
     strings = [line.strip() for line in dataset.split("\n") if line.strip()]
 
     # Generate random pairs
@@ -867,6 +868,7 @@ def main():
             args.batch_size,
             pattern,
             args.bio,
+            args.dataset_limit,
         )
     except Exception as e:
         print(f"Error: {e}")

@@ -28,7 +28,7 @@ Environment variables:
 
 Examples:
   python bench_hash.py --dataset README.md --tokens lines
-  python bench_hash.py --dataset test.txt --tokens words -k "xxhash"
+  python bench_hash.py --dataset xlsum.csv --tokens words -k "xxhash"
   STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_hash.py
 """
 
@@ -91,8 +91,6 @@ def bench_hash_function(
     tokens_per_sec = processed_tokens / duration_secs
 
     print(f"{name:25s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
-
-
 
 
 def run_stateless_benchmarks(

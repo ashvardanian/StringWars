@@ -18,7 +18,7 @@ Environment variables:
 
 Examples:
   python bench_find.py --dataset README.md --tokens lines
-  python bench_find.py --dataset test.txt --tokens words -k "str.find"
+  python bench_find.py --dataset xlsum.csv --tokens words -k "str.find"
   STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_find.py
 
 Timing via time.monotonic_ns(); throughput in decimal GB/s. Filter with -k/--filter.
@@ -135,8 +135,6 @@ def bytes_translate(haystack_bytes: bytes, lut: bytes) -> int:
     # Python bytes.translate with 256-byte LUT
     result = haystack_bytes.translate(lut)
     return len(result)
-
-
 
 
 def run_benches(
