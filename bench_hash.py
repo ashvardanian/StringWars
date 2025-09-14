@@ -34,6 +34,7 @@ Examples:
 
 import argparse
 import re
+import sys
 from typing import List, Optional, Callable, Any
 
 import blake3
@@ -43,32 +44,51 @@ import xxhash
 from utils import load_dataset, tokenize_dataset, add_common_args, now_ns
 
 
+def log_system_info():
+    """Log Python version and hash library versions."""
+    print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
+    print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
+    print(f"- xxHash: {xxhash.VERSION}")
+    print(f"- Blake3: {blake3.__version__}")
+    print()  # Add blank line
+
+
 def bench_hash_function(
     name: str,
     tokens: List[bytes],
     hash_func: Callable[[bytes], Any],
-    stateful: bool = False,
+    time_limit_seconds: float = 10.0,
 ) -> None:
-    """Benchmark a hash function and report throughput."""
-    total_bytes = sum(len(token) for token in tokens)
+    """
+    Benchmark a stateless hash function and report throughput.
 
+    Processes tokens until time limit is reached, then reports results.
+    """
     start_time = now_ns()
+    time_limit_ns = int(time_limit_seconds * 1e9)
 
-    if stateful:
-        # Simulate stateful/incremental hashing by accumulating results
-        result = 0
-        for token in tokens:
-            result ^= hash(hash_func(token))  # XOR to prevent optimization
-    else:
-        # Stateless: hash each token independently
-        for token in tokens:
-            _ = hash_func(token)
+    processed_tokens = 0
+    processed_bytes = 0
+
+    # Stateless: hash each token independently
+    next_check = 10_000
+    for token in tokens:
+        _ = hash_func(token)
+        processed_tokens += 1
+        processed_bytes += len(token)
+
+        # Check time limit every 10,000 tokens
+        if processed_tokens >= next_check:
+            current_time = now_ns()
+            if current_time >= start_time + time_limit_ns:
+                break
+            next_check += 10_000
 
     end_time = now_ns()
 
     duration_secs = (end_time - start_time) / 1e9
-    throughput_gbs = total_bytes / (1e9 * duration_secs)
-    tokens_per_sec = len(tokens) / duration_secs
+    throughput_gbs = processed_bytes / (1e9 * duration_secs)
+    tokens_per_sec = processed_tokens / duration_secs
 
     print(f"{name:25s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
 
@@ -78,58 +98,85 @@ def name_matches(name: str, pattern: Optional[re.Pattern]) -> bool:
     return True if pattern is None else bool(pattern.search(name))
 
 
-def run_stateless_benchmarks(tokens: List[bytes], filter_pattern: Optional[re.Pattern] = None):
+def run_stateless_benchmarks(
+    tokens: List[bytes],
+    filter_pattern: Optional[re.Pattern] = None,
+    time_limit_seconds: float = 10.0,
+):
     """Run stateless hash benchmarks (hash each token independently)."""
     print("\n=== Stateless Hash Benchmarks ===")
 
     # Python built-in hash
     if name_matches("hash", filter_pattern):
-        bench_hash_function("hash", tokens, lambda x: hash(x))
+        bench_hash_function("hash", tokens, lambda x: hash(x), time_limit_seconds)
 
     # xxHash
     if name_matches("xxhash.xxh3_64", filter_pattern):
-        bench_hash_function("xxhash.xxh3_64", tokens, lambda x: xxhash.xxh3_64(x).intdigest())
+        bench_hash_function("xxhash.xxh3_64", tokens, lambda x: xxhash.xxh3_64(x).intdigest(), time_limit_seconds)
 
     # StringZilla hashes
     if name_matches("stringzilla.hash", filter_pattern):
-        bench_hash_function("stringzilla.hash", tokens, lambda x: sz.hash(x))
+        bench_hash_function("stringzilla.hash", tokens, lambda x: sz.hash(x), time_limit_seconds)
 
     # Reference bounds
     if name_matches("blake3.digest", filter_pattern):
-        bench_hash_function("blake3.digest", tokens, lambda x: blake3.blake3(x).digest())
+        bench_hash_function("blake3.digest", tokens, lambda x: blake3.blake3(x).digest(), time_limit_seconds)
 
     if name_matches("stringzilla.bytesum", filter_pattern):
-        bench_hash_function("stringzilla.bytesum", tokens, lambda x: sz.bytesum(x))
+        bench_hash_function("stringzilla.bytesum", tokens, lambda x: sz.bytesum(x), time_limit_seconds)
 
 
-def bench_stateful_hash(name: str, tokens: List[bytes], hasher_factory: Callable) -> None:
+def bench_stateful_hash(
+    name: str,
+    tokens: List[bytes],
+    hasher_factory: Callable,
+    time_limit_seconds: float = 10.0,
+) -> None:
     """Benchmark a stateful hash function and report throughput."""
-    total_bytes = sum(len(token) for token in tokens)
-
     start_time = now_ns()
+    time_limit_ns = int(time_limit_seconds * 1e9)
+
+    processed_tokens = 0
+    processed_bytes = 0
+
     hasher = hasher_factory()
+    next_check = 10_000
     for token in tokens:
         hasher.update(token)
+        processed_tokens += 1
+        processed_bytes += len(token)
+
+        # Check time limit every 10,000 tokens
+        if processed_tokens >= next_check:
+            current_time = now_ns()
+            if current_time >= start_time + time_limit_ns:
+                break
+            next_check += 10_000
+
     result = hasher.digest() if hasattr(hasher, "digest") else hasher.intdigest()
     end_time = now_ns()
 
     duration_secs = (end_time - start_time) / 1e9
-    throughput_gbs = total_bytes / (1e9 * duration_secs)
-    tokens_per_sec = len(tokens) / duration_secs
+    throughput_gbs = processed_bytes / (1e9 * duration_secs)
+    tokens_per_sec = processed_tokens / duration_secs
     print(f"{name:25s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
 
 
-def run_stateful_benchmarks(tokens: List[bytes], filter_pattern: Optional[re.Pattern] = None):
+def run_stateful_benchmarks(
+    tokens: List[bytes],
+    filter_pattern: Optional[re.Pattern] = None,
+    time_limit_seconds: float = 10.0,
+):
     """Run stateful hash benchmarks (incremental/streaming hashing)."""
     print("\n=== Stateful Hash Benchmarks ===")
 
     # xxHash stateful
     if name_matches("xxhash.xxh3_64", filter_pattern):
-        bench_stateful_hash("xxhash.xxh3_64", tokens, lambda: xxhash.xxh3_64())
+        bench_stateful_hash("xxhash.xxh3_64", tokens, lambda: xxhash.xxh3_64(), time_limit_seconds)
 
     # StringZilla stateful hasher
     if name_matches("stringzilla.Hasher", filter_pattern):
-        bench_stateful_hash("stringzilla.Hasher", tokens, lambda: sz.Hasher())
+        bench_stateful_hash("stringzilla.Hasher", tokens, lambda: sz.Hasher(), time_limit_seconds)
 
 
 def main():
@@ -143,18 +190,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Load and tokenize dataset
-    try:
-        dataset = load_dataset(args.dataset, as_bytes=True)
-        tokens = tokenize_dataset(dataset, args.tokens)
-    except Exception as e:
-        print(f"Error loading dataset: {e}")
-        return 1
-
-    if not tokens:
-        print("No tokens found in dataset")
-        return 1
-
     # Compile filter pattern
     filter_pattern = None
     if args.filter:
@@ -164,14 +199,27 @@ def main():
             print(f"Invalid regex for --filter: {e}")
             return 1
 
+    # Load and tokenize dataset
+    try:
+        dataset = load_dataset(args.dataset, as_bytes=True, size_limit=args.dataset_limit)
+        tokens = tokenize_dataset(dataset, args.tokens)
+    except Exception as e:
+        print(f"Error loading dataset: {e}")
+        return 1
+
+    if not tokens:
+        print("No tokens found in dataset")
+        return 1
+
     # Report dataset info
     total_bytes = sum(len(token) for token in tokens)
     avg_token_length = total_bytes / len(tokens) if tokens else 0
     print(f"Dataset: {len(tokens):,} tokens, {total_bytes:,} bytes, {avg_token_length:.1f} avg token length")
+    log_system_info()
 
     # Run benchmarks
-    run_stateless_benchmarks(tokens, filter_pattern)
-    run_stateful_benchmarks(tokens, filter_pattern)
+    run_stateless_benchmarks(tokens, filter_pattern, args.time_limit)
+    run_stateful_benchmarks(tokens, filter_pattern, args.time_limit)
 
     return 0
 
