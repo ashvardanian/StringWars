@@ -69,7 +69,7 @@ from typing import List, Callable, Tuple, Optional, Pattern, Any
 from tqdm import tqdm
 import numpy as np
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns
+from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, name_matches
 
 # String similarity libraries
 import stringzilla as sz
@@ -192,7 +192,7 @@ def log_similarity_operation(
         cells_per_sec = processed_cells / total_time_s
         mcups = cells_per_sec / 1e6  # Convert to MCUPS (Mega Cell Updates Per Second)
         print(
-            f"{name:35s}: {total_time_s:8.3f}s ~ {mcups:8.1f} MCUPS ~ {pairs_per_sec:8,.0f} pairs/s ~ checksum={checksum}"
+            f"{name:35s}: {total_time_s:8.3f}s ~ {mcups:10,.1f} MCUPS ~ {pairs_per_sec:8,.0f} pairs/s ~ checksum={checksum}"
         )
     else:
         print(f"{name}: No pairs processed")
@@ -226,9 +226,6 @@ def _checksum_from_results(results: Any) -> int:
         return 0
 
 
-def name_matches(name: str, pattern: Optional[re.Pattern]) -> bool:
-    """Return True if no pattern provided or the regex matches the name."""
-    return True if pattern is None else bool(pattern.search(name))
 
 
 def benchmark_third_party_edit_distances(

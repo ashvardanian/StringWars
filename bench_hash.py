@@ -41,7 +41,7 @@ import blake3
 import stringzilla as sz
 import xxhash
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns
+from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, name_matches
 
 
 def log_system_info():
@@ -93,9 +93,6 @@ def bench_hash_function(
     print(f"{name:25s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
 
 
-def name_matches(name: str, pattern: Optional[re.Pattern]) -> bool:
-    """Check if benchmark name matches filter pattern."""
-    return True if pattern is None else bool(pattern.search(name))
 
 
 def run_stateless_benchmarks(

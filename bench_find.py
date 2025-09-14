@@ -34,7 +34,7 @@ import importlib.metadata
 import stringzilla as sz
 import ahocorasick as ahoc
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns
+from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, name_matches
 
 
 def log_system_info():
@@ -137,8 +137,6 @@ def bytes_translate(haystack_bytes: bytes, lut: bytes) -> int:
     return len(result)
 
 
-def name_matches(name: str, pattern: Optional[re.Pattern]) -> bool:
-    return True if pattern is None else bool(pattern.search(name))
 
 
 def run_benches(

@@ -143,3 +143,11 @@ def add_common_args(parser):
         default="128mb",
         help="Maximum dataset size (default: 128mb). Supports formats like '1gb', '500mb', '10kb'",
     )
+
+
+def name_matches(name: str, pattern: Optional[re.Pattern]) -> bool:
+    """Check if benchmark name matches filter pattern."""
+    if pattern is None:
+        return True
+    assert hasattr(pattern, "search"), "Pattern must be a compiled regex"
+    return bool(pattern.search(name))
