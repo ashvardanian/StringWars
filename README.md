@@ -249,6 +249,32 @@ $env:STRINGWARS_DATASET="README.md"
 cargo criterion --jobs $(nproc)
 ```
 
+### Replicating the Results in Python 🐍
+
+It's recommended to use `uv` for Python dependency management and running the benchmarks.
+To install all dependencies for all benchmarks:
+
+```sh
+uv venv --python 3.12
+uv pip install -r requirements.txt -r requirements-cuda.txt
+uv pip install --only-binary=:all: -r requirements.txt -r requirements-cuda.txt
+```
+
+To install dependencies for individual benchmarks:
+
+```sh
+PIP_EXTRA_INDEX_URL=https://pypi.nvidia.com \
+uv pip install '.[find,hash,sequence,fingerprints,similarities]'
+```
+
+To run individual benchmarks, you can call:
+
+```sh
+uv run --no-project python bench_find.py --help
+uv run --no-project python bench_sequence.py --help
+uv run --no-project python bench_similarities.py --help
+```
+
 ## Datasets
 
 ### ASCII Corpus

@@ -1,0 +1,78 @@
+[project]
+name = "stringwars"
+version = "0.1.0"
+description = "Python benchmarking harness to complement StringWa.rs benches"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "StringWa.rs maintainers" }]
+license = { text = "Apache 2.0" }
+
+# Keep the base install minimal; opt into extras per-bench
+dependencies = []
+
+[project.optional-dependencies]
+# Substring/byteset + transforms
+find = ["stringzilla", "pyahocorasick"]
+
+# Sequence ops (split/sort)
+sequence = ["stringzilla", "pandas", "pyarrow", "polars"]
+
+# Fingerprinting/sketching
+fingerprints = [
+  "stringzilla",
+  "stringzillas-cpus",
+  "datasketch",
+  "numpy",
+  "tqdm",
+]
+
+# Similarities / edit distances
+similarities = [
+  "stringzilla",
+  "stringzillas-cpus",
+  "jellyfish",
+  "python-Levenshtein",
+  "editdistance",
+  "rapidfuzz",
+  "nltk",
+  "edlib",
+  "biopython",
+  "polyleven",
+]
+
+# Hash functions
+hash = ["stringzilla", "xxhash", "blake3"]
+
+[tool.ruff]
+# Enforce 120-column lines across formatting and linting
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+  "E",  # pycodestyle (errors)
+  "W",  # pycodestyle (warnings)
+  "F",  # pyflakes
+  "I",  # isort
+  "UP", # pyupgrade
+  "B",  # flake8-bugbear
+]
+ignore = [
+  # Allow module-level prints in bench scripts
+  "T201",
+]
+
+[tool.ruff.format]
+quote-style = "preserve"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# If you prefer Black interoperability, mirror line length
+[tool.black]
+line-length = 120
+target-version = ["py312"]
+
+[build-system]
+requires = ["hatchling>=1.21.1"]
+build-backend = "hatchling.build"
