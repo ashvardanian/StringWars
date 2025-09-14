@@ -49,13 +49,13 @@ On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can 
 |                          |                   |                |                 |
 | `hash` 🐍                 | Py                |     0.13 GiB/s |      4.27 GiB/s |
 | `xxhash.xxh3_64` 🐍       | C, C++, Rs, Py... |     0.04 GiB/s |      6.38 GiB/s |
-| `stringzilla.hash` 🐍     | C, C++, Rs, Py... |     0.06 GiB/s |      0.52 GiB/s |
+| `stringzilla.hash` 🐍     | C, C++, Rs, Py... | __0.14 GiB/s__ |  __9.19 GiB/s__ |
 |                          |                   |                |                 |
 | 🧵 reference              |                   |                |                 |
 | `blake3::hash` 🦀         | C, Rs, Py, Go     |     0.10 GiB/s |      1.97 GiB/s |
 | `stringzilla::bytesum` 🦀 | C, C++, Rs, Py... |     2.16 GiB/s |     11.65 GiB/s |
 | `blake3.digest` 🐍        | C, Rs, Py, Go     |     0.02 GiB/s |      1.82 GiB/s |
-| `stringzilla.bytesum` 🐍  | C, C++, Rs, Py... |     0.13 GiB/s |      3.15 GiB/s |
+| `stringzilla.bytesum` 🐍  | C, C++, Rs, Py... |     0.16 GiB/s |      8.62 GiB/s |
 
 > Blake3 and byte-level summation are provided as a reference for expected lower and upper bounds.
 > Blake3 is a cryptographic hash function and is obliged to provide a certain level of security, which comes at a cost.
@@ -71,7 +71,7 @@ This is especially important in distributed systems, where the data is too large
 | `stringzilla::Hasher` 🦀      | C, C++, Rs, Py... |     0.89 GiB/s |     6.39 GiB/s |
 |                              |                   |                |                |
 | `xxhash.xxh3_64` 🐍           | C, C++, Rs, Py... |     0.09 GiB/s |      7.09 GB/s |
-| `stringzilla.Hasher` 🐍       | C, C++, Rs, Py... | __0.17 GiB/s__ |      0.52 GB/s |
+| `stringzilla.Hasher` 🐍       | C, C++, Rs, Py... | __0.35 GiB/s__ |  __6.04 GB/s__ |
 
 ## Substring & Character-Set Search Benchmarks
 
