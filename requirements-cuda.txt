@@ -1,0 +1,10 @@
+--extra-index-url https://pypi.nvidia.com
+
+# RAPIDS cuDF for CUDA 12
+# https://github.com/rapidsai/cudf
+cudf-cu12==25.*; platform_system == "Linux" and platform_machine in ("x86_64","aarch64") and python_version >= "3.10" and python_version < "3.13"
+
+# StringZillas GPU build
+# https://github.com/ashvardanian/stringzilla
+stringzillas-cuda==4.*; platform_system == "Linux" and platform_machine in ("x86_64","aarch64") 
+
