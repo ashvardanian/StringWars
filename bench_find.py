@@ -12,32 +12,38 @@ Python substring, byteset, Aho–Corasick, and translate benches.
 - Aho–Corasick: per-token (build per pattern) and multi-token (one pass)
 - Translate: bytes.translate and Str.translate (256-byte LUT)
 
+Environment variables:
+- STRINGWARS_DATASET: Path to input dataset file
+- STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
+
+Examples:
+  python bench_find.py --dataset README.md --tokens lines
+  python bench_find.py --dataset test.txt --tokens words -k "str\.find"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_find.py
+
 Timing via time.monotonic_ns(); throughput in decimal GB/s. Filter with -k/--filter.
 """
 
 import argparse
 import re
-import random
-import time
 from typing import List, Optional
 
 from stringzilla import Str
 import ahocorasick as ahoc
 
-
-def _now_ns() -> int:
-    return time.monotonic_ns()
+from utils import load_dataset, tokenize_dataset, add_common_args, now_ns
 
 
 def bench_op(name: str, haystack, patterns, op: callable):
-    a = _now_ns()
+    a = now_ns()
     for pattern in patterns:
         op(haystack, pattern)
-    b = _now_ns()
+    b = now_ns()
     bytes_length = len(haystack) * len(patterns)
     secs = (b - a) / 1e9
     gb_per_sec = bytes_length / (1e9 * secs)
-    print(f"{name}: took {secs:.4f} seconds ~ {gb_per_sec:.3f} GB/s")
+    queries_per_sec = len(patterns) / secs
+    print(f"{name:25s}: {secs:8.3f}s ~ {gb_per_sec:8.3f} GB/s ~ {queries_per_sec:10,.0f} queries/s")
 
 
 def count_find(haystack, pattern) -> int:
@@ -132,7 +138,6 @@ def run_benches(
     if name_matches("pyahocorasick.iter(all tokens)", filter_pattern):
         bench_op("pyahocorasick.iter(all tokens)", pythonic_str, [automaton], count_aho_multi)
 
-
     # Character class byteset search: precompile regex and reuse
     cc_regex = re.compile(r"[\t\n\r ]")  # whitespace: space, tab, LF, CR
     if name_matches("re.finditer(charclass)", filter_pattern):
@@ -162,40 +167,24 @@ def run_benches(
 
 
 def bench(
-    haystack_path: Optional[str] = None,
-    haystack_pattern: Optional[str] = None,
-    haystack_length: Optional[int] = None,
-    tokens_mode: str = "words",
-    sample: int = 100,
-    seed: int = 42,
+    dataset_path: Optional[str] = None,
+    tokens_mode: Optional[str] = None,
     filter_pattern: Optional[re.Pattern] = None,
 ):
     """Run string search benchmarks."""
-    if haystack_path:
-        pythonic_str: str = open(haystack_path, "r").read()
-    else:
-        haystack_length = int(haystack_length)
-        repetitions = haystack_length // len(haystack_pattern)
-        pythonic_str: str = haystack_pattern * repetitions
+    pythonic_str = load_dataset(dataset_path)
+    tokens = tokenize_dataset(pythonic_str, tokens_mode)
+
+    if not tokens:
+        print("No tokens found in dataset")
+        return 1
 
     stringzilla_str = Str(pythonic_str)
-    if tokens_mode == "lines":
-        tokens = pythonic_str.splitlines()
-    elif tokens_mode == "words":
-        tokens = pythonic_str.split()
-    elif tokens_mode == "file":
-        tokens = [pythonic_str]
-    else:
-        raise ValueError("tokens_mode must be one of: lines, words, file")
     total_tokens = len(tokens)
     mean_token_length = sum(len(t) for t in tokens) / total_tokens
 
-    print(f"Prepared {total_tokens:,} tokens of {mean_token_length:.2f} mean length!")
+    print(f"Dataset: {total_tokens:,} tokens, {len(pythonic_str):,} bytes, {mean_token_length:.1f} avg token length")
 
-    # Deterministic sampling for comparability
-    random.seed(seed)
-    if sample and sample < len(tokens):
-        tokens = random.sample(tokens, sample)
     run_benches(
         tokens,
         pythonic_str,
@@ -204,77 +193,37 @@ def bench(
     )
 
 
-_main_epilog = """
-Examples:
-
-  # Benchmark with a file
-  %(prog)s --haystack-path leipzig1M.txt
-
-  # Benchmark with synthetic data
-  %(prog)s --haystack-pattern "hello world " --haystack-length 1000000
-"""
-
-
 def main():
     """Main entry point with argument parsing."""
     parser = argparse.ArgumentParser(
         description="Benchmark StringZilla find operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_main_epilog,
     )
 
-    parser.add_argument("--haystack-path", help="Path to input file")
-    parser.add_argument(
-        "--haystack-pattern", help="Pattern to repeat for synthetic data"
-    )
-    parser.add_argument(
-        "--haystack-length", type=int, help="Length of synthetic haystack"
-    )
-    parser.add_argument(
-        "--tokens-mode",
-        choices=["lines", "words", "file"],
-        default="words",
-        help="Tokenization mode for substring benchmarks",
-    )
-    parser.add_argument(
-        "--sample", type=int, default=100, help="Number of tokens to sample"
-    )
-    parser.add_argument("--seed", type=int, default=42, help="Sampling seed")
-    parser.add_argument(
-        "-k",
-        "--filter",
-        metavar="REGEX",
-        help="Regex to select which benchmarks to run",
-    )
+    add_common_args(parser)
 
     args = parser.parse_args()
 
-    if args.haystack_path:
-        if args.haystack_pattern or args.haystack_length:
-            parser.error("Cannot specify both --haystack-path and synthetic options")
-    else:
-        if not (args.haystack_pattern and args.haystack_length):
-            parser.error(
-                "Must specify either --haystack-path or both --haystack-pattern and --haystack-length"
-            )
+    # Load and tokenize dataset
+    try:
+        filter_pattern = None
+        if args.filter:
+            try:
+                filter_pattern = re.compile(args.filter)
+            except re.error as e:
+                parser.error(f"Invalid regex for --filter: {e}")
 
-    pattern = None
-    if args.filter:
-        try:
-            pattern = re.compile(args.filter)
-        except re.error as e:
-            parser.error(f"Invalid regex for --filter/-k: {e}")
+        bench(
+            dataset_path=args.dataset,
+            tokens_mode=args.tokens,
+            filter_pattern=filter_pattern,
+        )
+    except Exception as e:
+        print(f"Error: {e}")
+        return 1
 
-    bench(
-        args.haystack_path,
-        args.haystack_pattern,
-        args.haystack_length,
-        tokens_mode=args.tokens_mode,
-        sample=args.sample,
-        seed=args.seed,
-        filter_pattern=pattern,
-    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    exit(main())
