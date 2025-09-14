@@ -6,6 +6,7 @@ used across bench_find.py, bench_hash.py, and other benchmarking scripts.
 """
 
 import os
+import re
 import time
 from typing import List, Optional, Union
 
@@ -15,13 +16,48 @@ def now_ns() -> int:
     return time.monotonic_ns()
 
 
-def load_dataset(dataset_path: Optional[str] = None, as_bytes: bool = False) -> Union[str, bytes]:
+def parse_size(size_str: str) -> int:
+    """
+    Parse a size string like '128mb', '1gb', '500kb' into bytes.
+
+    Supports: b, kb, mb, gb (case insensitive)
+    Returns size in bytes.
+    """
+    if not size_str:
+        raise ValueError("Size string cannot be empty")
+
+    # Match number followed by optional unit
+    match = re.match(r"^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb)?$", size_str.lower().strip())
+    if not match:
+        raise ValueError(f"Invalid size format: {size_str}. Use formats like '128mb', '1gb', '500kb'")
+
+    number, unit = match.groups()
+    number = float(number)
+
+    # Convert to bytes
+    multipliers = {
+        None: 1,
+        "b": 1,
+        "kb": 1024,
+        "mb": 1024 * 1024,
+        "gb": 1024 * 1024 * 1024,
+    }
+
+    return int(number * multipliers[unit])
+
+
+def load_dataset(
+    dataset_path: Optional[str] = None,
+    as_bytes: bool = False,
+    size_limit: Optional[str] = None,
+) -> Union[str, bytes]:
     """
     Load dataset from file path or environment variable.
 
     Args:
         dataset_path: Path to dataset file (uses STRINGWARS_DATASET env var if None)
         as_bytes: If True, return bytes; if False, return str
+        size_limit: Maximum size to read (e.g., "128mb", "1gb"). If None, read entire file.
 
     Returns:
         Dataset contents as str or bytes based on as_bytes parameter
@@ -31,12 +67,23 @@ def load_dataset(dataset_path: Optional[str] = None, as_bytes: bool = False) -> 
         if dataset_path is None:
             raise ValueError("No dataset path provided and STRINGWARS_DATASET not set")
 
+    # Parse size limit if provided
+    max_bytes = None
+    if size_limit:
+        max_bytes = parse_size(size_limit)
+
     if as_bytes:
         with open(dataset_path, "rb") as f:
-            return f.read()
+            if max_bytes is not None:
+                return f.read(max_bytes)
+            else:
+                return f.read()
     else:
         with open(dataset_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
+            if max_bytes is not None:
+                return f.read(max_bytes)
+            else:
+                return f.read()
 
 
 def tokenize_dataset(haystack: Union[str, bytes], tokens_mode: Optional[str] = None) -> Union[List[str], List[bytes]]:
@@ -83,4 +130,16 @@ def add_common_args(parser):
         "--filter",
         metavar="REGEX",
         help="Regex to select which benchmarks to run",
+    )
+    parser.add_argument(
+        "--time-limit",
+        type=float,
+        default=10.0,
+        help="Time limit per benchmark function in seconds (default: 10.0)",
+    )
+    parser.add_argument(
+        "--dataset-limit",
+        type=str,
+        default="128mb",
+        help="Maximum dataset size (default: 128mb). Supports formats like '1gb', '500mb', '10kb'",
     )
