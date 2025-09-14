@@ -3,6 +3,9 @@
 arrow
 pandas
 
+# For substring search:
+pyahocorasick
+
 # For hashing:
 xxhash # https://github.com/ifduyue/python-xxhash, https://github.com/Cyan4973/xxHash 
 murmurhash # https://github.com/explosion/murmurhash, https://github.com/aappleby/smhasher
