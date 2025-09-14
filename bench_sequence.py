@@ -50,7 +50,6 @@ else:
     pass
 
 from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, name_matches
-import stringzilla as sz
 
 
 def log_system_info():
@@ -82,10 +81,56 @@ def bench_sort_operation(name: str, operation: callable, n_items: int):
     return result
 
 
-def run_benches(
-    tokens: List[str],
-    filter_pattern: Optional[re.Pattern],
-):
+_main_epilog = """
+Examples:
+
+  # Benchmark all sorting operations with default settings
+  %(prog)s --dataset README.md --tokens lines
+
+  # Test only Python list.sort
+  %(prog)s --dataset data.txt --tokens lines -k "list.sort"
+
+  # Compare StringZilla vs other libraries
+  %(prog)s --dataset large.txt --tokens words -k "sz.Strs|pandas|polars"
+
+  # GPU-accelerated sorting (if cuDF available)
+  %(prog)s --dataset text.txt --tokens lines -k "cudf"
+"""
+
+
+def main():
+    """Main entry point with argument parsing."""
+    parser = argparse.ArgumentParser(
+        description="Benchmark string sorting operations with various libraries",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_main_epilog,
+    )
+
+    add_common_args(parser)
+
+    args = parser.parse_args()
+
+    # Compile filter pattern
+    filter_pattern = None
+    if args.filter:
+        try:
+            filter_pattern = re.compile(args.filter)
+        except re.error as e:
+            parser.error(f"Invalid regex for --filter: {e}")
+
+    # Load and tokenize dataset
+    dataset = load_dataset(args.dataset, size_limit=args.dataset_limit)
+    tokens = tokenize_dataset(dataset, args.tokens)
+
+    if not tokens:
+        print("No tokens found in dataset")
+        return 1
+
+    total_chars = sum(len(token) for token in tokens)
+    avg_token_length = total_chars / len(tokens)
+    print(f"Dataset: {len(tokens):,} tokens, {total_chars:,} chars, {avg_token_length:.1f} avg token length")
+    log_system_info()
+
     print("\n=== Sort Benchmarks ===")
 
     # Python list.sort
@@ -131,50 +176,7 @@ def run_benches(
         cs = cudf.Series(tokens)
         bench_sort_operation("cudf.Series.sort_values", lambda: cs.sort_values(ignore_index=True), len(tokens))
 
-
-def bench(
-    dataset_path: Optional[str] = None,
-    tokens_mode: Optional[str] = None,
-    filter_pattern: Optional[re.Pattern] = None,
-    dataset_limit: Optional[str] = None,
-):
-    """Run string sorting benchmarks."""
-    dataset = load_dataset(dataset_path, size_limit=dataset_limit)
-    tokens = tokenize_dataset(dataset, tokens_mode)
-
-    if not tokens:
-        print("No tokens found in dataset")
-        return 1
-
-    total_chars = sum(len(token) for token in tokens)
-    avg_token_length = total_chars / len(tokens)
-    print(f"Dataset: {len(tokens):,} tokens, {total_chars:,} chars, {avg_token_length:.1f} avg token length")
-    log_system_info()
-
-    run_benches(tokens, filter_pattern)
-
-
-def main():
-    """Main entry point with argument parsing."""
-    parser = argparse.ArgumentParser(
-        description="Benchmark string sorting operations with various libraries",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-
-    add_common_args(parser)
-
-    args = parser.parse_args()
-
-    # Compile regex pattern
-    filter_pattern = None
-    if args.filter:
-        try:
-            filter_pattern = re.compile(args.filter)
-        except re.error as e:
-            parser.error(f"Invalid regex for --filter: {e}")
-
-    # Run benchmark
-    bench(args.dataset, args.tokens, filter_pattern, args.dataset_limit)
+    return 0
 
 
 if __name__ == "__main__":

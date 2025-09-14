@@ -71,7 +71,7 @@ def bench_op(name: str, haystack, patterns, op: callable, time_limit_seconds: fl
     gb_per_sec = len(haystack) * queries_per_sec / 1e9
 
     print(
-        f"{name:25s}: {secs:8.3f}s ~ {gb_per_sec:8.3f} GB/s ~ {queries_per_sec:10,.2f} queries/s ~ {results_per_sec:10,.0f} results/s"
+        f"{name:35s}: {secs:8.3f}s ~ {gb_per_sec:8.3f} GB/s ~ {queries_per_sec:10,.2f} queries/s ~ {results_per_sec:10,.0f} results/s"
     )
 
 
@@ -137,92 +137,21 @@ def bytes_translate(haystack_bytes: bytes, lut: bytes) -> int:
     return len(result)
 
 
-def run_benches(
-    tokens: List[str],
-    pythonic_str: str,
-    stringzilla_str: sz.Str,
-    filter_pattern: Optional[re.Pattern] = None,
-    time_limit_seconds: float = 10.0,
-):
-    print("\n=== Substring Search Benchmarks ===")
-    if name_matches("str.find", filter_pattern):
-        bench_op("str.find", pythonic_str, tokens[::-1], count_find, time_limit_seconds)
-    if name_matches("sz.Str.find", filter_pattern):
-        bench_op("sz.Str.find", stringzilla_str, tokens[::-1], count_find, time_limit_seconds)
-    if name_matches("str.rfind", filter_pattern):
-        bench_op("str.rfind", pythonic_str, tokens, count_rfind, time_limit_seconds)
-    if name_matches("sz.Str.rfind", filter_pattern):
-        bench_op("sz.Str.rfind", stringzilla_str, tokens, count_rfind, time_limit_seconds)
-    if name_matches("pyahocorasick.iter", filter_pattern):
-        bench_op("pyahocorasick.iter", pythonic_str, tokens[::-1], count_aho, time_limit_seconds)
+_main_epilog = """
+Examples:
 
-    # Aho-Corasick multi-pattern search (single pass) using shared automaton
-    # print("\n=== Multi-Pattern Search ===\n")
-    # automaton = ahoc.Automaton()
-    # for tok in tokens:
-    #     automaton.add_word(tok, 1)
-    # automaton.make_automaton()
-    # if name_matches("pyahocorasick.iter(all)", filter_pattern):
-    #     bench_op("pyahocorasick.iter(all)", pythonic_str, [automaton], count_aho_multi, time_limit_seconds)
+  # Benchmark all find operations with default settings
+  %(prog)s --dataset README.md --tokens lines
 
-    print("\n=== Character Set Search ===\n")
-    cc_regex = re.compile(r"[\t\n\r ]")  # whitespace: space, tab, LF, CR
-    if name_matches("re.finditer", filter_pattern):
-        bench_op("re.finditer", pythonic_str, [cc_regex], count_regex, time_limit_seconds)
-    if name_matches("sz.Str.find_first_of", filter_pattern):
-        bench_op("sz.Str.find_first_of", stringzilla_str, [" \t\n\r"], count_byteset, time_limit_seconds)
+  # Test only substring search operations
+  %(prog)s --dataset data.txt --tokens lines -k "str.find|sz.Str.find"
 
-    print("\n=== Translation Benchmarks ===\n")
-    # Translate with byte-level LUT mappings
-    identity = bytes(range(256))
-    reverse = bytes(reversed(identity))
-    repeated = bytes(range(64)) * 4
-    hex_tbl = b"0123456789abcdef" * 16
+  # Benchmark character set searches
+  %(prog)s --dataset large.txt --tokens words -k "find_first_of"
 
-    py_bytes = pythonic_str.encode("utf-8", errors="ignore")
-    if name_matches("bytes.translate(reverse)", filter_pattern):
-        bench_op("bytes.translate(reverse)", py_bytes, [reverse], bytes_translate, time_limit_seconds)
-    if name_matches("bytes.translate(repeated)", filter_pattern):
-        bench_op("bytes.translate(repeated)", py_bytes, [repeated], bytes_translate, time_limit_seconds)
-    if name_matches("bytes.translate(hex)", filter_pattern):
-        bench_op("bytes.translate(hex)", py_bytes, [hex_tbl], bytes_translate, time_limit_seconds)
-    if name_matches("sz.Str.translate(reverse)", filter_pattern):
-        bench_op("sz.Str.translate(reverse)", stringzilla_str, [reverse], sz_translate, time_limit_seconds)
-    if name_matches("sz.Str.translate(repeated)", filter_pattern):
-        bench_op("sz.Str.translate(repeated)", stringzilla_str, [repeated], sz_translate, time_limit_seconds)
-    if name_matches("sz.Str.translate(hex)", filter_pattern):
-        bench_op("sz.Str.translate(hex)", stringzilla_str, [hex_tbl], sz_translate, time_limit_seconds)
-
-
-def bench(
-    dataset_path: Optional[str] = None,
-    tokens_mode: Optional[str] = None,
-    filter_pattern: Optional[re.Pattern] = None,
-    time_limit_seconds: float = 10.0,
-    dataset_limit: Optional[str] = None,
-):
-    """Run string search benchmarks."""
-    pythonic_str = load_dataset(dataset_path, as_bytes=False, size_limit=dataset_limit)
-    tokens = tokenize_dataset(pythonic_str, tokens_mode)
-
-    if not tokens:
-        print("No tokens found in dataset")
-        return 1
-
-    stringzilla_str = sz.Str(pythonic_str)
-    total_tokens = len(tokens)
-    mean_token_length = sum(len(t) for t in tokens) / total_tokens
-
-    print(f"Dataset: {total_tokens:,} tokens, {len(pythonic_str):,} bytes, {mean_token_length:.1f} avg token length")
-    log_system_info()
-
-    run_benches(
-        tokens,
-        pythonic_str,
-        stringzilla_str,
-        filter_pattern=filter_pattern,
-        time_limit_seconds=time_limit_seconds,
-    )
+  # Test translation operations
+  %(prog)s --dataset text.txt --tokens lines -k "translate"
+"""
 
 
 def main():
@@ -230,6 +159,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Benchmark StringZilla find operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_main_epilog,
     )
 
     add_common_args(parser)
@@ -244,18 +174,60 @@ def main():
         except re.error as e:
             parser.error(f"Invalid regex for --filter: {e}")
 
-    # Run benchmark
-    try:
-        bench(
-            dataset_path=args.dataset,
-            tokens_mode=args.tokens,
-            filter_pattern=filter_pattern,
-            time_limit_seconds=args.time_limit,
-            dataset_limit=args.dataset_limit,
-        )
-    except Exception as e:
-        print(f"Error: {e}")
+    # Load and tokenize dataset
+    pythonic_str = load_dataset(args.dataset, as_bytes=False, size_limit=args.dataset_limit)
+    tokens = tokenize_dataset(pythonic_str, args.tokens)
+
+    if not tokens:
+        print("No tokens found in dataset")
         return 1
+
+    stringzilla_str = sz.Str(pythonic_str)
+    total_tokens = len(tokens)
+    mean_token_length = sum(len(t) for t in tokens) / total_tokens
+
+    print(f"Dataset: {total_tokens:,} tokens, {len(pythonic_str):,} bytes, {mean_token_length:.1f} avg token length")
+    log_system_info()
+
+    print("\n=== Substring Search Benchmarks ===")
+    if name_matches("str.find", filter_pattern):
+        bench_op("str.find", pythonic_str, tokens[::-1], count_find, args.time_limit)
+    if name_matches("sz.Str.find", filter_pattern):
+        bench_op("sz.Str.find", stringzilla_str, tokens[::-1], count_find, args.time_limit)
+    if name_matches("str.rfind", filter_pattern):
+        bench_op("str.rfind", pythonic_str, tokens, count_rfind, args.time_limit)
+    if name_matches("sz.Str.rfind", filter_pattern):
+        bench_op("sz.Str.rfind", stringzilla_str, tokens, count_rfind, args.time_limit)
+    if name_matches("pyahocorasick.iter", filter_pattern):
+        bench_op("pyahocorasick.iter", pythonic_str, tokens[::-1], count_aho, args.time_limit)
+
+    print("\n=== Character Set Search ===")
+    cc_regex = re.compile(r"[\t\n\r ]")  # whitespace: space, tab, LF, CR
+    if name_matches("re.finditer", filter_pattern):
+        bench_op("re.finditer", pythonic_str, [cc_regex], count_regex, args.time_limit)
+    if name_matches("sz.Str.find_first_of", filter_pattern):
+        bench_op("sz.Str.find_first_of", stringzilla_str, [" \t\n\r"], count_byteset, args.time_limit)
+
+    print("\n=== Translation Benchmarks ===")
+    # Translate with byte-level LUT mappings
+    identity = bytes(range(256))
+    reverse = bytes(reversed(identity))
+    repeated = bytes(range(64)) * 4
+    hex_table = b"0123456789abcdef" * 16
+
+    py_bytes = pythonic_str.encode("utf-8", errors="ignore")
+    if name_matches("bytes.translate(reverse)", filter_pattern):
+        bench_op("bytes.translate(reverse)", py_bytes, [reverse], bytes_translate, args.time_limit)
+    if name_matches("bytes.translate(repeated)", filter_pattern):
+        bench_op("bytes.translate(repeated)", py_bytes, [repeated], bytes_translate, args.time_limit)
+    if name_matches("bytes.translate(hex)", filter_pattern):
+        bench_op("bytes.translate(hex)", py_bytes, [hex_table], bytes_translate, args.time_limit)
+    if name_matches("sz.Str.translate(reverse)", filter_pattern):
+        bench_op("sz.Str.translate(reverse)", stringzilla_str, [reverse], sz_translate, args.time_limit)
+    if name_matches("sz.Str.translate(repeated)", filter_pattern):
+        bench_op("sz.Str.translate(repeated)", stringzilla_str, [repeated], sz_translate, args.time_limit)
+    if name_matches("sz.Str.translate(hex)", filter_pattern):
+        bench_op("sz.Str.translate(hex)", stringzilla_str, [hex_table], sz_translate, args.time_limit)
 
     return 0
 

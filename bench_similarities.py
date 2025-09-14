@@ -17,45 +17,21 @@
 # ]
 # ///
 """
-StringZilla similarity benchmark script.
+Similarity benchmarks in Python: MCUPS for string similarity operations.
 
-This script benchmarks string similarity operations using various libraries:
-- stringzilla: Fast edit distance and alignment scoring
-- rapidfuzz: Fast fuzzy string matching
-- python-Levenshtein: Classic Levenshtein distance
-- jellyfish: Multiple string distance metrics
-- editdistance: Pure Python edit distance
-- nltk: Natural language toolkit distances
-- edlib: Fast sequence alignment
-- biopython: Needleman-Wunsch alignment with BLOSUM matrices
-- cudf: GPU-accelerated RAPIDS edit distance
+- Edit Distance: rapidfuzz, python-Levenshtein, jellyfish, editdistance, nltk, edlib
+- StringZilla: szs.LevenshteinDistances, szs.NeedlemanWunschScores, szs.SmithWatermanScores
+- BioPython: PairwiseAligner with BLOSUM62 matrix
+- cuDF: GPU-accelerated edit distance (optional)
 
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
-Example usage via UV:
-
-    # Benchmark with a file
-    uv run --no-project scripts/bench_similarities.py --dataset leipzig1M.txt
-
-    # ... using the same local Python environment
-    uv run --no-project python scripts/bench_similarities.py --dataset leipzig1M.txt
-
-    # ... or as a `uv` script
-    uv run --script scripts/bench_similarities.py --dataset leipzig1M.txt
-
-    # Benchmark with limited pairs
-    uv run --no-project scripts/bench_similarities.py --dataset leipzig1M.txt --max-pairs 1000
-
-    # Benchmark with custom timeout
-    uv run --no-project scripts/bench_similarities.py --dataset leipzig1M.txt --timeout 30
-
-    # Benchmark protein sequences
-    uv run --no-project scripts/bench_similarities.py --protein-mode --protein-length 500
-
-    # Benchmark protein sequences with a custom file
-    uv run --no-project scripts/bench_similarities.py --protein-mode --dataset acgt_1k.txt
+Examples:
+  python bench_similarities.py --dataset README.md --max-pairs 1000
+  python bench_similarities.py --dataset xlsum.csv --bio -k "biopython"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_similarities.py
 """
 
 import os
@@ -105,10 +81,6 @@ try:
 except ImportError:
     CUDF_AVAILABLE = False
 
-# Global state for initialized models
-_biopython_aligner = None
-_blosum_matrix = None
-
 
 def log_similarity_operation(
     name: str,
@@ -142,8 +114,9 @@ def log_similarity_operation(
         else:
             return len(a.encode("utf-8")) * len(b.encode("utf-8"))
 
+    bar = tqdm(total=len(string_pairs), desc=name, unit="pairs", leave=False)
+
     try:
-        bar = tqdm(total=len(string_pairs), desc=name, unit="pairs", leave=False)
         for pairs_batch in itertools.batched(string_pairs, batch_size):
             if timed_out():
                 break
@@ -180,10 +153,11 @@ def log_similarity_operation(
                     }
                 )
             bar.update(batch_pairs)
-        bar.close()
     except KeyboardInterrupt:
         print(f"\n{name}: SKIPPED (interrupted by user)")
         return
+    finally:
+        bar.close()
 
     total_time_ns = now_ns() - start_ns
     total_time_s = total_time_ns / 1e9
@@ -224,8 +198,6 @@ def _checksum_from_results(results: Any) -> int:
         return int(results)
     except Exception:
         return 0
-
-
 
 
 def benchmark_third_party_edit_distances(
@@ -482,42 +454,22 @@ def benchmark_stringzillas_edit_distances(
         )
 
 
-def _ensure_bio_resources():
-    """Initialize BioPython aligner and BLOSUM matrix if available.
-
-    Returns a tuple (aligner, blosum_matrix) or (None, None) if unavailable.
-    """
-    global _biopython_aligner, _blosum_matrix
-    if not BIOPYTHON_AVAILABLE:
-        return None, None
-    if _biopython_aligner is None:
-        _biopython_aligner = Align.PairwiseAligner()
-        _biopython_aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
-        _biopython_aligner.open_gap_score = -10  # Realistic gap opening cost
-        _biopython_aligner.extend_gap_score = -2  # Realistic gap extension cost
-
-        subs_packed = np.array(_biopython_aligner.substitution_matrix).astype(np.int8)
-        _blosum_matrix = np.zeros((256, 256), dtype=np.int8)
-        _blosum_matrix.fill(127)  # Large penalty for invalid characters
-
-        for packed_row, packed_row_aminoacid in enumerate(_biopython_aligner.substitution_matrix.alphabet):
-            for packed_column, packed_column_aminoacid in enumerate(_biopython_aligner.substitution_matrix.alphabet):
-                reconstructed_row = ord(packed_row_aminoacid)
-                reconstructed_column = ord(packed_column_aminoacid)
-                _blosum_matrix[reconstructed_row, reconstructed_column] = subs_packed[packed_row, packed_column]
-    return _biopython_aligner, _blosum_matrix
-
-
 def benchmark_third_party_similarity_scores(
     string_pairs: List[Tuple[str, str]],
     timeout_seconds: int = 10,
     filter_pattern: Optional[re.Pattern] = None,
+    gap_open: int = -10,
+    gap_extend: int = -2,
 ):
     """Benchmark various similarity scoring implementations."""
 
     # BioPython
-    aligner, blosum = _ensure_bio_resources()
-    if name_matches("biopython.PairwiseAligner.score", filter_pattern) and aligner is not None and blosum is not None:
+    if name_matches("biopython.PairwiseAligner.score", filter_pattern) and BIOPYTHON_AVAILABLE:
+        aligner = Align.PairwiseAligner()
+        aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+        aligner.open_gap_score = gap_open
+        aligner.extend_gap_score = gap_extend
+
         log_similarity_operation(
             "biopython.PairwiseAligner.score",
             string_pairs,
@@ -535,6 +487,8 @@ def benchmark_stringzillas_similarity_scores(
     filter_pattern: Optional[re.Pattern] = None,
     szs_class: Any = szs.NeedlemanWunschScores,
     szs_name: str = "szs.NeedlemanWunschScores",
+    gap_open: int = -10,
+    gap_extend: int = -2,
 ):
     """Benchmark various edit distance implementations."""
 
@@ -546,7 +500,21 @@ def benchmark_stringzillas_similarity_scores(
     except Exception:
         gpu_scope = None
 
-    _, blosum = _ensure_bio_resources()
+    # Build BLOSUM matrix if BioPython is available
+    blosum = None
+    if BIOPYTHON_AVAILABLE:
+        aligner = Align.PairwiseAligner()
+        aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+
+        subs_packed = np.array(aligner.substitution_matrix).astype(np.int8)
+        blosum = np.zeros((256, 256), dtype=np.int8)
+        blosum.fill(127)  # Large penalty for invalid characters
+
+        for packed_row, packed_row_aminoacid in enumerate(aligner.substitution_matrix.alphabet):
+            for packed_column, packed_column_aminoacid in enumerate(aligner.substitution_matrix.alphabet):
+                reconstructed_row = ord(packed_row_aminoacid)
+                reconstructed_column = ord(packed_column_aminoacid)
+                blosum[reconstructed_row, reconstructed_column] = subs_packed[packed_row, packed_column]
 
     # Single-input variants on 1 CPU core
     if name_matches(f"{szs_name}(1xCPU)", filter_pattern):
@@ -554,9 +522,9 @@ def benchmark_stringzillas_similarity_scores(
         engine = szs_class(
             capabilities=default_scope,
             substitution_matrix=blosum,
-            open=-10,
-            extend=-2,
-        )  # Same gap costs as BioPython
+            open=gap_open,
+            extend=gap_extend,
+        )
 
         def kernel(a: str, b: str) -> int:
             a_array = sz.Strs([a])
@@ -576,8 +544,11 @@ def benchmark_stringzillas_similarity_scores(
     if name_matches(f"{szs_name}({cpu_cores}xCPU)", filter_pattern):
 
         engine = szs_class(
-            capabilities=cpu_scope, substitution_matrix=blosum, open=-10, extend=-2
-        )  # Same gap costs as BioPython
+            capabilities=cpu_scope,
+            substitution_matrix=blosum,
+            open=gap_open,
+            extend=gap_extend,
+        )
 
         def kernel(a: str, b: str) -> int:
             a_array = sz.Strs([a])
@@ -597,8 +568,11 @@ def benchmark_stringzillas_similarity_scores(
     if name_matches(f"{szs_name}(1xGPU)", filter_pattern) and gpu_scope is not None:
 
         engine = szs_class(
-            capabilities=gpu_scope, substitution_matrix=blosum, open=-10, extend=-2
-        )  # Same gap costs as BioPython
+            capabilities=gpu_scope,
+            substitution_matrix=blosum,
+            open=gap_open,
+            extend=gap_extend,
+        )
 
         def kernel(a: str, b: str) -> int:
             a_array = sz.Strs([a])
@@ -618,8 +592,11 @@ def benchmark_stringzillas_similarity_scores(
     if name_matches(f"{szs_name}(1xCPU,batch={batch_size})", filter_pattern):
 
         engine = szs_class(
-            capabilities=default_scope, substitution_matrix=blosum, open=-10, extend=-2
-        )  # Same gap costs as BioPython
+            capabilities=default_scope,
+            substitution_matrix=blosum,
+            open=gap_open,
+            extend=gap_extend,
+        )
 
         def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
             a_array = sz.Strs(a_list)
@@ -639,8 +616,11 @@ def benchmark_stringzillas_similarity_scores(
     if name_matches(f"{szs_name}({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
 
         engine = szs_class(
-            capabilities=cpu_scope, substitution_matrix=blosum, open=-10, extend=-2
-        )  # Same gap costs as BioPython
+            capabilities=cpu_scope,
+            substitution_matrix=blosum,
+            open=gap_open,
+            extend=gap_extend,
+        )
 
         def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
             a_array = sz.Strs(a_list)
@@ -660,8 +640,11 @@ def benchmark_stringzillas_similarity_scores(
     if name_matches(f"{szs_name}(1xGPU,batch={batch_size})", filter_pattern) and gpu_scope is not None:
 
         engine = szs_class(
-            capabilities=gpu_scope, substitution_matrix=blosum, open=-10, extend=-2
-        )  # Same gap costs as BioPython
+            capabilities=gpu_scope,
+            substitution_matrix=blosum,
+            open=gap_open,
+            extend=gap_extend,
+        )
 
         def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
             a_array = sz.Strs(a_list)
@@ -683,123 +666,6 @@ def generate_random_pairs(strings: List[str], num_pairs: int) -> List[Tuple[str,
     return [(random.choice(strings), random.choice(strings)) for _ in range(num_pairs)]
 
 
-def bench(
-    dataset_path: str,
-    max_pairs: int = None,
-    timeout_seconds: int = 10,
-    batch_size: int = 2048,
-    filter_pattern: Optional[Pattern] = None,
-    bio: bool = False,
-    dataset_limit: Optional[str] = None,
-):
-    """Run similarity benchmarks."""
-
-    # Load dataset
-    dataset = load_dataset(dataset_path, size_limit=dataset_limit)
-    strings = [line.strip() for line in dataset.split("\n") if line.strip()]
-
-    # Generate random pairs
-    num_pairs = max_pairs or min(100_000, len(strings) * 10)
-    pairs = generate_random_pairs(strings, num_pairs)
-
-    total_chars = sum(len(a) + len(b) for a, b in pairs)
-    avg_length = total_chars / (2 * len(pairs))
-
-    print(f"Prepared {len(pairs):,} string pairs from {len(strings):,} unique strings")
-    print(f"Average string length: {avg_length:.1f} chars")
-    print(f"Total characters: {total_chars:,}")
-    print(f"Timeout per benchmark: {timeout_seconds}s")
-    print()
-
-    print("\n=== Uniform Gap Costs ===")
-    benchmark_third_party_edit_distances(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        filter_pattern=filter_pattern,
-        batch_size=batch_size,
-    )
-
-    benchmark_stringzillas_edit_distances(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        batch_size=batch_size,
-        filter_pattern=filter_pattern,
-        szs_class=szs.LevenshteinDistances,
-        szs_name="szs.LevenshteinDistances",
-        is_utf8=False,
-    )
-    benchmark_stringzillas_edit_distances(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        batch_size=batch_size,
-        filter_pattern=filter_pattern,
-        szs_class=szs.LevenshteinDistancesUTF8,
-        szs_name="szs.LevenshteinDistancesUTF8",
-        is_utf8=True,
-    )
-
-    if not bio:
-        return
-
-    # Linear gap costs (open == extend)
-    print("\n=== Linear Gap Costs ===")
-    benchmark_third_party_similarity_scores(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        filter_pattern=filter_pattern,
-        gap_open=-2,
-        gap_extend=-2,
-    )
-    benchmark_stringzillas_similarity_scores(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        batch_size=batch_size,
-        filter_pattern=filter_pattern,
-        szs_class=szs.NeedlemanWunschScores,
-        szs_name="szs.NeedlemanWunschScores",
-        gap_open=-2,
-        gap_extend=-2,
-    )
-    benchmark_stringzillas_similarity_scores(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        batch_size=batch_size,
-        filter_pattern=filter_pattern,
-        szs_class=szs.SmithWatermanScores,
-        szs_name="szs.SmithWatermanScores",
-        gap_open=-2,
-        gap_extend=-2,
-    )
-
-    # Affine gap costs (open != extend)
-    print("\n=== Affine Gap Costs ===")
-    benchmark_third_party_similarity_scores(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        filter_pattern=filter_pattern,
-        gap_open=-10,
-        gap_extend=-2,
-    )
-    benchmark_stringzillas_similarity_scores(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        batch_size=batch_size,
-        filter_pattern=filter_pattern,
-        szs_class=szs.NeedlemanWunschScores,
-        szs_name="szs.NeedlemanWunschScores",
-        gap_open=-10,
-        gap_extend=-2,
-    )
-    benchmark_stringzillas_similarity_scores(
-        pairs,
-        timeout_seconds=timeout_seconds,
-        batch_size=batch_size,
-        filter_pattern=filter_pattern,
-        szs_class=szs.SmithWatermanScores,
-        szs_name="szs.SmithWatermanScores",
-        gap_open=-10,
-        gap_extend=-2,
-    )
 
 
 _main_epilog = """
@@ -848,31 +714,121 @@ def main():
 
     args = parser.parse_args()
 
-    # Load and validate dataset
-    try:
-        if not args.dataset and not os.environ.get("STRINGWARS_DATASET"):
-            parser.error("Dataset is required (use --dataset or STRINGWARS_DATASET env var)")
+    if not args.dataset and not os.environ.get("STRINGWARS_DATASET"):
+        parser.error("Dataset is required (use --dataset or STRINGWARS_DATASET env var)")
 
-        # Compile filter pattern if provided
-        pattern = None
-        if args.filter:
-            try:
-                pattern = re.compile(args.filter)
-            except re.error as e:
-                parser.error(f"Invalid regex for --filter/-k: {e}")
+    # Compile filter pattern
+    filter_pattern = None
+    if args.filter:
+        try:
+            filter_pattern = re.compile(args.filter)
+        except re.error as e:
+            parser.error(f"Invalid regex for --filter: {e}")
 
-        bench(
-            args.dataset,
-            args.max_pairs,
-            args.time_limit,
-            args.batch_size,
-            pattern,
-            args.bio,
-            args.dataset_limit,
+    # Load dataset and generate pairs
+    dataset = load_dataset(args.dataset, size_limit=args.dataset_limit)
+    strings = [line.strip() for line in dataset.split("\n") if line.strip()]
+
+    # Generate random pairs
+    num_pairs = args.max_pairs or min(100_000, len(strings) * 10)
+    pairs = generate_random_pairs(strings, num_pairs)
+
+    total_chars = sum(len(a) + len(b) for a, b in pairs)
+    avg_length = total_chars / (2 * len(pairs))
+
+    print(f"Prepared {len(pairs):,} string pairs from {len(strings):,} unique strings")
+    print(f"Average string length: {avg_length:.1f} chars")
+    print(f"Total characters: {total_chars:,}")
+    print(f"Timeout per benchmark: {args.time_limit}s")
+    print()
+
+    print("\n=== Uniform Gap Costs ===")
+    benchmark_third_party_edit_distances(
+        pairs,
+        timeout_seconds=args.time_limit,
+        filter_pattern=filter_pattern,
+        batch_size=args.batch_size,
+    )
+
+    benchmark_stringzillas_edit_distances(
+        pairs,
+        timeout_seconds=args.time_limit,
+        batch_size=args.batch_size,
+        filter_pattern=filter_pattern,
+        szs_class=szs.LevenshteinDistances,
+        szs_name="szs.LevenshteinDistances",
+        is_utf8=False,
+    )
+    benchmark_stringzillas_edit_distances(
+        pairs,
+        timeout_seconds=args.time_limit,
+        batch_size=args.batch_size,
+        filter_pattern=filter_pattern,
+        szs_class=szs.LevenshteinDistancesUTF8,
+        szs_name="szs.LevenshteinDistancesUTF8",
+        is_utf8=True,
+    )
+
+    if args.bio:
+        # Linear gap costs (open == extend)
+        print("\n=== Linear Gap Costs ===")
+        benchmark_third_party_similarity_scores(
+            pairs,
+            timeout_seconds=args.time_limit,
+            filter_pattern=filter_pattern,
+            gap_open=-2,
+            gap_extend=-2,
         )
-    except Exception as e:
-        print(f"Error: {e}")
-        return 1
+        benchmark_stringzillas_similarity_scores(
+            pairs,
+            timeout_seconds=args.time_limit,
+            batch_size=args.batch_size,
+            filter_pattern=filter_pattern,
+            szs_class=szs.NeedlemanWunschScores,
+            szs_name="szs.NeedlemanWunschScores",
+            gap_open=-2,
+            gap_extend=-2,
+        )
+        benchmark_stringzillas_similarity_scores(
+            pairs,
+            timeout_seconds=args.time_limit,
+            batch_size=args.batch_size,
+            filter_pattern=filter_pattern,
+            szs_class=szs.SmithWatermanScores,
+            szs_name="szs.SmithWatermanScores",
+            gap_open=-2,
+            gap_extend=-2,
+        )
+
+        # Affine gap costs (open != extend)
+        print("\n=== Affine Gap Costs ===")
+        benchmark_third_party_similarity_scores(
+            pairs,
+            timeout_seconds=args.time_limit,
+            filter_pattern=filter_pattern,
+            gap_open=-10,
+            gap_extend=-2,
+        )
+        benchmark_stringzillas_similarity_scores(
+            pairs,
+            timeout_seconds=args.time_limit,
+            batch_size=args.batch_size,
+            filter_pattern=filter_pattern,
+            szs_class=szs.NeedlemanWunschScores,
+            szs_name="szs.NeedlemanWunschScores",
+            gap_open=-10,
+            gap_extend=-2,
+        )
+        benchmark_stringzillas_similarity_scores(
+            pairs,
+            timeout_seconds=args.time_limit,
+            batch_size=args.batch_size,
+            filter_pattern=filter_pattern,
+            szs_class=szs.SmithWatermanScores,
+            szs_name="szs.SmithWatermanScores",
+            gap_open=-10,
+            gap_extend=-2,
+        )
 
     return 0
 

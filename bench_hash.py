@@ -90,7 +90,7 @@ def bench_hash_function(
     throughput_gbs = processed_bytes / (1e9 * duration_secs)
     tokens_per_sec = processed_tokens / duration_secs
 
-    print(f"{name:25s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
+    print(f"{name:35s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
 
 
 def run_stateless_benchmarks(
@@ -154,7 +154,7 @@ def bench_stateful_hash(
     duration_secs = (end_time - start_time) / 1e9
     throughput_gbs = processed_bytes / (1e9 * duration_secs)
     tokens_per_sec = processed_tokens / duration_secs
-    print(f"{name:25s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
+    print(f"{name:35s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
 
 
 def run_stateful_benchmarks(
@@ -174,11 +174,29 @@ def run_stateful_benchmarks(
         bench_stateful_hash("stringzilla.Hasher", tokens, lambda: sz.Hasher(), time_limit_seconds)
 
 
+_main_epilog = """
+Examples:
+
+  # Benchmark all hash functions with default settings
+  %(prog)s --dataset README.md --tokens lines
+
+  # Test only specific hash functions
+  %(prog)s --dataset data.txt --tokens lines -k "xxhash|stringzilla"
+
+  # Compare stateless vs stateful hashing
+  %(prog)s --dataset large.txt --tokens words -k "hash"
+
+  # Test cryptographic hash performance
+  %(prog)s --dataset text.txt --tokens lines -k "blake3"
+"""
+
+
 def main():
     """Main entry point with argument parsing."""
     parser = argparse.ArgumentParser(
         description="Benchmark hash functions with StringZilla and other implementations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_main_epilog,
     )
 
     add_common_args(parser)
@@ -191,16 +209,11 @@ def main():
         try:
             filter_pattern = re.compile(args.filter)
         except re.error as e:
-            print(f"Invalid regex for --filter: {e}")
-            return 1
+            parser.error(f"Invalid regex for --filter: {e}")
 
     # Load and tokenize dataset
-    try:
-        dataset = load_dataset(args.dataset, as_bytes=True, size_limit=args.dataset_limit)
-        tokens = tokenize_dataset(dataset, args.tokens)
-    except Exception as e:
-        print(f"Error loading dataset: {e}")
-        return 1
+    dataset = load_dataset(args.dataset, as_bytes=True, size_limit=args.dataset_limit)
+    tokens = tokenize_dataset(dataset, args.tokens)
 
     if not tokens:
         print("No tokens found in dataset")
