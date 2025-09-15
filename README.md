@@ -1,13 +1,14 @@
-# StringWa.rs
+# StringWa.rs: The Empire Strikes Text
 
 ![StringWa.rs Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
 
 _Not to pick a fight, but let there be String Wars!_ 😅
 Jokes aside, many __great__ libraries for string processing exist.
 _Mostly, of course, written in Assembly, C, and C++, but some in Rust as well._ 😅
+And many of those "native" projects also ship first‑class Python bindings — so you'll see their Rust crates and Python wheels side‑by‑side in the comparisons.
 
-Where Rust decimates C and C++, however, is the __simplicity__ of dependency management, making it great for benchmarking "Systems Software"!
-So, to accelerate the development of the [`StringZilla`](https://github.com/ashvardanian/StringZilla) C library, I've created this repository to compare it against some of my & communities most beloved Rust projects, like:
+Where Rust decimates C and C++, however, is the __simplicity__ of dependency management, making it great for benchmarking "Systems Software" and lining up apples‑to‑apples across native crates and their Python bindings.
+So, to accelerate the development of the [`StringZilla`](https://github.com/ashvardanian/StringZilla) C library _(with Rust and Python bindings)_, I've created this repository to compare it against some of my & communities most beloved Rust projects, like:
 
 - [`memchr`](https://github.com/BurntSushi/memchr) for substring search.
 - [`rapidfuzz`](https://github.com/rapidfuzz/rapidfuzz-rs) for edit distances.
@@ -24,7 +25,7 @@ Notably, I also favor modern hardware with support for a wider range SIMD instru
 > Most of them were obtained on Intel Sapphire Rapids CPUs and Nvidia H100 GPUs, using Rust with `-C target-cpu=native` optimization flag.
 > To replicate the results, please refer to the [Replicating the Results](#replicating-the-results) section below.
 
-## String Hashing Benchmarks
+## Hash
 
 Many great hashing libraries exist in Rust, C, and C++.
 Typical top choices are `aHash`, `xxHash`, `blake3`, `gxhash`, `CityHash`, `MurmurHash`, or the native `std::hash`.
@@ -39,23 +40,23 @@ Many of them have similar pitfalls:
 StringZilla addresses those issues and seems to provide competitive performance.
 On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
 
-| Library                  | Languages         |  Shorter Words |    Longer Lines |
-| ------------------------ | ----------------- | -------------: | --------------: |
-| `std::hash` 🦀            | Rs                |     0.43 GiB/s |      3.74 GiB/s |
-| `xxh3::xxh3_64` 🦀        | C, C++, Rs, Py... |     1.08 GiB/s |      9.48 GiB/s |
-| `aHash::hash_one` 🦀      | Rs                |     1.23 GiB/s |      8.61 GiB/s |
-| `gxhash::gxhash64` 🦀     | Rs                | __2.68 GiB/s__ |     10.81 GiB/s |
-| `stringzilla::hash` 🦀    | C, C++, Rs, Py... |     1.84 GiB/s | __11.23 GiB/s__ |
-|                          |                   |                |                 |
-| `hash` 🐍                 | Py                |     0.13 GiB/s |      4.27 GiB/s |
-| `xxhash.xxh3_64` 🐍       | C, C++, Rs, Py... |     0.04 GiB/s |      6.38 GiB/s |
-| `stringzilla.hash` 🐍     | C, C++, Rs, Py... | __0.14 GiB/s__ |  __9.19 GiB/s__ |
-|                          |                   |                |                 |
-| 🧵 reference              |                   |                |                 |
-| `blake3::hash` 🦀         | C, Rs, Py, Go     |     0.10 GiB/s |      1.97 GiB/s |
-| `stringzilla::bytesum` 🦀 | C, C++, Rs, Py... |     2.16 GiB/s |     11.65 GiB/s |
-| `blake3.digest` 🐍        | C, Rs, Py, Go     |     0.02 GiB/s |      1.82 GiB/s |
-| `stringzilla.bytesum` 🐍  | C, C++, Rs, Py... |     0.16 GiB/s |      8.62 GiB/s |
+| Library              | Languages         |  Shorter Words |    Longer Lines |
+| -------------------- | ----------------- | -------------: | --------------: |
+| `std::hash` 🦀        | Rs                |     0.43 GiB/s |      3.74 GiB/s |
+| `xxh3::xxh3_64` 🦀    | C, C++, Rs, Py... |     1.08 GiB/s |      9.48 GiB/s |
+| `aHash::hash_one` 🦀  | Rs                |     1.23 GiB/s |      8.61 GiB/s |
+| `gxhash::gxhash64` 🦀 | Rs                | __2.68 GiB/s__ |     10.81 GiB/s |
+| `sz::hash` 🦀         | C, C++, Rs, Py... |     1.84 GiB/s | __11.23 GiB/s__ |
+|                      |                   |                |                 |
+| `hash` 🐍             | Py                |     0.13 GiB/s |      4.27 GiB/s |
+| `xxhash.xxh3_64` 🐍   | C, C++, Rs, Py... |     0.04 GiB/s |      6.38 GiB/s |
+| `sz.hash` 🐍          | C, C++, Rs, Py... | __0.14 GiB/s__ |  __9.19 GiB/s__ |
+|                      |                   |                |                 |
+| 🧵 reference          |                   |                |                 |
+| `blake3::hash` 🦀     | C, Rs, Py, Go     |     0.10 GiB/s |      1.97 GiB/s |
+| `sz::bytesum` 🦀      | C, C++, Rs, Py... |     2.16 GiB/s |     11.65 GiB/s |
+| `blake3.digest` 🐍    | C, Rs, Py, Go     |     0.02 GiB/s |      1.82 GiB/s |
+| `sz.bytesum` 🐍       | C, C++, Rs, Py... |     0.16 GiB/s |      8.62 GiB/s |
 
 > Blake3 and byte-level summation are provided as a reference for expected lower and upper bounds.
 > Blake3 is a cryptographic hash function and is obliged to provide a certain level of security, which comes at a cost.
@@ -68,16 +69,16 @@ This is especially important in distributed systems, where the data is too large
 | ---------------------------- | ----------------- | -------------: | -------------: |
 | `std::hash::DefaultHasher` 🦀 | Rs                |     0.51 GiB/s |     3.92 GiB/s |
 | `aHash::AHasher` 🦀           | Rs                | __1.30 GiB/s__ | __8.56 GiB/s__ |
-| `stringzilla::Hasher` 🦀      | C, C++, Rs, Py... |     0.89 GiB/s |     6.39 GiB/s |
+| `sz::Hasher` 🦀               | C, C++, Rs, Py... |     0.89 GiB/s |     6.39 GiB/s |
 |                              |                   |                |                |
 | `xxhash.xxh3_64` 🐍           | C, C++, Rs, Py... |     0.09 GiB/s |      7.09 GB/s |
-| `stringzilla.Hasher` 🐍       | C, C++, Rs, Py... | __0.35 GiB/s__ |  __6.04 GB/s__ |
+| `sz.Hasher` 🐍                | C, C++, Rs, Py... | __0.35 GiB/s__ |  __6.04 GB/s__ |
 
-## Substring & Character-Set Search Benchmarks
+## Substring Search
 
 Substring search is one of the most common operations in text processing, and one of the slowest.
 Most of the time, programmers don't think about replacing the `str::find` method, as it's already expected to be optimized.
-In many languages it's offloaded to the C standard library [`memmem`](https://man7.org/linux/man-pages/man3/memmem.3.html) or [`strstr`](https://en.cppreference.com/w/c/string/byte/strstr) for NULL-terminated strings.
+In many languages it's offloaded to the C standard library [`memmem`](https://man7.org/linux/man-pages/man3/memmem.3.html) or [`strstr`](https://en.cppreference.com/w/c/string/byte/strstr) for `NULL`-terminated strings.
 The C standard library is, however, also implemented by humans, and a better solution can be created.
 
 | Library                |   Shorter Words |    Longer Lines |
@@ -85,16 +86,25 @@ The C standard library is, however, also implemented by humans, and a better sol
 | 🧵 forward pass         |      9.48 GiB/s |     10.88 GiB/s |
 | `std::str::find` 🦀     |      9.48 GiB/s |     10.88 GiB/s |
 | `memmem::find` 🦀       |      9.51 GiB/s |     10.83 GiB/s |
-| `stringzilla::find` 🦀  | __10.45 GiB/s__ | __10.89 GiB/s__ |
+| `sz::find` 🦀           | __10.45 GiB/s__ | __10.89 GiB/s__ |
+|                        |                 |                 |
+| `str.find` 🐍           |      1.05 GiB/s |      1.23 GiB/s |
+| `pyahocorasick.iter` 🐍 |      0.42 GiB/s |      0.45 GiB/s |
+| `sz.find` 🐍            | __10.82 GiB/s__ | __11.79 GiB/s__ |
 |                        |                 |                 |
 | 🧵 reverse pass         |                 |                 |
 | `std::str::rfind` 🦀    |      2.96 GiB/s |      3.65 GiB/s |
 | `memmem::rfind` 🦀      |      2.95 GiB/s |      3.71 GiB/s |
-| `stringzilla::rfind` 🦀 |  __9.78 GiB/s__ | __10.43 GiB/s__ |
+| `sz::rfind` 🦀          |  __9.78 GiB/s__ | __10.43 GiB/s__ |
+|                        |                 |                 |
+| `str.rfind` 🐍          |      1.54 GiB/s |      3.84 GiB/s |
+| `sz.rfind` 🐍           |  __7.15 GiB/s__ | __11.56 GiB/s__ |
 
 > Higher-throughput evaluation with `memmem` is possible, if the "matcher" object is reused to iterate through the string instead of constructing a new one for each search.
+> It's also important to note that `pyahocorasick` is not designed for single-pattern search, and is provided for reference only.
 
-Similarly, one can search a string for a set of characters.
+## Byte-Set Search
+
 StringWa.rs takes a few representative examples of various character sets that appear in real parsing or string validation tasks:
 
 - tabulation characters, like `\n\r\v\f`;
@@ -105,14 +115,17 @@ It's common in such cases, to pre-construct some library-specific filter-object 
 Once that object is constructed, all of it's inclusions in each token (word or line) are counted.
 Current numbers should look like this:
 
-| Library                       |  Shorter Words |   Longer Lines |
-| ----------------------------- | -------------: | -------------: |
-| `bstr::iter` 🦀                |     0.26 GiB/s |     0.25 GiB/s |
-| `regex::find_iter` 🦀          |     0.23 GiB/s |     5.22 GiB/s |
-| `aho_corasick::find_iter` 🦀   |     0.41 GiB/s |     0.50 GiB/s |
-| `stringzilla::find_byteset` 🦀 | __1.61 GiB/s__ | __8.17 GiB/s__ |
+| Library                     |  Shorter Words |   Longer Lines |
+| --------------------------- | -------------: | -------------: |
+| `bstr::iter` 🦀              |     0.26 GiB/s |     0.25 GiB/s |
+| `regex::find_iter` 🦀        |     0.23 GiB/s |     5.22 GiB/s |
+| `aho_corasick::find_iter` 🦀 |     0.41 GiB/s |     0.50 GiB/s |
+| `sz::find_byteset` 🦀        | __1.61 GiB/s__ | __8.17 GiB/s__ |
+|                             |                |                |
+| `re.finditer` 🐍             |     0.04 GiB/s |     0.04 GiB/s |
+| `sz.Str.find_first_of` 🐍    | __0.09 GiB/s__ | __0.10 GiB/s__ |
 
-## Strings Sorting & Intersections Benchmarks
+## Sequence Operations
 
 Rust has several Dataframe libraries, DBMS and Search engines that heavily rely on string sorting and intersections.
 Those operations mostly are implemented using conventional algorithms:
@@ -123,12 +136,19 @@ Those operations mostly are implemented using conventional algorithms:
 Assuming the comparisons can be accelerated with SIMD and so can be the hash functions, StringZilla could already provide a performance boost in such applications, but starting with v4 it also provides specialized algorithms for sorting and intersections.
 Those are directly compatible with arbitrary string-comparable collection types with a support of an indexed access to the elements.
 
-| Library                                       |      Shorter Words |      Longer Lines |
-| --------------------------------------------- | -----------------: | ----------------: |
-| `std::sort_unstable_by_key` 🦀                 |      54.35 Melem/s |     57.70 Melem/s |
-| `rayon::par_sort_unstable_by_key` on 1x CPU 🦀 |      47.08 Melem/s |     50.35 Melem/s |
-| `arrow::lexsort_to_indices` 🦀                 |     122.20 Melem/s | __84.73 Melem/s__ |
-| `stringzilla::argsort_permutation` 🦀          | __182.88 Melem/s__ |     74.64 Melem/s |
+| Library                                       |                Shorter Words |               Longer Lines |
+| --------------------------------------------- | ---------------------------: | -------------------------: |
+| `std::sort_unstable_by_key` 🦀                 |        54.35 M comparisons/s |      57.70 M comparisons/s |
+| `rayon::par_sort_unstable_by_key` on 1x CPU 🦀 |        47.08 M comparisons/s |      50.35 M comparisons/s |
+| `arrow::lexsort_to_indices` 🦀                 |       122.20 M comparisons/s |  __84.73 M comparisons/s__ |
+| `sz::argsort_permutation` 🦀                   |   __182.88 M comparisons/s__ |      74.64 M comparisons/s |
+|                                               |                              |                            |
+| `list.sort` on 1x CPU 🐍                       |        47.06 M comparisons/s |      22.36 M comparisons/s |
+| `pandas.Series.sort_values` on 1x CPU 🐍       |         9.39 M comparisons/s |      11.93 M comparisons/s |
+| `pyarrow.compute.sort_indices` on 1x CPU 🐍    |        62.17 M comparisons/s |       5.53 M comparisons/s |
+| `polars.Series.sort` on 1x CPU 🐍              |       223.38 M comparisons/s | __181.60 M comparisons/s__ |
+| `cudf.Series.sort_values` on 1x GPU 🐍         | __9'463.59 M comparisons/s__ |      66.44 M comparisons/s |
+| `sz.Strs.sorted` on 1x CPU 🐍                  |       171.13 M comparisons/s |      77.88 M comparisons/s |
 
 ## Random Generation & Lookup Tables
 
@@ -150,46 +170,65 @@ Performing in-place lookups in a precomputed table of 256 bytes:
 | ---------------------- | ----------------: | -----------------: |
 | serial 🦀               |        1.64 GiB/s |         1.61 GiB/s |
 | `sz::lookup_inplace` 🦀 |    __2.28 GiB/s__ |    __13.39 GiB/s__ |
+|                        |                   |
+| `bytes.translate` 🐍    |        1.18 GiB/s |         1.21 GiB/s |
+| `sz.Str.translate` 🐍   |    __2.15 GiB/s__ |     __2.15 GiB/s__ |
 
 
-## String Edit Distance Benchmarks
+## Similarities Scoring
 
 Edit Distance calculation is a common component of Search Engines, Data Cleaning, and Natural Language Processing, as well as in Bioinformatics.
 It's a computationally expensive operation, generally implemented using dynamic programming, with a quadratic time complexity upper bound.
 
-| Library                                       | ≅ 100 bytes lines | ≅ 1000 bytes lines |
-| --------------------------------------------- | ----------------: | -----------------: |
-| 🧵 binary inputs                               |                   |                    |
-| `rapidfuzz::levenshtein<Bytes>` 🦀             |       4'633 MCUPS |       14'316 MCUPS |
-| `szs::LevenshteinDistances` on 1x CPU 🦀       |       3'315 MCUPS |       13'084 MCUPS |
-| `szs::LevenshteinDistances` on 16x CPUs 🦀     |      29'430 MCUPS |      105'400 MCUPS |
-| `szs::LevenshteinDistances` on 1x GPU 🦀       |      31'913 MCUPS |  __624'730 MCUPS__ |
-|                                               |                   |                    |
-| 🧵 utf-8 inputs                                |                   |                    |
-| `rapidfuzz::levenshtein<Chars>` 🦀             |       3'877 MCUPS |       13'179 MCUPS |
-| `szs::LevenshteinDistancesUtf8` on 1x CPU 🦀   |       3'283 MCUPS |       11'690 MCUPS |
-| `szs::LevenshteinDistancesUtf8` on 16x CPUs 🦀 |      38'954 MCUPS |      103'500 MCUPS |
+| Library                                        | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ---------------------------------------------- | ----------------: | -----------------: |
+| 🧵 binary inputs                                |                   |                    |
+| `rapidfuzz::levenshtein<Bytes>` 🦀              |       4'633 MCUPS |       14'316 MCUPS |
+| `szs::LevenshteinDistances` on 1x CPU 🦀        |       3'315 MCUPS |       13'084 MCUPS |
+| `szs::LevenshteinDistances` on 16x CPUs 🦀      |      29'430 MCUPS |      105'400 MCUPS |
+| `szs::LevenshteinDistances` on 1x GPU 🦀        |  __31'913 MCUPS__ |  __624'730 MCUPS__ |
+|                                                |                   |                    |
+| `nltk.edit_distance` 🐍                         |           2 MCUPS |            1 MCUPS |
+| `jellyfish.levenshtein_distance` 🐍             |          61 MCUPS |          226 MCUPS |
+| `rapidfuzz.Levenshtein` 🐍                      |          65 MCUPS |        6'390 MCUPS |
+| `szs.LevenshteinDistances` on 1x CPU 🐍         |          45 MCUPS |        3'282 MCUPS |
+| `cudf.edit_distance` batch on 1 GPU 🐍          |       1'369 MCUPS |        1'950 MCUPS |
+| `szs.LevenshteinDistances` batch on 1x CPU 🐍   |       1'885 MCUPS |       10'430 MCUPS |
+| `szs.LevenshteinDistances` batch on 16x CPUs 🐍 |       4'056 MCUPS |       56'918 MCUPS |
+| `szs.LevenshteinDistances` batch on 1x GPU 🐍   |   __3'405 MCUPS__ |   __92'833 MCUPS__ |
+|                                                |                   |                    |
+| 🧵 utf-8 inputs                                 |                   |                    |
+| `rapidfuzz::levenshtein<Chars>` 🦀              |       3'877 MCUPS |       13'179 MCUPS |
+| `szs::LevenshteinDistancesUtf8` on 1x CPU 🦀    |       3'283 MCUPS |       11'690 MCUPS |
+| `szs::LevenshteinDistancesUtf8` on 16x CPUs 🦀  |      38'954 MCUPS |      103'500 MCUPS |
+
 
 For biological sequences, the Needleman-Wunsch and Smith-Waterman algorithms are more appropriate, as they allow overriding the default substitution costs.
 Another common adaptation is to used Gotoh's affine gap penalties, which better model the evolutionary events in DNA and Protein sequences.
 
-| Library                                    | ≅ 100 bytes lines | ≅ 1000 bytes lines |
-| ------------------------------------------ | ----------------: | -----------------: |
-| 🧵 linear gaps                              |                   |                    |
-| `szs::NeedlemanWunschScores` on 1x CPU 🦀   |         278 MCUPS |          612 MCUPS |
-| `szs::NeedlemanWunschScores` on 16x CPUs 🦀 |       4'057 MCUPS |        8'492 MCUPS |
-| `szs::NeedlemanWunschScores` on 1x GPU 🦀   |         131 MCUPS |   __12'113 MCUPS__ |
-| `szs::SmithWatermanScores` on 1x CPU 🦀     |         263 MCUPS |          552 MCUPS |
-| `szs::SmithWatermanScores` on 16x CPUs 🦀   |       3'883 MCUPS |        8'011 MCUPS |
-| `szs::SmithWatermanScores` on 1x GPU 🦀     |         143 MCUPS |   __12'921 MCUPS__ |
-|                                            |                   |                    |
-| 🧵 affine gaps                              |                   |                    |
-| `szs::NeedlemanWunschScores` on 1x CPU 🦀   |          83 MCUPS |          354 MCUPS |
-| `szs::NeedlemanWunschScores` on 16x CPUs 🦀 |       1'267 MCUPS |        4'694 MCUPS |
-| `szs::NeedlemanWunschScores` on 1x GPU 🦀   |         128 MCUPS |   __13'799 MCUPS__ |
-| `szs::SmithWatermanScores` on 1x CPU 🦀     |          79 MCUPS |          284 MCUPS |
-| `szs::SmithWatermanScores` on 16x CPUs 🦀   |       1'026 MCUPS |        3'776 MCUPS |
-| `szs::SmithWatermanScores` on 1x GPU 🦀     |         127 MCUPS |   __13'205 MCUPS__ |
+| Library                                        | ≅ 100 bytes lines | ≅ 1000 bytes lines |
+| ---------------------------------------------- | ----------------: | -----------------: |
+| 🧵 linear gaps                                  |                   |                    |
+| `szs::NeedlemanWunschScores` on 1x CPU 🦀       |         278 MCUPS |          612 MCUPS |
+| `szs::NeedlemanWunschScores` on 16x CPUs 🦀     |       4'057 MCUPS |        8'492 MCUPS |
+| `szs::NeedlemanWunschScores` on 1x GPU 🦀       |         131 MCUPS |   __12'113 MCUPS__ |
+| `szs::SmithWatermanScores` on 1x CPU 🦀         |         263 MCUPS |          552 MCUPS |
+| `szs::SmithWatermanScores` on 16x CPUs 🦀       |       3'883 MCUPS |        8'011 MCUPS |
+| `szs::SmithWatermanScores` on 1x GPU 🦀         |         143 MCUPS |   __12'921 MCUPS__ |
+|                                                |                   |                    |
+| `biopython.PairwiseAligner.score` on 1 CPU 🐍   |          64 MCUPS |          303 MCUPS |
+| `szs.LevenshteinDistances` on 1x CPU 🐍         |          24 MCUPS |          276 MCUPS |
+| `szs.LevenshteinDistances` batch on 1x CPU 🐍   |          75 MCUPS |          309 MCUPS |
+| `szs.LevenshteinDistances` batch on 16x CPUs 🐍 |     __679 MCUPS__ |        4'095 MCUPS |
+| `szs.LevenshteinDistances` batch on 1x GPU 🐍   |         129 MCUPS |   __10'098 MCUPS__ |
+|                                                |                   |                    |
+| 🧵 affine gaps                                  |                   |                    |
+| `szs::NeedlemanWunschScores` on 1x CPU 🦀       |          83 MCUPS |          354 MCUPS |
+| `szs::NeedlemanWunschScores` on 16x CPUs 🦀     |       1'267 MCUPS |        4'694 MCUPS |
+| `szs::NeedlemanWunschScores` on 1x GPU 🦀       |         128 MCUPS |   __13'799 MCUPS__ |
+| `szs::SmithWatermanScores` on 1x CPU 🦀         |          79 MCUPS |          284 MCUPS |
+| `szs::SmithWatermanScores` on 16x CPUs 🦀       |   __1'026 MCUPS__ |        3'776 MCUPS |
+| `szs::SmithWatermanScores` on 1x GPU 🦀         |         127 MCUPS |   __13'205 MCUPS__ |
 
 ## Byte-level Fingerprinting & Sketching Benchmarks
 
@@ -284,9 +323,11 @@ uv pip install '.[find,hash,sequence,fingerprints,similarities]'
 To run individual benchmarks, you can call:
 
 ```sh
+uv run --no-project python bench_hash.py --help
 uv run --no-project python bench_find.py --help
 uv run --no-project python bench_sequence.py --help
 uv run --no-project python bench_similarities.py --help
+uv run --no-project python bench_fingerprints.py --help 🔜
 ```
 
 ## Datasets
