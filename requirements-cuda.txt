@@ -6,5 +6,5 @@ cudf-cu12==25.*; platform_system == "Linux" and (platform_machine == "x86_64" or
 
 # StringZillas GPU build
 # https://github.com/ashvardanian/stringzilla
-stringzillas-cuda==4.*; platform_system == "Linux" and (platform_machine == "x86_64" or platform_machine == "aarch64")
+stringzillas-cuda==4.0.9; platform_system == "Linux" and (platform_machine == "x86_64" or platform_machine == "aarch64")
 

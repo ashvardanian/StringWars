@@ -1,9 +1,7 @@
 # This file lists the optional development dependencies 
 # for StringZilla Python benchmarks
-arrow
-pandas
-stringzilla
-stringzillas-cpus
+stringzilla==4.0.9
+stringzillas-cpus==4.0.9
 
 # For substring search:
 pyahocorasick
@@ -26,5 +24,7 @@ nltk # https://github.com/nltk/nltk
 # For Needleman-Wunsch and Smith-Waterman algorithms with custom scoring matrices:
 biopython # https://github.com/biopython/biopython
 
-# Unicode processing:
-wcwidth # https://github.com/jquast/wcwidth
+# For sorting:
+pyarrow # https://github.com/apache/arrow
+pandas # https://github.com/pandas-dev/pandas
+polars # https://github.com/pola-rs/polars

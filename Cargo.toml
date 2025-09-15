@@ -5,7 +5,7 @@ edition = "2018"
 
 [dependencies]
 criterion = "0.7.0"
-stringzilla = { version = "4.0.7", features = ["cpus"] }
+stringzilla = { version = "4.0.9", features = ["cpus"] }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
