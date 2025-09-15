@@ -39,8 +39,7 @@ import random
 import argparse
 import itertools
 import re
-from pathlib import Path
-from typing import List, Callable, Tuple, Optional, Pattern, Any
+from typing import List, Callable, Tuple, Optional, Any
 
 from tqdm import tqdm
 import numpy as np
@@ -664,8 +663,6 @@ def benchmark_stringzillas_similarity_scores(
 def generate_random_pairs(strings: List[str], num_pairs: int) -> List[Tuple[str, str]]:
     """Generate random string pairs from a list of strings."""
     return [(random.choice(strings), random.choice(strings)) for _ in range(num_pairs)]
-
-
 
 
 _main_epilog = """

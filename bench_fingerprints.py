@@ -10,7 +10,8 @@
 """
 Fingerprinting benchmarks in Python: docs/s for MinHash operations.
 
-- MinHash: datasketch.MinHash, stringzillas.Fingerprints, cuDF (optional)
+- MinHash: datasketch.MinHash, stringzillas.Fingerprints, cudf.minhash_ngrams,
+  and cudf.minhash64_ngrams (if RAPIDS cuDF is installed).
 
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
@@ -26,7 +27,7 @@ import os
 import argparse
 import itertools
 import re
-from pathlib import Path
+import sys
 from typing import Callable, Any, List, Optional, Iterable
 
 from tqdm import tqdm
@@ -50,21 +51,16 @@ except ImportError:
 NGRAM_WIDTHS = [5, 9, 17, 33]
 NGRAM_WIDTHS_ARRAY = np.array(NGRAM_WIDTHS, dtype=np.uint64)
 
-# Global state for MinHash to avoid repeated initialization
-_datasketch_min_hash_state = None
-
 
 def log_system_info():
     """Log Python version and fingerprinting library versions."""
-    import sys
+
     print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
     print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
     print(f"- DataSketch: {MinHash.__module__.split('.')[0]} (available)")
     if CUDF_AVAILABLE:
         print(f"- CuDF: {cudf.__version__}")
     print()  # Add blank line
-
-
 
 
 def _checksum_from_results(result) -> int:
@@ -90,24 +86,29 @@ def _checksum_from_results(result) -> int:
         return 0
 
 
-def bit_entropy(hash_matrix: List[List[int]]) -> float:
+def bit_entropy(hash_matrix: np.ndarray) -> float:
     """Calculate bit entropy (how well distributed the bits are).
 
     Returns value between 0 and 1, where 1 means perfectly random bit distribution.
     """
-    if not hash_matrix or not hash_matrix[0]:
+    if hash_matrix.size == 0:
         return 0.0
 
-    # Determine bit width (assuming 32-bit integers)
-    bits_per_hash = 32
-    bit_ones_count = [0] * bits_per_hash  # Count of 1s for each bit position
-    total_hash_values = len(hash_matrix) * len(hash_matrix[0])
+    # Determine bit width based on dtype
+    if hash_matrix.dtype == np.uint32:
+        bits_per_hash = 32
+    elif hash_matrix.dtype == np.uint64:
+        bits_per_hash = 64
+    else:
+        bits_per_hash = 32  # default
 
-    for document_hashes in hash_matrix:
-        for hash_value in document_hashes:
-            for bit_position in range(bits_per_hash):
-                if (hash_value >> bit_position) & 1 == 1:
-                    bit_ones_count[bit_position] += 1
+    bit_ones_count = np.zeros(bits_per_hash, dtype=np.int64)
+    total_hash_values = hash_matrix.size
+
+    # Count 1s for each bit position across all hash values
+    flat_matrix = hash_matrix.flatten()
+    for bit_position in range(bits_per_hash):
+        bit_ones_count[bit_position] = np.sum((flat_matrix >> bit_position) & 1)
 
     # Calculate entropy
     total_entropy = 0.0
@@ -121,23 +122,156 @@ def bit_entropy(hash_matrix: List[List[int]]) -> float:
     return total_entropy / bits_per_hash  # Normalize to [0, 1]
 
 
-def collision_rate(hash_matrix: List[List[int]]) -> float:
+def collision_rate(hash_matrix: np.ndarray) -> float:
     """Calculate collision rate (duplicate hash values).
 
     Returns fraction of hash values that are duplicates.
     """
-    if not hash_matrix or not hash_matrix[0]:
+    if hash_matrix.size == 0:
         return 0.0
 
-    unique_hash_values = set()
-    total_hash_count = 0
+    unique_hash_values = len(np.unique(hash_matrix.flatten()))
+    total_hash_count = hash_matrix.size
 
-    for document_hashes in hash_matrix:
-        for hash_value in document_hashes:
-            unique_hash_values.add(hash_value)
-            total_hash_count += 1
+    return 1.0 - (unique_hash_values / total_hash_count)
 
-    return 1.0 - (len(unique_hash_values) / total_hash_count)
+
+def print_quality_analysis(matrix_state: dict):
+    """Print quality analysis for all fingerprinting engines."""
+    print("\n=== Hash Quality Analysis ===")
+    print(
+        f"Documents processed: DataSketch={matrix_state['datasketch_doc_idx']}, "
+        f"cuDF={matrix_state['cudf_doc_idx']}, StringZilla={matrix_state['szs_doc_idx']}"
+    )
+
+    if matrix_state["datasketch_doc_idx"] > 0:
+        matrix_slice = matrix_state["datasketch_matrix"][: matrix_state["datasketch_doc_idx"]]
+        print("\nDataSketch MinHash:")
+        print(f"  Bit Entropy:  {bit_entropy(matrix_slice):.4f}")
+        print(f"  Collision:    {collision_rate(matrix_slice)*100:.4f}%")
+
+    if matrix_state["cudf_doc_idx"] > 0:
+        matrix_slice = matrix_state["cudf_matrix"][: matrix_state["cudf_doc_idx"]]
+        print("\ncuDF MinHash:")
+        print(f"  Bit Entropy:  {bit_entropy(matrix_slice):.4f}")
+        print(f"  Collision:    {collision_rate(matrix_slice)*100:.4f}%")
+
+    if matrix_state["szs_doc_idx"] > 0:
+        matrix_slice = matrix_state["szs_matrix"][: matrix_state["szs_doc_idx"]]
+        print("\nStringZilla Fingerprints:")
+        print(f"  Bit Entropy:  {bit_entropy(matrix_slice):.4f}")
+        print(f"  Collision:    {collision_rate(matrix_slice)*100:.4f}%")
+
+
+def log_with_matrix(
+    name: str,
+    documents: List[str],
+    document_sizes: List[int],
+    single_doc: Optional[Callable[[str], Any]] = None,
+    batch_docs: Optional[Callable[[List[str]], Iterable[Any]]] = None,
+    timeout_seconds: int = 10,
+    batch_size: int = 1,
+    ops_counter: Optional[Callable[[List[str], Iterable[Any]], int]] = None,
+    matrix_state: Optional[dict] = None,
+    engine_type: str = "unknown",
+):
+    """Benchmark an operation with timeout, batching, progress, checksum, and matrix population."""
+    processed_docs = 0
+    processed_bytes = 0
+    checksum = 0
+    start_ns = now_ns()
+
+    bar = tqdm(desc=name, unit="docs", leave=False, total=len(documents))
+
+    try:
+        for batch_indices in itertools.batched(range(len(documents)), max(1, batch_size)):
+            if (now_ns() - start_ns) > int(timeout_seconds * 1e9):
+                break
+
+            batch_documents = [documents[i] for i in batch_indices]
+            batch_bytes = [document_sizes[i] for i in batch_indices]
+
+            # Choose batch vs single path explicitly
+            results_iterable: Iterable[Any]
+            if batch_docs is not None:
+                results = batch_docs(batch_documents)
+                if hasattr(results, "__iter__") and not isinstance(results, (str, bytes)):
+                    results_iterable = results
+                else:
+                    results_iterable = [results]
+            else:
+                if single_doc is None:
+                    raise ValueError("single_doc callable is required when batch_docs is not provided")
+                results_iterable = (single_doc(doc) for doc in batch_documents)
+
+            # Process results and populate matrix if provided
+            for doc_idx, result in enumerate(results_iterable):
+                checksum += _checksum_from_results(result)
+
+                # Populate matrix if matrix_state is provided
+                if matrix_state is not None and engine_type in ["datasketch", "cudf", "szs"]:
+                    matrix_key = f"{engine_type}_matrix"
+                    doc_idx_key = f"{engine_type}_doc_idx"
+
+                    if (
+                        matrix_key in matrix_state
+                        and doc_idx_key in matrix_state
+                        and matrix_state[doc_idx_key] < matrix_state[matrix_key].shape[0]
+                    ):
+
+                        # Extract hash values from result
+                        if isinstance(result, np.ndarray) and result.size > 0:
+                            hash_values = result.flatten()
+                            if len(hash_values) == matrix_state[matrix_key].shape[1]:
+                                matrix_state[matrix_key][matrix_state[doc_idx_key], :] = hash_values
+                                matrix_state[doc_idx_key] += 1
+
+            processed_docs += len(batch_documents)
+            processed_bytes += sum(batch_bytes)
+
+            # Count operations (hashes computed) if provided
+            if ops_counter is not None:
+                try:
+                    # Recompute results for ops counting if generator was consumed
+                    if batch_docs is not None and batch_size > 1:
+                        results_for_ops = batch_docs(batch_documents)
+                    else:
+                        results_for_ops = [single_doc(doc) for doc in batch_documents]  # type: ignore[arg-type]
+                    total_ops = total_ops + ops_counter(batch_documents, results_for_ops)
+                except Exception:
+                    pass
+
+            elapsed_s = (now_ns() - start_ns) / 1e9
+            if elapsed_s > 0:
+                docs_per_sec = processed_docs / elapsed_s
+                mb_per_sec = processed_bytes / (1e6 * elapsed_s)
+                hashes_per_sec = (total_ops / elapsed_s) if "total_ops" in locals() else 0
+                bar.set_postfix(
+                    {
+                        "docs/s": f"{docs_per_sec:.0f}",
+                        "MB/s": f"{mb_per_sec:.1f}",
+                        "hashes/s": f"{hashes_per_sec:.0f}",
+                        "chk": checksum,
+                    }
+                )
+            bar.update(len(batch_documents))
+    except KeyboardInterrupt:
+        print(f"\n{name}: SKIPPED (interrupted by user)")
+        return
+    finally:
+        bar.close()
+
+    total_time_s = (now_ns() - start_ns) / 1e9
+    if processed_docs:
+        docs_per_sec = processed_docs / total_time_s
+        mb_per_sec = processed_bytes / (1e6 * total_time_s)
+        hashes_per_sec = (total_ops / total_time_s) if "total_ops" in locals() else 0
+        extra = f", {hashes_per_sec:.0f} hashes/s" if hashes_per_sec else ""
+        print(
+            f"{name:35s}: {total_time_s:8.3f}s ~ {mb_per_sec:8.3f} MB/s ~ {docs_per_sec:10,.0f} docs/s{extra} ~ checksum={checksum}"
+        )
+    else:
+        print(f"{name}: No documents processed")
 
 
 def log(
@@ -159,8 +293,9 @@ def log(
     checksum = 0
     start_ns = now_ns()
 
+    bar = tqdm(desc=name, unit="docs", leave=False, total=len(documents))
+
     try:
-        bar = tqdm(desc=name, unit="docs", leave=False, total=len(documents))
         for batch_indices in itertools.batched(range(len(documents)), max(1, batch_size)):
             if (now_ns() - start_ns) > int(timeout_seconds * 1e9):
                 break
@@ -213,10 +348,11 @@ def log(
                     }
                 )
             bar.update(len(batch_documents))
-        bar.close()
     except KeyboardInterrupt:
         print(f"\n{name}: SKIPPED (interrupted by user)")
         return
+    finally:
+        bar.close()
 
     total_time_s = (now_ns() - start_ns) / 1e9
     if processed_docs:
@@ -231,20 +367,19 @@ def log(
         print(f"{name}: No documents processed")
 
 
-def benchmark_third_party_fingerprints(
+def bench_3party_fingerprints(
     docs: List[str],
     docs_sizes: List[int],
     dimensions: int,
     timeout_seconds: int = 10,
     batch_size: int = 1,
     filter_pattern: Optional[re.Pattern] = None,
+    matrix_state: Optional[dict] = None,
 ):
     """Benchmark third-party fingerprinting/sketching implementations."""
-    global _datasketch_min_hash_state
-
     binary_docs = [doc.encode("utf-8") for doc in docs]
 
-    # Create MinHash instances for each n-gram width
+    # Create MinHash instances for each n-gram width (like Rust implementation)
     hashes_per_width = dimensions // len(NGRAM_WIDTHS)
     minhashers = [MinHash(num_perm=hashes_per_width) for _ in NGRAM_WIDTHS]
 
@@ -263,11 +398,11 @@ def benchmark_third_party_fingerprints(
             combined_signature.extend(signature)
             minhashers[width_idx].clear()
 
-        return np.array(combined_signature[:dimensions])  # Trim to exact dimensions
+        return np.array(combined_signature[:dimensions], dtype=np.uint32)  # Proper dtype for matrix
 
-    if name_matches("datasketch.MinHash.multi_width", filter_pattern):
-        log(
-            "datasketch.MinHash.multi_width",
+    if name_matches("datasketch.MinHash", filter_pattern):
+        log_with_matrix(
+            "datasketch.MinHash",
             binary_docs,
             docs_sizes,
             single_doc=datasketch_multi_width_minhash,
@@ -277,135 +412,114 @@ def benchmark_third_party_fingerprints(
                 sum(max(len(d) - w + 1, 0) for w in NGRAM_WIDTHS) for d in batch_docs
             )
             * hashes_per_width,
+            matrix_state=matrix_state,
+            engine_type="datasketch",
         )
 
-    # Legacy single-width n-gram implementation for comparison
-    if _datasketch_min_hash_state is None:
-        _datasketch_min_hash_state = MinHash(num_perm=dimensions)
-
-    def datasketch_minhash_update_batch_legacy(doc: bytes) -> np.ndarray:
-        """Legacy single-width n-gram MinHash for comparison."""
-        width = 5  # Use first width from NGRAM_WIDTHS
-        if len(doc) >= width:
-            ngrams = [doc[i : i + width] for i in range(len(doc) - width + 1)]
-            _datasketch_min_hash_state.update_batch(ngrams)
-        digest = _datasketch_min_hash_state.digest()
-        _datasketch_min_hash_state.clear()
-        return digest
-
-    if name_matches("datasketch.MinHash.single_width", filter_pattern):
-        log(
-            "datasketch.MinHash.single_width",
-            binary_docs,
-            docs_sizes,
-            single_doc=datasketch_minhash_update_batch_legacy,
-            timeout_seconds=timeout_seconds,
-            batch_size=1,
-            ops_counter=lambda batch_docs, _res: sum(max(len(d) - 5 + 1, 0) for d in batch_docs) * dimensions,
-        )
-
-    # cuDF MinHash implementations (if available)
+    # cuDF MinHash implementations (if available) - using batch_size for GPU efficiency
     if CUDF_AVAILABLE:
-        # Precompute MinHash parameters for cuDF - distribute across widths
+        # Precompute MinHash parameters once
         np.random.seed(42)  # For reproducibility
-        hashes_per_width = dimensions // len(NGRAM_WIDTHS)
+        a_vals_32 = np.random.randint(1, 2**32 - 1, dimensions, dtype=np.uint32)
+        b_vals_32 = np.random.randint(0, 2**32 - 1, dimensions, dtype=np.uint32)
+        a_vals_64 = np.random.randint(1, 2**32 - 1, dimensions, dtype=np.uint64)
+        b_vals_64 = np.random.randint(0, 2**32 - 1, dimensions, dtype=np.uint64)
 
-        # Test multiple cuDF MinHash variants with different widths
-        for width in NGRAM_WIDTHS:
-            a_vals = np.random.randint(1, 2**32 - 1, hashes_per_width, dtype=np.uint32)
-            b_vals = np.random.randint(0, 2**32 - 1, hashes_per_width, dtype=np.uint32)
+        def cudf_batch_minhash(batch_docs: List[str]) -> np.ndarray:
+            """Process batch of documents with cuDF minhash_ngrams."""
+            # Choose n-gram width based on minimum document length
+            min_doc_len = min(len(doc) for doc in batch_docs) if batch_docs else 5
+            ngram_width = min(5, max(1, min_doc_len))  # Use width between 1 and 5
 
-            # cuDF minhash - single document per width
-            if name_matches(f"cudf.minhash(width={width})", filter_pattern):
+            # Generate character n-grams for each document
+            ngrams_list = []
+            for doc in batch_docs:
+                if len(doc) >= ngram_width:
+                    doc_ngrams = [doc[i : i + ngram_width] for i in range(len(doc) - ngram_width + 1)]
+                else:
+                    doc_ngrams = [doc] if doc else [""]
+                ngrams_list.append(doc_ngrams)
 
-                def kernel(doc: str, w=width, a=a_vals, b=b_vals) -> int:
-                    # Create cuDF Series from document
-                    s = cudf.Series([doc])
-                    # Use cuDF's minhash function with specific width
-                    result = s.str.minhash(seed=42, a=a, b=b, width=w)
-                    # Extract minhash values and compute checksum
-                    minhash_vals = result.iloc[0]  # List of minhash values
-                    return sum(minhash_vals) % (2**32)
+            # Create cuDF Series with list data (cuDF will auto-detect list dtype)
+            ngrams_series = cudf.Series(ngrams_list)
 
-                log(
-                    name=f"cudf.minhash(width={width})",
-                    documents=docs,
-                    document_sizes=docs_sizes,
-                    single_doc=kernel,
-                    timeout_seconds=timeout_seconds,
-                    batch_size=1,
-                    ops_counter=lambda batch_documents, _results, w=width: sum(
-                        max(len(d.encode("utf-8")) - w + 1, 0) for d in batch_documents
-                    )
-                    * hashes_per_width,
-                )
+            # Use cuDF's minhash_ngrams (ngrams parameter means how many ngrams to use per hash)
+            # Ensure ngrams parameter is at least 2 (cuDF requirement)
+            max_ngrams_available = len(ngrams_list[0]) if ngrams_list else 2
+            ngrams_to_use = max(2, min(max_ngrams_available, 10))
 
-        # cuDF multi-width combined approach
-        if name_matches("cudf.minhash.multi_width", filter_pattern):
-            # Create parameter sets for all widths
-            all_params = []
-            for width in NGRAM_WIDTHS:
-                a_vals = np.random.randint(1, 2**32 - 1, hashes_per_width, dtype=np.uint32)
-                b_vals = np.random.randint(0, 2**32 - 1, hashes_per_width, dtype=np.uint32)
-                all_params.append((width, a_vals, b_vals))
+            result = ngrams_series.str.minhash_ngrams(ngrams=ngrams_to_use, seed=42, a=a_vals_32, b=b_vals_32)
 
-            def multi_width_kernel(doc: str) -> int:
-                """Multi-width cuDF MinHash combining all widths."""
-                s = cudf.Series([doc])
-                combined_checksum = 0
+            # Convert cuDF list result to numpy array
+            # minhash_ngrams returns a list Series, convert to host array
+            result_host = result.to_pandas().tolist()
+            return np.array(result_host, dtype=np.uint32)
 
-                for width, a_vals, b_vals in all_params:
-                    result = s.str.minhash(seed=42, a=a_vals, b=b_vals, width=width)
-                    minhash_vals = result.iloc[0]
-                    combined_checksum += sum(minhash_vals) % (2**32)
-
-                return combined_checksum % (2**32)
-
-            log(
-                name="cudf.minhash.multi_width",
-                documents=docs,
-                document_sizes=docs_sizes,
-                single_doc=multi_width_kernel,
+        if name_matches("cudf.minhash_ngrams", filter_pattern):
+            log_with_matrix(
+                "cudf.minhash_ngrams",
+                docs,
+                docs_sizes,
+                batch_docs=cudf_batch_minhash,
                 timeout_seconds=timeout_seconds,
-                batch_size=1,
-                ops_counter=lambda batch_documents, _results: sum(
-                    sum(max(len(d.encode("utf-8")) - w + 1, 0) for w in NGRAM_WIDTHS) for d in batch_documents
-                )
-                * hashes_per_width,
+                batch_size=batch_size,  # Use the batch_size parameter properly
+                ops_counter=lambda batch_docs, _res: sum(max(len(doc) - 4, 0) for doc in batch_docs) * dimensions,
+                matrix_state=matrix_state,
+                engine_type="cudf",
             )
 
-        # cuDF minhash64 variant (if different performance characteristics)
-        if name_matches("cudf.minhash64", filter_pattern):
-            a_vals_64 = np.random.randint(1, 2**32 - 1, dimensions, dtype=np.uint32)
-            b_vals_64 = np.random.randint(0, 2**32 - 1, dimensions, dtype=np.uint32)
+        def cudf_batch_minhash64(batch_docs: List[str]) -> np.ndarray:
+            """Process batch of documents with cuDF minhash64_ngrams."""
+            # Choose n-gram width based on minimum document length
+            min_doc_len = min(len(doc) for doc in batch_docs) if batch_docs else 5
+            ngram_width = min(5, max(1, min_doc_len))  # Use width between 1 and 5
 
-            def kernel_64(doc: str) -> int:
-                s = cudf.Series([doc])
-                result = s.str.minhash64(seed=42, a=a_vals_64, b=b_vals_64, width=NGRAM_WIDTHS[0])
-                minhash_vals = result.iloc[0]
-                return sum(minhash_vals) % (2**64)
+            # Generate character n-grams for each document
+            ngrams_list = []
+            for doc in batch_docs:
+                if len(doc) >= ngram_width:
+                    doc_ngrams = [doc[i : i + ngram_width] for i in range(len(doc) - ngram_width + 1)]
+                else:
+                    doc_ngrams = [doc] if doc else [""]
+                ngrams_list.append(doc_ngrams)
 
-            log(
-                name="cudf.minhash64",
-                documents=docs,
-                document_sizes=docs_sizes,
-                single_doc=kernel_64,
+            # Create cuDF Series with list data (cuDF will auto-detect list dtype)
+            ngrams_series = cudf.Series(ngrams_list)
+
+            # Use cuDF's 64-bit minhash_ngrams
+            # Ensure ngrams parameter is at least 2 (cuDF requirement)
+            max_ngrams_available = len(ngrams_list[0]) if ngrams_list else 2
+            ngrams_to_use = max(2, min(max_ngrams_available, 10))
+
+            result = ngrams_series.str.minhash64_ngrams(ngrams=ngrams_to_use, seed=42, a=a_vals_64, b=b_vals_64)
+
+            # Convert cuDF list result to numpy array then to 32-bit for matrix compatibility
+            result_host = result.to_pandas().tolist()
+            result_array = np.array(result_host, dtype=np.uint64)
+            return (result_array % (2**32)).astype(np.uint32)
+
+        if name_matches("cudf.minhash64_ngrams", filter_pattern):
+            log_with_matrix(
+                "cudf.minhash64_ngrams",
+                docs,
+                docs_sizes,
+                batch_docs=cudf_batch_minhash64,
                 timeout_seconds=timeout_seconds,
-                batch_size=1,
-                ops_counter=lambda batch_documents, _results: sum(
-                    max(len(d.encode("utf-8")) - NGRAM_WIDTHS[0] + 1, 0) for d in batch_documents
-                )
-                * dimensions,
+                batch_size=batch_size,  # Use the batch_size parameter properly
+                ops_counter=lambda batch_docs, _res: sum(max(len(doc) - 4, 0) for doc in batch_docs) * dimensions,
+                matrix_state=matrix_state,
+                engine_type="cudf",
             )
 
 
-def benchmark_szs_fingerprints(
+def bench_szs_fingerprints(
     docs: List[str],
     docs_sizes: List[int],
     dimensions: int,
     timeout_seconds: int = 10,
     batch_size: int = 1,
     filter_pattern: Optional[re.Pattern] = None,
+    matrix_state: Optional[dict] = None,
 ):
     """Benchmark StringZillas Fingerprints across device scopes and modes."""
     cpu_cores = os.cpu_count()
@@ -420,11 +534,13 @@ def benchmark_szs_fingerprints(
     if name_matches("szs.Fingerprints(1xCPU)", filter_pattern):
         engine = szs.Fingerprints(ndim=dimensions, capabilities=default_scope, window_widths=NGRAM_WIDTHS_ARRAY)
 
-        def kernel(doc: str) -> int:
+        def kernel(doc: str) -> np.ndarray:
             hashes, counts = engine(sz.Strs([doc]), device=default_scope)
-            return _checksum_from_results((hashes, counts))
+            # Return hash values as uint32 array for matrix population
+            hash_array = np.asarray(hashes, dtype=np.uint32).flatten()
+            return hash_array[:dimensions]  # Ensure exact dimensions
 
-        log(
+        log_with_matrix(
             name="szs.Fingerprints(1xCPU)",
             documents=docs,
             document_sizes=docs_sizes,
@@ -432,6 +548,8 @@ def benchmark_szs_fingerprints(
             timeout_seconds=timeout_seconds,
             batch_size=1,
             ops_counter=lambda batch_documents, _results: len(batch_documents) * dimensions,
+            matrix_state=matrix_state,
+            engine_type="szs",
         )
 
     if name_matches(f"szs.Fingerprints({cpu_cores}xCPU)", filter_pattern):
@@ -531,63 +649,6 @@ def benchmark_szs_fingerprints(
         )
 
 
-def bench(
-    dataset_path: Optional[str] = None,
-    tokens_mode: Optional[str] = None,
-    max_docs: Optional[int] = None,
-    dimensions: int = 256,
-    timeout_seconds: int = 10,
-    batch_size: int = 1,
-    filter_pattern: Optional[re.Pattern] = None,
-    dataset_limit: Optional[str] = None,
-):
-    """Run fingerprinting benchmarks."""
-
-    # Load dataset using unified utilities
-    dataset = load_dataset(dataset_path, size_limit=dataset_limit)
-    tokens = tokenize_dataset(dataset, tokens_mode)
-
-    if not tokens:
-        print("No tokens found in dataset")
-        return 1
-
-    # Use tokens as documents (each token is a document)
-    docs = tokens[:max_docs] if max_docs else tokens
-
-    docs_sizes = [len(doc.encode("utf-8")) for doc in docs]
-
-    # Dataset statistics (matching Rust benchmark style)
-    total_docs = len(docs)
-    total_bytes = sum(docs_sizes)
-    total_chars = sum(len(doc) for doc in docs)
-    avg_bytes_per_doc = total_bytes / total_docs
-    avg_chars_per_doc = total_chars / total_docs
-    hashes_per_width = dimensions // len(NGRAM_WIDTHS)
-
-    print("Dataset statistics:")
-    print(f"- Source: {dataset_path}")
-    print(f"- Processing mode: documents")
-    print(f"- Total documents: {total_docs:,}")
-    print(f"- Average doc length: {avg_bytes_per_doc:.1f} bytes, {avg_chars_per_doc:.1f} chars")
-    print(f"- Total dataset size: {total_bytes:,} bytes, {total_chars:,} chars")
-    print(f"- Batch size (for batch APIs): {batch_size}")
-    print(f"- Fingerprint dimensions: {dimensions}")
-    print(f"- N-gram widths: {NGRAM_WIDTHS} bytes")
-    print(f"- Hashes per width: {hashes_per_width} (total NDIM: {dimensions})")
-    print()
-    log_system_info()
-
-    print("=== Fingerprinting & Sketching Benchmarks ===")
-    benchmark_third_party_fingerprints(docs, docs_sizes, dimensions, timeout_seconds, batch_size, filter_pattern)
-    benchmark_szs_fingerprints(docs, docs_sizes, dimensions, timeout_seconds, batch_size, filter_pattern)
-
-    # TODO: Add hash quality analysis here
-    # This would require collecting hash matrices during benchmarking
-    # and then computing bit_entropy() and collision_rate() for each algorithm
-    print("\n=== Hash Quality Analysis ===")
-    print("(Hash quality metrics not yet implemented - requires matrix collection during benchmarking)")
-
-
 _main_epilog = """
 Examples:
 
@@ -635,7 +696,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Compile regex pattern
+    # Compile filter pattern
     filter_pattern = None
     if args.filter:
         try:
@@ -643,8 +704,55 @@ def main():
         except re.error as e:
             parser.error(f"Invalid regex for --filter: {e}")
 
-    # Run benchmark
-    return bench(args.dataset, args.tokens, args.max_docs, args.dimensions, args.time_limit, args.batch_size, filter_pattern, args.dataset_limit)
+    # Load and tokenize dataset
+    dataset = load_dataset(args.dataset, size_limit=args.dataset_limit)
+    tokens = tokenize_dataset(dataset, args.tokens)
+
+    if not tokens:
+        print("No tokens found in dataset")
+        return 1
+
+    # Limit number of documents if specified
+    if args.max_docs is not None:
+        tokens = tokens[: args.max_docs]
+
+    docs_sizes = [len(doc.encode("utf-8")) for doc in tokens]
+    total_bytes = sum(docs_sizes)
+    avg_doc_length = total_bytes / len(tokens) if tokens else 0
+
+    print(f"Dataset: {len(tokens):,} docs, {total_bytes:,} bytes, {avg_doc_length:.1f} avg doc length")
+    log_system_info()
+
+    # Pre-allocated matrices for quality analysis: N_docs × N_dims (engine-specific types)
+    total_documents = len(tokens)
+    datasketch_matrix = np.zeros((total_documents, args.dimensions), dtype=np.uint32)
+    cudf_matrix = np.zeros((total_documents, args.dimensions), dtype=np.uint32)
+    szs_matrix = np.zeros((total_documents, args.dimensions), dtype=np.uint32)
+
+    # Track which documents have been processed for each implementation
+    matrix_state = {
+        "datasketch_matrix": datasketch_matrix,
+        "cudf_matrix": cudf_matrix,
+        "szs_matrix": szs_matrix,
+        "datasketch_doc_idx": 0,
+        "cudf_doc_idx": 0,
+        "szs_doc_idx": 0,
+    }
+
+    print("\n=== Fingerprinting Benchmarks ===")
+
+    # Run benchmarks with matrix population
+    bench_3party_fingerprints(
+        tokens, docs_sizes, args.dimensions, args.time_limit, args.batch_size, filter_pattern, matrix_state
+    )
+    bench_szs_fingerprints(
+        tokens, docs_sizes, args.dimensions, args.time_limit, args.batch_size, filter_pattern, matrix_state
+    )
+
+    # Print quality analysis
+    print_quality_analysis(matrix_state)
+
+    return 0
 
 
 if __name__ == "__main__":
