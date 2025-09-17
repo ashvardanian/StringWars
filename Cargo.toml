@@ -1,11 +1,11 @@
 [package]
 name = "stringwars"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2018"
 
 [dependencies]
 criterion = "0.7.0"
-stringzilla = { version = "4.0.9", features = ["cpus"] }
+stringzilla = { version = "4.0.11", features = ["cpus"] }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
@@ -84,7 +84,7 @@ version = "0.5.0"
 optional = true
 
 [dependencies.fork_union]
-version = "2.2.7"
+version = "2.2.9"
 optional = true
 
 [dependencies.stringtape]

@@ -915,9 +915,9 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "fork_union"
-version = "2.2.7"
+version = "2.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9788a363bdbbdd603e2e245ac8136caea1727bd170e31e422d0a940d812f4a27"
+checksum = "6045396b4f68ebfca7b5fe864a8a391e3b9a4fb9e78e6efbd8057a13f20f18f9"
 dependencies = [
  "cc",
 ]
@@ -1923,7 +1923,7 @@ dependencies = [
 
 [[package]]
 name = "stringwars"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -1957,9 +1957,9 @@ dependencies = [
 
 [[package]]
 name = "stringzilla"
-version = "4.0.9"
+version = "4.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8b74557a5c112060648442895d58cf07455b77df8145f0d01fda416a93828bf"
+checksum = "986eec3fe97efd5e57e360f259c4e7ae418d8b536bb36208cdbc01e296ce0588"
 dependencies = [
  "allocator-api2 0.3.1",
  "cc",
