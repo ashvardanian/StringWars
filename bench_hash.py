@@ -3,6 +3,7 @@
 #   "stringzilla",
 #   "xxhash",
 #   "blake3",
+#   "google-crc32c",
 # ]
 # ///
 """
@@ -36,10 +37,14 @@ import argparse
 import re
 import sys
 from typing import List, Optional, Callable, Any
+from importlib.metadata import version as pkg_version
 
 import blake3
 import stringzilla as sz
 import xxhash
+import google_crc32c
+import mmh3
+import cityhash
 
 from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, name_matches
 
@@ -50,6 +55,9 @@ def log_system_info():
     print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
     print(f"- xxHash: {xxhash.VERSION}")
     print(f"- Blake3: {blake3.__version__}")
+    print(f"- google-crc32c: {pkg_version('google-crc32c')}")
+    print(f"- mmh3: {pkg_version('mmh3')}")
+    print(f"- cityhash: {pkg_version('cityhash')}")
     print()  # Add blank line
 
 
@@ -113,6 +121,24 @@ def run_stateless_benchmarks(
     if name_matches("stringzilla.hash", filter_pattern):
         bench_hash_function("stringzilla.hash", tokens, lambda x: sz.hash(x), time_limit_seconds)
 
+    # Google CRC32C (Castagnoli) one-shot
+    if name_matches("google_crc32c.value", filter_pattern):
+        bench_hash_function("google_crc32c.value", tokens, lambda x: google_crc32c.value(x), time_limit_seconds)
+
+    # MurmurHash3 — stateless
+    if name_matches("mmh3.hash32", filter_pattern):
+        bench_hash_function("mmh3.hash32", tokens, lambda x: mmh3.hash(x, signed=False), time_limit_seconds)
+    if name_matches("mmh3.hash64", filter_pattern):
+        bench_hash_function("mmh3.hash64", tokens, lambda x: mmh3.hash64(x, signed=False)[0], time_limit_seconds)
+    if name_matches("mmh3.hash128", filter_pattern):
+        bench_hash_function("mmh3.hash128", tokens, lambda x: mmh3.hash128(x, signed=False), time_limit_seconds)
+
+    # CityHash — stateless
+    if name_matches("cityhash.CityHash64", filter_pattern):
+        bench_hash_function("cityhash.CityHash64", tokens, lambda x: cityhash.CityHash64(x), time_limit_seconds)
+    if name_matches("cityhash.CityHash128", filter_pattern):
+        bench_hash_function("cityhash.CityHash128", tokens, lambda x: cityhash.CityHash128(x), time_limit_seconds)
+
     # Reference bounds
     if name_matches("blake3.digest", filter_pattern):
         bench_hash_function("blake3.digest", tokens, lambda x: blake3.blake3(x).digest(), time_limit_seconds)
@@ -172,6 +198,10 @@ def run_stateful_benchmarks(
     # StringZilla stateful hasher
     if name_matches("stringzilla.Hasher", filter_pattern):
         bench_stateful_hash("stringzilla.Hasher", tokens, lambda: sz.Hasher(), time_limit_seconds)
+
+    # Google CRC32C (Castagnoli) stateful
+    if name_matches("google_crc32c.Checksum", filter_pattern):
+        bench_stateful_hash("google_crc32c.Checksum", tokens, lambda: google_crc32c.Checksum(), time_limit_seconds)
 
 
 _main_epilog = """

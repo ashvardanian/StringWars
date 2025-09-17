@@ -13,6 +13,7 @@ The benchmarks compare the performance of different hash functions including:
 - aHash (both incremental and single-entry variants)
 - xxHash (xxh3) through the third-party `xxhash-rust` crate
 - gxhash (gxhash64)
+- CRC32 (IEEE) via `crc32fast`
 - Blake3 (the only cryptographic hash in the comparison, for reference)
 
 ## Usage Examples
@@ -39,16 +40,22 @@ For `gxhash`, ensure that your CPU supports the required AES and SSE2 instructio
 use std::env;
 use std::error::Error;
 use std::fs;
+use std::hash::{BuildHasher, Hasher};
 use std::hint::black_box;
+use std::io::Cursor;
 
 use criterion::{Criterion, Throughput};
 
-use ahash::{AHasher, RandomState};
+use ahash::RandomState;
 use blake3;
+use cityhash;
+use crc32fast;
 use gxhash;
-use std::hash::{BuildHasher, Hasher};
+use murmur3;
 use stringzilla::sz;
 use xxhash_rust::xxh3::xxh3_64;
+
+type AHashState = RandomState;
 
 fn log_stringzilla_metadata() {
     let v = sz::version();
@@ -77,9 +84,15 @@ pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
 /// Supported modes: "lines", "words", and "file".
 pub fn tokenize<'a>(haystack: &'a [u8]) -> Result<Vec<&'a [u8]>, Box<dyn Error>> {
     let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-    let tokens = match mode.as_str() {
-        "lines" => haystack.split(|&c| c == b'\n').collect(),
-        "words" => haystack.split(|&c| c == b'\n' || c == b' ').collect(),
+    let tokens: Vec<&[u8]> = match mode.as_str() {
+        "lines" => haystack
+            .split(|&c| c == b'\n')
+            .filter(|t| !t.is_empty())
+            .collect(),
+        "words" => haystack
+            .split(|&c| c == b'\n' || c == b' ')
+            .filter(|t| !t.is_empty())
+            .collect(),
         "file" => vec![haystack],
         other => {
             return Err(format!(
@@ -101,52 +114,54 @@ fn bench_stateless(
     let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
-    // Benchmark: StringZilla `bytesum`
-    group.bench_function("sz::bytesum", |b| {
+    // Benchmark: StringZilla `bytesum` reference
+    group.bench_function("stringzilla::bytesum", |b| {
         b.iter(|| {
             for token in tokens {
-                // Using black_box to prevent compiler optimizations.
-                let _hash = sz::bytesum(black_box(token));
+                let t = black_box(*token);
+                let _ = black_box(sz::bytesum(t));
             }
         })
     });
 
-    // Benchmark: StringZilla `hash`
-    group.bench_function("sz::hash", |b| {
+    // Benchmark: StringZilla
+    group.bench_function("stringzilla::hash", |b| {
         b.iter(|| {
             for token in tokens {
-                let _hash = sz::hash(black_box(token));
+                let t = black_box(*token);
+                let _ = black_box(sz::hash(t));
             }
         })
     });
 
-    // Benchmark: SipHash via `std::hash::BuildHasher`
-    group.bench_function("std::hash::BuildHasher", |b| {
+    // Benchmark: SipHash via `std::DefaultHasher`
+    group.bench_function("std::DefaultHasher::hash_one", |b| {
         let std_builder = std::collections::hash_map::RandomState::new();
         b.iter(|| {
             for token in tokens {
-                let mut hasher = std_builder.build_hasher();
-                hasher.write(token);
-                let _hash = black_box(hasher.finish());
+                let t = black_box(*token);
+                let _ = black_box(std_builder.hash_one(t));
             }
         })
     });
 
-    // Benchmark: aHash (`hash_one`)
+    // Benchmark: aHash
     group.bench_function("aHash::hash_one", |b| {
         let hash_builder = RandomState::with_seed(42);
         b.iter(|| {
             for token in tokens {
-                let _hash = black_box(hash_builder.hash_one(token));
+                let t = black_box(*token);
+                let _ = black_box(hash_builder.hash_one(t));
             }
         })
     });
 
-    // Benchmark: xxHash (`xxh3`)
+    // Benchmark: xxHash
     group.bench_function("xxh3::xxh3_64", |b| {
         b.iter(|| {
             for token in tokens {
-                let _hash = black_box(xxh3_64(token));
+                let t = black_box(*token);
+                let _ = black_box(xxh3_64(t));
             }
         })
     });
@@ -155,7 +170,39 @@ fn bench_stateless(
     group.bench_function("gxhash::gxhash64", |b| {
         b.iter(|| {
             for token in tokens {
-                let _hash = black_box(gxhash::gxhash64(token, 42));
+                let t = black_box(*token);
+                let _ = black_box(gxhash::gxhash64(t, 42));
+            }
+        })
+    });
+
+    // Benchmark: CRC32
+    group.bench_function("crc32fast::hash", |b| {
+        b.iter(|| {
+            for token in tokens {
+                let t = black_box(*token);
+                let _ = black_box(crc32fast::hash(t));
+            }
+        })
+    });
+
+    // Benchmark: MurmurHash3 (x64_128) via `murmur3` (stateless)
+    group.bench_function("murmur3::x64_128", |b| {
+        b.iter(|| {
+            for token in tokens {
+                let t = black_box(*token);
+                let mut cursor = Cursor::new(t);
+                let _ = black_box(murmur3::murmur3_x64_128(&mut cursor, 0).unwrap());
+            }
+        })
+    });
+
+    // Benchmark: CityHash64 via `cityhash` (stateless)
+    group.bench_function("cityhash::city_hash_64", |b| {
+        b.iter(|| {
+            for token in tokens {
+                let t = black_box(*token);
+                let _ = black_box(cityhash::city_hash_64(t));
             }
         })
     });
@@ -164,7 +211,8 @@ fn bench_stateless(
     group.bench_function("blake3", |b| {
         b.iter(|| {
             for token in tokens {
-                let _hash = black_box(blake3::hash(token));
+                let t = black_box(*token);
+                let _ = black_box(blake3::hash(t));
             }
         })
     });
@@ -179,19 +227,8 @@ fn bench_stateful(
     let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
-    // Benchmark: StringZilla `bytesum`
-    group.bench_function("sz::bytesum", |b| {
-        b.iter(|| {
-            let mut aggregate = 0u64;
-            for token in tokens {
-                aggregate += sz::bytesum(token);
-            }
-            black_box(aggregate);
-        })
-    });
-
     // Benchmark: StringZilla `hash`
-    group.bench_function("sz::Hasher", |b| {
+    group.bench_function("stringzilla::Hasher", |b| {
         b.iter(|| {
             let mut hasher = sz::Hasher::new(0);
             for token in tokens {
@@ -201,8 +238,8 @@ fn bench_stateful(
         })
     });
 
-    // Benchmark: SipHash via `std::hash::BuildHasher`
-    group.bench_function("std::hash::BuildHasher", |b| {
+    // Benchmark: SipHash via `std::DefaultHasher`
+    group.bench_function("std::DefaultHasher", |b| {
         let std_builder = std::collections::hash_map::RandomState::new();
         b.iter(|| {
             let mut aggregate = std_builder.build_hasher();
@@ -213,14 +250,26 @@ fn bench_stateful(
         })
     });
 
-    // Benchmark: aHash (`hash_one`)
+    // Benchmark: aHash
     group.bench_function("aHash::AHasher", |b| {
+        let state: AHashState = RandomState::with_seed(42);
         b.iter(|| {
-            let mut aggregate = AHasher::default();
+            let mut aggregate = state.build_hasher();
             for token in tokens {
                 aggregate.write(token);
             }
             black_box(aggregate.finish());
+        })
+    });
+
+    // Benchmark: CRC32
+    group.bench_function("crc32fast::Hasher", |b| {
+        b.iter(|| {
+            let mut hasher = crc32fast::Hasher::new();
+            for token in tokens {
+                hasher.update(token);
+            }
+            black_box(hasher.finalize());
         })
     });
 }

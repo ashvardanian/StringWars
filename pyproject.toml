@@ -41,7 +41,7 @@ similarities = [
 ]
 
 # Hash functions
-hash = ["stringzilla", "xxhash", "blake3"]
+hash = ["stringzilla", "xxhash", "blake3", "google-crc32c", "mmh3", "cityhash"]
 
 [tool.ruff]
 # Enforce 120-column lines across formatting and linting
