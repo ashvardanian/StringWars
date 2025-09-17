@@ -1,6 +1,6 @@
 [project]
 name = "stringwars"
-version = "1.0.1"
+version = "1.0.2"
 description = "Python benchmarking harness to complement StringWa.rs benches"
 readme = "README.md"
 requires-python = ">=3.10"
