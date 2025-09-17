@@ -5,12 +5,11 @@
 # ]
 # ///
 """
-Python substring, byteset, Aho–Corasick, and translate benches.
+Python substring, byteset, and Aho–Corasick benches.
 
 - Substring: str.find/rfind, sz.Str.find/rfind (per token)
 - Byteset: re.finditer, sz.Str.find_first_of
 - Aho–Corasick: per-token (build per pattern) and multi-token (one pass)
-- Translate: bytes.translate and sz.Str.translate (256-byte LUT)
 
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
@@ -21,7 +20,7 @@ Examples:
   python bench_find.py --dataset xlsum.csv --tokens words -k "str.find"
   STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_find.py
 
-Timing via time.monotonic_ns(); throughput in decimal GB/s. Filter with -k/--filter.
+Timing via time.monotonic_ns.; throughput in decimal GB/s. Filter with -k/--filter.
 """
 
 import argparse
@@ -124,18 +123,6 @@ def count_byteset(haystack: sz.Str, characters: str) -> int:
     return count
 
 
-def sz_translate(haystack: sz.Str, look_up_table: bytes) -> int:
-    # StringZilla translation using 256-byte LUT
-    result = haystack.translate(look_up_table)
-    return len(result)
-
-
-def bytes_translate(haystack_bytes: bytes, lut: bytes) -> int:
-    # Python bytes.translate with 256-byte LUT
-    result = haystack_bytes.translate(lut)
-    return len(result)
-
-
 _main_epilog = """
 Examples:
 
@@ -147,9 +134,6 @@ Examples:
 
   # Benchmark character set searches
   %(prog)s --dataset large.txt --tokens words -k "find_first_of"
-
-  # Test translation operations
-  %(prog)s --dataset text.txt --tokens lines -k "translate"
 """
 
 
@@ -211,27 +195,6 @@ def main():
         bench_op("re.finditer", pythonic_str, [re_chars], count_regex, args.time_limit)
     if name_matches("stringzilla.Str.find_first_of", filter_pattern):
         bench_op("stringzilla.Str.find_first_of", stringzilla_str, [sz_chars], count_byteset, args.time_limit)
-
-    print("\n=== Translation Benchmarks ===")
-    # Translate with byte-level LUT mappings
-    identity = bytes(range(256))
-    reverse = bytes(reversed(identity))
-    repeated = bytes(range(64)) * 4
-    hex_table = b"0123456789abcdef" * 16
-
-    py_bytes = pythonic_str.encode("utf-8", errors="ignore")
-    if name_matches("bytes.translate(reverse)", filter_pattern):
-        bench_op("bytes.translate(reverse)", py_bytes, [reverse], bytes_translate, args.time_limit)
-    if name_matches("bytes.translate(repeated)", filter_pattern):
-        bench_op("bytes.translate(repeated)", py_bytes, [repeated], bytes_translate, args.time_limit)
-    if name_matches("bytes.translate(hex)", filter_pattern):
-        bench_op("bytes.translate(hex)", py_bytes, [hex_table], bytes_translate, args.time_limit)
-    if name_matches("stringzilla.Str.translate(reverse)", filter_pattern):
-        bench_op("stringzilla.Str.translate(reverse)", stringzilla_str, [reverse], sz_translate, args.time_limit)
-    if name_matches("stringzilla.Str.translate(repeated)", filter_pattern):
-        bench_op("stringzilla.Str.translate(repeated)", stringzilla_str, [repeated], sz_translate, args.time_limit)
-    if name_matches("stringzilla.Str.translate(hex)", filter_pattern):
-        bench_op("stringzilla.Str.translate(hex)", stringzilla_str, [hex_table], sz_translate, args.time_limit)
 
     return 0
 

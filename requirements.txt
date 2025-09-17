@@ -9,6 +9,9 @@ pyahocorasick
 # For hashing:
 xxhash # https://github.com/ifduyue/python-xxhash, https://github.com/Cyan4973/xxHash 
 murmurhash # https://github.com/explosion/murmurhash, https://github.com/aappleby/smhasher
+google-crc32c # https://github.com/googleapis/python-crc32c 
+mmh3 # https://github.com/hajimes/mmh3
+cityhash # https://github.com/escherba/python-cityhash
 
 # For Levenshtein distances:
 rapidfuzz  # https://github.com/rapidfuzz/RapidFuzz
@@ -28,3 +31,7 @@ biopython # https://github.com/biopython/biopython
 pyarrow # https://github.com/apache/arrow
 pandas # https://github.com/pandas-dev/pandas
 polars # https://github.com/pola-rs/polars
+
+# For memory RNG benchmarks
+numpy # https://github.com/numpy/numpy
+pycryptodome # https://github.com/Legrandin/pycryptodome
