@@ -37,16 +37,16 @@ use std::fs;
 
 use criterion::{Criterion, Throughput};
 use fork_union::count_logical_cores;
+use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 
 use rapidfuzz::distance::levenshtein;
-use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 use stringzilla::szs::{
     error_costs_256x256_unary, AnyBytesTape, AnyCharsTape, DeviceScope, LevenshteinDistances,
     LevenshteinDistancesUtf8, NeedlemanWunschScores, SmithWatermanScores, UnifiedAlloc, UnifiedVec,
 };
 
-mod units_formatter;
-use units_formatter::CupsWallTime;
+mod utils;
+use utils::CupsWallTime;
 
 // Pull some metadata logging functionality
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;

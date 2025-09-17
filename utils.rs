@@ -1,8 +1,9 @@
 use criterion::measurement::{Measurement, ValueFormatter};
 use criterion::Throughput;
+use std::time::Instant;
+
 #[cfg(feature = "bench_fingerprints")]
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
 
 // Simple SI scaling helper
 fn scale_si(mut v: f64) -> (f64, &'static str) {
@@ -280,6 +281,7 @@ fn get_bytes_per_hash() -> f64 {
 // Comparisons/sec formatter: k/M/G cmp/s
 #[cfg(feature = "bench_sequence")]
 pub struct ComparisonsFormatter;
+
 #[cfg(feature = "bench_sequence")]
 impl ValueFormatter for ComparisonsFormatter {
     fn format_value(&self, value: f64) -> String {

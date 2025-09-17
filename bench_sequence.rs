@@ -41,8 +41,8 @@ use arrow::compute::{lexsort_to_indices, SortColumn, SortOptions};
 use rayon::prelude::*;
 use stringzilla::sz;
 
-mod units_formatter;
-use units_formatter::ComparisonsWallTime;
+mod utils;
+use utils::ComparisonsWallTime;
 
 fn log_stringzilla_metadata() {
     let v = sz::version();

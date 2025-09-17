@@ -41,15 +41,15 @@ use std::hash::{Hash, Hasher};
 
 use criterion::{Criterion, Throughput};
 use fork_union::count_logical_cores;
+use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 
 use probabilistic_collections::similarity::{ByteGrams, MinHash};
-use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
 use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version};
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
-mod units_formatter;
-use units_formatter::{set_fingerprints_bytes_per_hash, HashesWallTime};
+mod utils;
+use utils::{set_fingerprints_bytes_per_hash, HashesWallTime};
 
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
