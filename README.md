@@ -122,8 +122,8 @@ Current numbers should look like this:
 | `aho_corasick::find_iter` 🦀 |     0.41 GiB/s |     0.50 GiB/s |
 | `sz::find_byteset` 🦀        | __1.61 GiB/s__ | __8.17 GiB/s__ |
 |                             |                |                |
-| `re.finditer` 🐍             |     0.04 GiB/s |     0.04 GiB/s |
-| `sz.Str.find_first_of` 🐍    | __0.09 GiB/s__ | __0.10 GiB/s__ |
+| `re.finditer` 🐍             |     0.04 GiB/s |     0.19 GiB/s |
+| `sz.Str.find_first_of` 🐍    | __0.11 GiB/s__ | __8.79 GiB/s__ |
 
 ## Sequence Operations
 

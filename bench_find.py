@@ -202,11 +202,16 @@ def main():
         bench_op("pyahocorasick.iter", pythonic_str, tokens[::-1], count_aho, args.time_limit)
 
     print("\n=== Character Set Search ===")
-    cc_regex = re.compile(r"[\t\n\r ]")  # whitespace: space, tab, LF, CR
+    if args.tokens == "lines":
+        re_chars = re.compile(r"[\n\r]")  # newlines: LF, CR
+        sz_chars = "\n\r"
+    else:
+        re_chars = re.compile(r"[\t\n\r ]")  # whitespace: space, tab, LF, CR
+        sz_chars = " \t\n\r"
     if name_matches("re.finditer", filter_pattern):
-        bench_op("re.finditer", pythonic_str, [cc_regex], count_regex, args.time_limit)
+        bench_op("re.finditer", pythonic_str, [re_chars], count_regex, args.time_limit)
     if name_matches("sz.Str.find_first_of", filter_pattern):
-        bench_op("sz.Str.find_first_of", stringzilla_str, [" \t\n\r"], count_byteset, args.time_limit)
+        bench_op("sz.Str.find_first_of", stringzilla_str, [sz_chars], count_byteset, args.time_limit)
 
     print("\n=== Translation Benchmarks ===")
     # Translate with byte-level LUT mappings
