@@ -91,7 +91,7 @@ Examples:
   %(prog)s --dataset data.txt --tokens lines -k "list.sort"
 
   # Compare StringZilla vs other libraries
-  %(prog)s --dataset large.txt --tokens words -k "sz.Strs|pandas|polars"
+  %(prog)s --dataset large.txt --tokens words -k "stringzilla.Strs|pandas|polars"
 
   # GPU-accelerated sorting (if cuDF available)
   %(prog)s --dataset text.txt --tokens lines -k "cudf"
@@ -139,9 +139,9 @@ def main():
         bench_sort_operation("list.sort", lambda: py_list.sort(), len(tokens))
 
     # StringZilla
-    if name_matches("sz.Strs.sorted", filter_pattern):
+    if name_matches("stringzilla.Strs.sorted", filter_pattern):
         sz_strs = sz.Strs(tokens)
-        bench_sort_operation("sz.Strs.sorted", lambda: sz_strs.sorted(), len(tokens))
+        bench_sort_operation("stringzilla.Strs.sorted", lambda: sz_strs.sorted(), len(tokens))
 
     # Pandas
     if name_matches("pandas.Series.sort_values", filter_pattern):

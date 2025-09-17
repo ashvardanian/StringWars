@@ -213,8 +213,11 @@ fn bench_similarities(c: &mut Criterion<CupsWallTime>) {
         .and_then(|v| v.parse::<usize>().ok());
 
     let units: Vec<&str> = match mode.as_str() {
-        "words" => content.split_whitespace().collect(),
-        "lines" => content.lines().collect(),
+        "words" => content
+            .split_whitespace()
+            .filter(|s| !s.is_empty())
+            .collect(),
+        "lines" => content.lines().filter(|s| !s.is_empty()).collect(),
         other => panic!(
             "Unknown STRINGWARS_TOKENS: {}. Use 'lines' or 'words'.",
             other
@@ -420,7 +423,7 @@ fn perform_uniform_benchmarks(
 
     // StringZilla Binary Levenshtein Distance (uniform costs: 0,1,1,1)
     g.throughput(Throughput::Elements(per_batch_bytes));
-    g.bench_function("szs::LevenshteinDistances(1xCPU)", |b| {
+    g.bench_function("stringzillas::LevenshteinDistances(1xCPU)", |b| {
         let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
         let mut start_idx = 0;
@@ -451,7 +454,7 @@ fn perform_uniform_benchmarks(
 
     g.throughput(Throughput::Elements(per_batch_bytes));
     g.bench_function(
-        &format!("szs::LevenshteinDistances({}xCPU)", num_cores),
+        &format!("stringzillas::LevenshteinDistances({}xCPU)", num_cores),
         |b| {
             let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
@@ -486,7 +489,7 @@ fn perform_uniform_benchmarks(
         g.throughput(Throughput::Elements(per_batch_bytes));
         let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
-        g.bench_function("szs::LevenshteinDistances(1xGPU)", |b| {
+        g.bench_function("stringzillas::LevenshteinDistances(1xGPU)", |b| {
             let mut start_idx = 0;
             b.iter(|| {
                 let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
@@ -513,7 +516,7 @@ fn perform_uniform_benchmarks(
 
     // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
     g.throughput(Throughput::Elements(per_batch_utf8));
-    g.bench_function("szs::LevenshteinDistancesUtf8(1xCPU)", |b| {
+    g.bench_function("stringzillas::LevenshteinDistancesUtf8(1xCPU)", |b| {
         let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
         let mut start_idx = 0;
@@ -544,7 +547,7 @@ fn perform_uniform_benchmarks(
 
     g.throughput(Throughput::Elements(per_batch_utf8));
     g.bench_function(
-        &format!("szs::LevenshteinDistancesUtf8({}xCPU)", num_cores),
+        &format!("stringzillas::LevenshteinDistancesUtf8({}xCPU)", num_cores),
         |b| {
             let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
@@ -613,7 +616,7 @@ fn perform_linear_benchmarks(
 
     // Needleman-Wunsch (Global alignment)
     g.throughput(Throughput::Elements(per_batch));
-    g.bench_function("szs::NeedlemanWunschScores(1xCPU)", |b| {
+    g.bench_function("stringzillas::NeedlemanWunschScores(1xCPU)", |b| {
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
         let mut start_idx = 0;
@@ -641,7 +644,7 @@ fn perform_linear_benchmarks(
 
     g.throughput(Throughput::Elements(per_batch));
     g.bench_function(
-        &format!("szs::NeedlemanWunschScores({}xCPU)", num_cores),
+        &format!("stringzillas::NeedlemanWunschScores({}xCPU)", num_cores),
         |b| {
             let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
@@ -676,7 +679,7 @@ fn perform_linear_benchmarks(
         g.throughput(Throughput::Elements(per_batch));
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
-        g.bench_function("szs::NeedlemanWunschScores(1xGPU)", |b| {
+        g.bench_function("stringzillas::NeedlemanWunschScores(1xGPU)", |b| {
             let mut start_idx = 0;
             b.iter(|| {
                 let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
@@ -703,7 +706,7 @@ fn perform_linear_benchmarks(
 
     // Smith-Waterman (Local alignment)
     g.throughput(Throughput::Elements(per_batch));
-    g.bench_function("szs::SmithWatermanScores(1xCPU)", |b| {
+    g.bench_function("stringzillas::SmithWatermanScores(1xCPU)", |b| {
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
         let mut start_idx = 0;
@@ -734,7 +737,7 @@ fn perform_linear_benchmarks(
 
     g.throughput(Throughput::Elements(per_batch));
     g.bench_function(
-        &format!("szs::SmithWatermanScores({}xCPU)", num_cores),
+        &format!("stringzillas::SmithWatermanScores({}xCPU)", num_cores),
         |b| {
             let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
@@ -769,7 +772,7 @@ fn perform_linear_benchmarks(
         g.throughput(Throughput::Elements(per_batch));
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
-        g.bench_function("szs::SmithWatermanScores(1xGPU)", |b| {
+        g.bench_function("stringzillas::SmithWatermanScores(1xGPU)", |b| {
             let mut start_idx = 0;
             b.iter(|| {
                 let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
@@ -835,7 +838,7 @@ fn perform_affine_benchmarks(
 
     // Needleman-Wunsch (Global alignment)
     g.throughput(Throughput::Elements(per_batch));
-    g.bench_function("szs::NeedlemanWunschScores(1xCPU)", |b| {
+    g.bench_function("stringzillas::NeedlemanWunschScores(1xCPU)", |b| {
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
         let mut start_idx = 0;
@@ -863,7 +866,7 @@ fn perform_affine_benchmarks(
 
     g.throughput(Throughput::Elements(per_batch));
     g.bench_function(
-        &format!("szs::NeedlemanWunschScores({}xCPU)", num_cores),
+        &format!("stringzillas::NeedlemanWunschScores({}xCPU)", num_cores),
         |b| {
             let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
@@ -898,7 +901,7 @@ fn perform_affine_benchmarks(
         g.throughput(Throughput::Elements(per_batch));
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
-        g.bench_function("szs::NeedlemanWunschScores(1xGPU)", |b| {
+        g.bench_function("stringzillas::NeedlemanWunschScores(1xGPU)", |b| {
             let mut start_idx = 0;
             b.iter(|| {
                 let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
@@ -925,7 +928,7 @@ fn perform_affine_benchmarks(
 
     // Smith-Waterman (Local alignment)
     g.throughput(Throughput::Elements(per_batch));
-    g.bench_function("szs::SmithWatermanScores(1xCPU)", |b| {
+    g.bench_function("stringzillas::SmithWatermanScores(1xCPU)", |b| {
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
         let mut start_idx = 0;
@@ -956,7 +959,7 @@ fn perform_affine_benchmarks(
 
     g.throughput(Throughput::Elements(per_batch));
     g.bench_function(
-        &format!("szs::SmithWatermanScores({}xCPU)", num_cores),
+        &format!("stringzillas::SmithWatermanScores({}xCPU)", num_cores),
         |b| {
             let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
@@ -991,7 +994,7 @@ fn perform_affine_benchmarks(
         g.throughput(Throughput::Elements(per_batch));
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
-        g.bench_function("szs::SmithWatermanScores(1xGPU)", |b| {
+        g.bench_function("stringzillas::SmithWatermanScores(1xGPU)", |b| {
             let mut start_idx = 0;
             b.iter(|| {
                 let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(

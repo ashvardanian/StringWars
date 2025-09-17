@@ -67,9 +67,14 @@ fn load_dataset() -> Vec<String> {
 
     let content = fs::read_to_string(&dataset_path).expect("Could not read dataset");
     let data: Vec<String> = match mode.as_str() {
-        "lines" => content.lines().map(|line| line.to_string()).collect(),
+        "lines" => content
+            .lines()
+            .filter(|s| !s.is_empty())
+            .map(|line| line.to_string())
+            .collect(),
         "words" => content
             .split_whitespace()
+            .filter(|s| !s.is_empty())
             .map(|word| word.to_string())
             .collect(),
         other => panic!(
@@ -94,7 +99,7 @@ fn bench_argsort(
     group.throughput(criterion::Throughput::Elements(throughput as u64));
 
     // Benchmark: StringZilla's argsort
-    group.bench_function("sz::argsort_permutation", |b| {
+    group.bench_function("stringzilla::argsort_permutation", |b| {
         b.iter(|| {
             let mut indices: Vec<usize> = (0..unsorted.len()).collect();
             sz::argsort_permutation(&unsorted, &mut indices).expect("StringZilla argsort failed");

@@ -104,7 +104,7 @@ fn bench_substring_forward(
 
     // Benchmark for StringZilla forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("sz::find", |b| {
+    g.bench_function("stringzilla::find", |b| {
         b.iter(|| {
             let token = black_box(*tokens.next().unwrap());
             let mut pos: usize = 0;
@@ -160,7 +160,7 @@ fn bench_substring_backward(
 
     // Benchmark for StringZilla backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("sz::rfind", |b| {
+    g.bench_function("stringzilla::rfind", |b| {
         b.iter(|| {
             let token = black_box(*tokens.next().unwrap());
             let mut pos: Option<usize> = Some(haystack.len());
@@ -235,7 +235,7 @@ fn bench_byteset_forward(
     let sz_tabs = sz::Byteset::from(BYTES_TABS);
     let sz_html = sz::Byteset::from(BYTES_HTML);
     let sz_digits = sz::Byteset::from(BYTES_DIGITS);
-    g.bench_function("sz::find_byteset", |b| {
+    g.bench_function("stringzilla::find_byteset", |b| {
         b.iter(|| {
             for token in needles.iter() {
                 let mut pos: usize = 0;

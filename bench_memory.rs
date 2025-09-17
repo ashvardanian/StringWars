@@ -68,8 +68,14 @@ pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
 pub fn tokenize<'a>(haystack: &'a mut [u8]) -> Result<Vec<&'a mut [u8]>, Box<dyn Error>> {
     let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
     let tokens = match mode.as_str() {
-        "lines" => haystack.split_mut(|&c| c == b'\n').collect(),
-        "words" => haystack.split_mut(|&c| c == b'\n' || c == b' ').collect(),
+        "lines" => haystack
+            .split_mut(|&c| c == b'\n')
+            .filter(|t| !t.is_empty())
+            .collect(),
+        "words" => haystack
+            .split_mut(|&c| c == b'\n' || c == b' ')
+            .filter(|t| !t.is_empty())
+            .collect(),
         "file" => vec![haystack],
         other => {
             return Err(format!(
@@ -100,7 +106,7 @@ fn bench_lookup_table(
     }
 
     // Benchmark using StringZilla's `lookup_inplace`.
-    g.bench_function("sz::lookup_inplace", |b| {
+    g.bench_function("stringzilla::lookup_inplace", |b| {
         b.iter(|| {
             for token in tokens.iter_mut() {
                 sz::lookup_inplace(&mut *token, lookup_invert_case);
@@ -131,7 +137,7 @@ fn bench_generate_random(
     g.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark for StringZilla AES-based PRNG
-    g.bench_function("sz::fill_random", |b| {
+    g.bench_function("stringzilla::fill_random", |b| {
         b.iter(|| {
             for token in tokens.iter_mut() {
                 sz::fill_random(&mut *token, 0)

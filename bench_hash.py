@@ -4,6 +4,8 @@
 #   "xxhash",
 #   "blake3",
 #   "google-crc32c",
+#   "mmh3",
+#   "cityhash",
 # ]
 # ///
 """

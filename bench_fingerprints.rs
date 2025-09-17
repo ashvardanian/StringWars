@@ -188,7 +188,7 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
         .unwrap_or(256);
 
     // Tokenize into documents according to mode (zero-copy slices of `content`).
-    let units: Vec<&str> = content.lines().collect();
+    let units: Vec<&str> = content.lines().filter(|s| !s.is_empty()).collect();
 
     if units.is_empty() {
         panic!("Dataset must contain at least one token for fingerprinting.");
@@ -342,7 +342,7 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
 
     // StringZilla: 1x CPU
     g.throughput(Throughput::Elements(per_batch_hash_ops));
-    g.bench_function("szs::Fingerprints(1xCPU)", |b| {
+    g.bench_function("stringzillas::Fingerprints(1xCPU)", |b| {
         start_idx = 0;
         b.iter(|| {
             let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
@@ -375,53 +375,56 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
 
     // StringZilla: Nx CPU
     g.throughput(Throughput::Elements(per_batch_hash_ops));
-    g.bench_function(&format!("szs::Fingerprints({}xCPU)", num_cores), |b| {
-        start_idx = 0;
-        b.iter(|| {
-            let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
-                &bytes_view,
-                &chars_view,
-                &mut start_idx,
-                batch_size,
-                tokens_count,
-            );
+    g.bench_function(
+        &format!("stringzillas::Fingerprints({}xCPU)", num_cores),
+        |b| {
+            start_idx = 0;
+            b.iter(|| {
+                let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
+                    &bytes_view,
+                    &chars_view,
+                    &mut start_idx,
+                    batch_size,
+                    tokens_count,
+                );
 
-            // Use compute_into for zero-allocation processing
-            sz_parallel
-                .compute_into(
-                    &cpu_parallel,
-                    AnyBytesTape::View64(batch_bytes_view),
-                    ndim,
-                    &mut min_hashes[..actual * ndim],
-                    &mut min_counts[..actual * ndim],
-                )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to compute StringZilla fingerprints on {} CPU cores: {}",
-                        num_cores, e
+                // Use compute_into for zero-allocation processing
+                sz_parallel
+                    .compute_into(
+                        &cpu_parallel,
+                        AnyBytesTape::View64(batch_bytes_view),
+                        ndim,
+                        &mut min_hashes[..actual * ndim],
+                        &mut min_counts[..actual * ndim],
                     )
-                });
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Failed to compute StringZilla fingerprints on {} CPU cores: {}",
+                            num_cores, e
+                        )
+                    });
 
-            // Fill quality matrix - direct copy for StringZilla (u32 values)
-            for document_idx in 0..actual {
-                if sz_document_index < total_documents {
-                    let start = document_idx * ndim;
-                    let end = start + ndim;
-                    for (dim_idx, &hash_value) in min_hashes[start..end].iter().enumerate() {
-                        sz_matrix[sz_document_index][dim_idx] = hash_value;
+                // Fill quality matrix - direct copy for StringZilla (u32 values)
+                for document_idx in 0..actual {
+                    if sz_document_index < total_documents {
+                        let start = document_idx * ndim;
+                        let end = start + ndim;
+                        for (dim_idx, &hash_value) in min_hashes[start..end].iter().enumerate() {
+                            sz_matrix[sz_document_index][dim_idx] = hash_value;
+                        }
+                        sz_document_index += 1;
                     }
-                    sz_document_index += 1;
                 }
-            }
 
-            std::hint::black_box((&min_hashes[..actual * ndim], &min_counts[..actual * ndim]));
-        })
-    });
+                std::hint::black_box((&min_hashes[..actual * ndim], &min_counts[..actual * ndim]));
+            })
+        },
+    );
 
     // StringZilla: 1x GPU (if available)
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sz_gpu.as_ref()) {
         g.throughput(Throughput::Elements(per_batch_hash_ops));
-        g.bench_function("szs::Fingerprints(1xGPU)", |b| {
+        g.bench_function("stringzillas::Fingerprints(1xGPU)", |b| {
             start_idx = 0;
             b.iter(|| {
                 let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(

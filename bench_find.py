@@ -27,8 +27,7 @@ Timing via time.monotonic_ns(); throughput in decimal GB/s. Filter with -k/--fil
 import argparse
 import re
 import sys
-from typing import List, Optional, Generator
-import importlib.metadata
+from importlib.metadata import version as pkg_version
 
 
 import stringzilla as sz
@@ -41,7 +40,7 @@ def log_system_info():
     """Log Python version and find library versions."""
     print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
     print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
-    print(f"- PyAhoCorasick: {importlib.metadata.version('pyahocorasick')}")
+    print(f"- PyAhoCorasick: {pkg_version('pyahocorasick')}")
     print()  # Add blank line
 
 
@@ -192,12 +191,12 @@ def main():
     print("\n=== Substring Search Benchmarks ===")
     if name_matches("str.find", filter_pattern):
         bench_op("str.find", pythonic_str, tokens[::-1], count_find, args.time_limit)
-    if name_matches("sz.Str.find", filter_pattern):
-        bench_op("sz.Str.find", stringzilla_str, tokens[::-1], count_find, args.time_limit)
+    if name_matches("stringzilla.Str.find", filter_pattern):
+        bench_op("stringzilla.Str.find", stringzilla_str, tokens[::-1], count_find, args.time_limit)
     if name_matches("str.rfind", filter_pattern):
         bench_op("str.rfind", pythonic_str, tokens, count_rfind, args.time_limit)
-    if name_matches("sz.Str.rfind", filter_pattern):
-        bench_op("sz.Str.rfind", stringzilla_str, tokens, count_rfind, args.time_limit)
+    if name_matches("stringzilla.Str.rfind", filter_pattern):
+        bench_op("stringzilla.Str.rfind", stringzilla_str, tokens, count_rfind, args.time_limit)
     if name_matches("pyahocorasick.iter", filter_pattern):
         bench_op("pyahocorasick.iter", pythonic_str, tokens[::-1], count_aho, args.time_limit)
 
@@ -210,8 +209,8 @@ def main():
         sz_chars = " \t\n\r"
     if name_matches("re.finditer", filter_pattern):
         bench_op("re.finditer", pythonic_str, [re_chars], count_regex, args.time_limit)
-    if name_matches("sz.Str.find_first_of", filter_pattern):
-        bench_op("sz.Str.find_first_of", stringzilla_str, [sz_chars], count_byteset, args.time_limit)
+    if name_matches("stringzilla.Str.find_first_of", filter_pattern):
+        bench_op("stringzilla.Str.find_first_of", stringzilla_str, [sz_chars], count_byteset, args.time_limit)
 
     print("\n=== Translation Benchmarks ===")
     # Translate with byte-level LUT mappings
@@ -227,12 +226,12 @@ def main():
         bench_op("bytes.translate(repeated)", py_bytes, [repeated], bytes_translate, args.time_limit)
     if name_matches("bytes.translate(hex)", filter_pattern):
         bench_op("bytes.translate(hex)", py_bytes, [hex_table], bytes_translate, args.time_limit)
-    if name_matches("sz.Str.translate(reverse)", filter_pattern):
-        bench_op("sz.Str.translate(reverse)", stringzilla_str, [reverse], sz_translate, args.time_limit)
-    if name_matches("sz.Str.translate(repeated)", filter_pattern):
-        bench_op("sz.Str.translate(repeated)", stringzilla_str, [repeated], sz_translate, args.time_limit)
-    if name_matches("sz.Str.translate(hex)", filter_pattern):
-        bench_op("sz.Str.translate(hex)", stringzilla_str, [hex_table], sz_translate, args.time_limit)
+    if name_matches("stringzilla.Str.translate(reverse)", filter_pattern):
+        bench_op("stringzilla.Str.translate(reverse)", stringzilla_str, [reverse], sz_translate, args.time_limit)
+    if name_matches("stringzilla.Str.translate(repeated)", filter_pattern):
+        bench_op("stringzilla.Str.translate(repeated)", stringzilla_str, [repeated], sz_translate, args.time_limit)
+    if name_matches("stringzilla.Str.translate(hex)", filter_pattern):
+        bench_op("stringzilla.Str.translate(hex)", stringzilla_str, [hex_table], sz_translate, args.time_limit)
 
     return 0
 

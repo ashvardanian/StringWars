@@ -325,7 +325,7 @@ def benchmark_stringzillas_edit_distances(
     batch_size: int = 1,
     filter_pattern: Optional[re.Pattern] = None,
     szs_class: Any = szs.LevenshteinDistances,
-    szs_name: str = "szs.LevenshteinDistances",
+    szs_name: str = "stringzillas.LevenshteinDistances",
     is_utf8: bool = False,
 ):
     """Benchmark various edit distance implementations."""
@@ -485,7 +485,7 @@ def benchmark_stringzillas_similarity_scores(
     batch_size: int = 2048,
     filter_pattern: Optional[re.Pattern] = None,
     szs_class: Any = szs.NeedlemanWunschScores,
-    szs_name: str = "szs.NeedlemanWunschScores",
+    szs_name: str = "stringzillas.NeedlemanWunschScores",
     gap_open: int = -10,
     gap_extend: int = -2,
 ):
@@ -753,7 +753,7 @@ def main():
         batch_size=args.batch_size,
         filter_pattern=filter_pattern,
         szs_class=szs.LevenshteinDistances,
-        szs_name="szs.LevenshteinDistances",
+        szs_name="stringzillas.LevenshteinDistances",
         is_utf8=False,
     )
     benchmark_stringzillas_edit_distances(
@@ -762,7 +762,7 @@ def main():
         batch_size=args.batch_size,
         filter_pattern=filter_pattern,
         szs_class=szs.LevenshteinDistancesUTF8,
-        szs_name="szs.LevenshteinDistancesUTF8",
+        szs_name="stringzillas.LevenshteinDistancesUTF8",
         is_utf8=True,
     )
 
@@ -782,7 +782,7 @@ def main():
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
             szs_class=szs.NeedlemanWunschScores,
-            szs_name="szs.NeedlemanWunschScores",
+            szs_name="stringzillas.NeedlemanWunschScores",
             gap_open=-2,
             gap_extend=-2,
         )
@@ -792,7 +792,7 @@ def main():
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
             szs_class=szs.SmithWatermanScores,
-            szs_name="szs.SmithWatermanScores",
+            szs_name="stringzillas.SmithWatermanScores",
             gap_open=-2,
             gap_extend=-2,
         )
@@ -812,7 +812,7 @@ def main():
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
             szs_class=szs.NeedlemanWunschScores,
-            szs_name="szs.NeedlemanWunschScores",
+            szs_name="stringzillas.NeedlemanWunschScores",
             gap_open=-10,
             gap_extend=-2,
         )
@@ -822,7 +822,7 @@ def main():
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
             szs_class=szs.SmithWatermanScores,
-            szs_name="szs.SmithWatermanScores",
+            szs_name="stringzillas.SmithWatermanScores",
             gap_open=-10,
             gap_extend=-2,
         )
