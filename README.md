@@ -28,7 +28,7 @@ Notably, I also favor modern hardware with support for a wider range SIMD instru
 ## Hash
 
 Many great hashing libraries exist in Rust, C, and C++.
-Typical top choices are `aHash`, `xxHash`, `blake3`, `gxhash`, `CityHash`, `MurmurHash`, or the native `std::hash`.
+Typical top choices are `aHash`, `xxHash`, `blake3`, `gxhash`, `CityHash`, `MurmurHash`, `crc32fast`, or the native `std::hash`.
 Many of them have similar pitfalls:
 
 - They are not always documented to have a certain reproducible output and are recommended for use only for local in-memory construction of hash tables, not for serialization or network communication.
@@ -40,7 +40,7 @@ Many of them have similar pitfalls:
 StringZilla addresses those issues and seems to provide competitive performance.
 On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
 
-| Library               | Bits  | Ports ¹ |  Shorter Words |    Longer Lines |
+| Library               | Bits  | Ports ¹ |    Short Words |      Long Lines |
 | --------------------- | ----- | ------- | -------------: | --------------: |
 | Rust 🦀                |       |         |                |                 |
 | `std::hash`           | 64    | ❌       |     0.43 GiB/s |      3.74 GiB/s |
@@ -65,7 +65,7 @@ On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can 
 In larger systems, however, we often need the ability to incrementally hash the data.
 This is especially important in distributed systems, where the data is too large to fit into memory at once.
 
-| Library                    | Bits | Ports ¹ |  Shorter Words |   Longer Lines |
+| Library                    | Bits | Ports ¹ |    Short Words |     Long Lines |
 | -------------------------- | ---- | ------- | -------------: | -------------: |
 | Rust 🦀                     |      |         |                |                |
 | `std::hash::DefaultHasher` | 64   | ❌       |     0.51 GiB/s |     3.92 GiB/s |
@@ -80,15 +80,15 @@ This is especially important in distributed systems, where the data is too large
 
 For reference, one may want to put those numbers next to check-sum calculation speeds on one end of complexity and cryptographic hashing speeds on the other end.
 
-| Library                | Bits | Ports ¹ | Shorter Words | Longer Lines |
-| ---------------------- | ---- | ------- | ------------: | -----------: |
-| Rust 🦀                 |      |         |               |              |
-| `stringzilla::bytesum` | 64   | ✅       |    2.16 GiB/s |  11.65 GiB/s |
-| `blake3::hash`         | 256  | ✅       |    0.10 GiB/s |   1.97 GiB/s |
-|                        |      |         |               |              |
-| Python 🐍               |      |         |               |              |
-| `stringzilla.bytesum`  | 64   | ✅       |    0.16 GiB/s |   8.62 GiB/s |
-| `blake3.digest`        | 256  | ✅       |    0.02 GiB/s |   1.82 GiB/s |
+| Library                | Bits | Ports ¹ | Short Words |  Long Lines |
+| ---------------------- | ---- | ------- | ----------: | ----------: |
+| Rust 🦀                 |      |         |             |             |
+| `stringzilla::bytesum` | 64   | ✅       |  2.16 GiB/s | 11.65 GiB/s |
+| `blake3::hash`         | 256  | ✅       |  0.10 GiB/s |  1.97 GiB/s |
+|                        |      |         |             |             |
+| Python 🐍               |      |         |             |             |
+| `stringzilla.bytesum`  | 64   | ✅       |  0.16 GiB/s |  8.62 GiB/s |
+| `blake3.digest`        | 256  | ✅       |  0.02 GiB/s |  1.82 GiB/s |
 
 
 ## Substring Search
@@ -98,7 +98,7 @@ Most of the time, programmers don't think about replacing the `str::find` method
 In many languages it's offloaded to the C standard library [`memmem`](https://man7.org/linux/man-pages/man3/memmem.3.html) or [`strstr`](https://en.cppreference.com/w/c/string/byte/strstr) for `NULL`-terminated strings.
 The C standard library is, however, also implemented by humans, and a better solution can be created.
 
-| Library             |   Shorter Words |    Longer Lines |
+| Library             |     Short Words |      Long Lines |
 | ------------------- | --------------: | --------------: |
 | Rust 🦀              |                 |                 |
 | `std::str::find`    |      9.48 GiB/s |     10.88 GiB/s |
@@ -114,7 +114,7 @@ The C standard library is, however, also implemented by humans, and a better sol
 Interestingly, the reverse order search is almost never implemented in SIMD, assuming fewer people ever need it.
 Still, those are provided by StringZilla mostly for parsing tasks and feature parity.
 
-| Library              |  Shorter Words |    Longer Lines |
+| Library              |    Short Words |      Long Lines |
 | -------------------- | -------------: | --------------: |
 | Rust 🦀               |                |                 |
 | `std::str::rfind`    |     2.96 GiB/s |      3.65 GiB/s |
@@ -138,7 +138,7 @@ It's common in such cases, to pre-construct some library-specific filter-object 
 Once that object is constructed, all of it's inclusions in each token (word or line) are counted.
 Current numbers should look like this:
 
-| Library                         |  Shorter Words |   Longer Lines |
+| Library                         |    Short Words |     Long Lines |
 | ------------------------------- | -------------: | -------------: |
 | Rust 🦀                          |                |                |
 | `bstr::iter`                    |     0.26 GiB/s |     0.25 GiB/s |
@@ -161,7 +161,7 @@ Those operations mostly are implemented using conventional algorithms:
 Assuming the comparisons can be accelerated with SIMD and so can be the hash functions, StringZilla could already provide a performance boost in such applications, but starting with v4 it also provides specialized algorithms for sorting and intersections.
 Those are directly compatible with arbitrary string-comparable collection types with a support of an indexed access to the elements.
 
-| Library                                     |                Shorter Words |               Longer Lines |
+| Library                                     |                  Short Words |                 Long Lines |
 | ------------------------------------------- | ---------------------------: | -------------------------: |
 | Rust 🦀                                      |                              |                            |
 | `std::sort_unstable_by_key`                 |        54.35 M comparisons/s |      57.70 M comparisons/s |
@@ -183,26 +183,32 @@ Some of the most common operations in data processing are random generation and 
 That's true not only for strings but for any data type, and StringZilla has been extensively used in Image Processing and Bioinformatics for those purposes.
 Generating random byte-streams:
 
-| Library                        | ≅ 100 bytes lines | ≅ 1000 bytes lines |
-| ------------------------------ | ----------------: | -----------------: |
-| Rust 🦀                         |                   |                    |
-| `getrandom::fill`              |        0.18 GiB/s |         0.40 GiB/s |
-| `rand_chacha::ChaCha20Rng`     |        0.62 GiB/s |         1.72 GiB/s |
-| `rand_xoshiro::Xoshiro128Plus` |        2.66 GiB/s |         3.72 GiB/s |
-| `zeroize::zeroize`             |        4.62 GiB/s |         4.35 GiB/s |
-| `stringzilla::fill_random`     |   __17.30 GiB/s__ |    __10.57 GiB/s__ |
+| Library                        |    Short Words |      Long Lines |
+| ------------------------------ | -------------: | --------------: |
+| Rust 🦀                         |                |                 |
+| `getrandom::fill`              |     0.18 GiB/s |      0.45 GiB/s |
+| `rand_chacha::ChaCha20Rng`     |     0.62 GiB/s |      1.85 GiB/s |
+| `rand_xoshiro::Xoshiro128Plus` |     0.83 GiB/s |      3.85 GiB/s |
+| `zeroize::zeroize`             |     0.66 GiB/s |      4.73 GiB/s |
+| `stringzilla::fill_random`     | __2.47 GiB/s__ | __10.57 GiB/s__ |
+|                                |                |                 |
+| Python 🐍                       |                |                 |
+| `numpy.PCG64`                  |     0.01 GiB/s |      1.28 GiB/s |
+| `numpy.Philox`                 |     0.01 GiB/s |      1.59 GiB/s |
+| `pycryptodome.AES-CTR`         |     0.01 GiB/s |     13.16 GiB/s |
+| `stringzilla.random`           | __0.11 GiB/s__ | __20.37 GiB/s__ |
 
 Performing in-place lookups in a precomputed table of 256 bytes:
 
-| Library                       | ≅ 100 bytes lines | ≅ 1000 bytes lines |
-| ----------------------------- | ----------------: | -----------------: |
-| Rust 🦀                        |                   |                    |
-| serial code                   |        1.64 GiB/s |         1.61 GiB/s |
-| `stringzilla::lookup_inplace` |    __2.28 GiB/s__ |    __13.39 GiB/s__ |
-|                               |                   |                    |
-| Python 🐍                      |                   |                    |
-| `bytes.translate`             |        1.18 GiB/s |         1.21 GiB/s |
-| `stringzilla.Str.translate`   |    __2.15 GiB/s__ |     __2.15 GiB/s__ |
+| Library                       |    Short Words |     Long Lines |
+| ----------------------------- | -------------: | -------------: |
+| Rust 🦀                        |                |                |
+| serial code                   | __0.61 GiB/s__ |     1.49 GiB/s |
+| `stringzilla::lookup_inplace` |     0.54 GiB/s | __9.90 GiB/s__ |
+|                               |                |                |
+| Python 🐍                      |                |                |
+| `bytes.translate`             |     1.18 GiB/s |     1.10 GiB/s |
+| `stringzilla.Str.translate`   | __2.15 GiB/s__ | __2.26 GiB/s__ |
 
 
 ## Similarities Scoring
@@ -355,6 +361,7 @@ To run individual benchmarks, you can call:
 ```sh
 uv run --no-project python bench_hash.py --help
 uv run --no-project python bench_find.py --help
+uv run --no-project python bench_memory.py --help
 uv run --no-project python bench_sequence.py --help
 uv run --no-project python bench_similarities.py --help
 uv run --no-project python bench_fingerprints.py --help 🔜
