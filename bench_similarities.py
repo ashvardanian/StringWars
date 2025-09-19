@@ -37,9 +37,8 @@ Examples:
 import os
 import random
 import argparse
-import itertools
 import re
-from typing import List, Callable, Tuple, Optional, Any
+from typing import List, Callable, Tuple, Optional, Any, Sequence
 
 from tqdm import tqdm
 import numpy as np
@@ -81,22 +80,29 @@ except ImportError:
     CUDF_AVAILABLE = False
 
 
+def cells_in_pair(a: str, b: str, is_utf8: bool) -> int:
+    # Use codepoints for UTF-8 aware algos; bytes for binary algos
+    if is_utf8:
+        return len(a) * len(b)
+    else:
+        return len(a.encode("utf-8")) * len(b.encode("utf-8"))
+
+
 def log_similarity_operation(
     name: str,
-    string_pairs: List[Tuple[str, str]],
+    string_pairs: Tuple[List[str], List[str]],
     similarity_func: Callable,
+    cells_per_pair: np.ndarray,
     timeout_seconds: int = 10,
-    batch_size: int = 2048,
-    is_utf8: bool = False,
+    batch_size: Optional[int] = None,
 ):
     """Benchmark a similarity operation with timeout and progress tracking.
 
     Supports batch processing by attempting `similarity_func(list_a, list_b)` when
-    `batch_size > 1`. If the function does not accept batched inputs, falls back
-    to per-pair calls transparently.
+    `batch_size >= 1`. For single-item batches, a single-item slice is passed, as
+    opposed to an individual string.
     """
     # Normalize inputs
-    batch_size = max(1, int(batch_size or 1))
 
     processed_pairs = 0
     processed_cells = 0
@@ -106,32 +112,40 @@ def log_similarity_operation(
     def timed_out() -> bool:
         return (now_ns() - start_ns) > int(timeout_seconds * 1e9)
 
-    def cells_in_pair(a: str, b: str) -> int:
-        # Use codepoints for UTF-8 aware algos; bytes for binary algos
-        if is_utf8:
-            return len(a) * len(b)
-        else:
-            return len(a.encode("utf-8")) * len(b.encode("utf-8"))
-
-    bar = tqdm(total=len(string_pairs), desc=name, unit="pairs", leave=False)
+    count_pairs = len(string_pairs[0])
+    bar = tqdm(total=count_pairs, desc=name, unit="pairs", leave=False)
 
     try:
-        for pairs_batch in itertools.batched(string_pairs, batch_size):
+        for first_offset in range(0, count_pairs, batch_size) if batch_size else range(count_pairs):
             if timed_out():
                 break
 
-            if batch_size == 1:
-                a, b = pairs_batch[0]
-                result = similarity_func(a, b)
-                results = [result]
-                batch_pairs = 1
-                batch_cells = cells_in_pair(a, b)
+            if batch_size is None:
+                try:
+                    a, b = string_pairs[0][first_offset], string_pairs[1][first_offset]
+                    result = similarity_func(a, b)
+                    results = [result]
+                    batch_pairs = 1
+                    batch_cells = cells_per_pair[first_offset]
+                except Exception as e:
+                    print(f"\nError at offset {first_offset} (single item):")
+                    print(f"  String A (len={len(string_pairs[0][first_offset])}): {string_pairs[0][first_offset]}...")
+                    print(f"  String B (len={len(string_pairs[1][first_offset])}): {string_pairs[1][first_offset]}...")
+                    print(f"  Error: {type(e).__name__}: {e}")
+                    raise
             else:
-                a_array = np.array([a for a, _ in pairs_batch])
-                b_array = np.array([b for _, b in pairs_batch])
-                results = similarity_func(a_array, b_array)
-                batch_pairs = len(pairs_batch)
-                batch_cells = sum(cells_in_pair(a, b) for a, b in pairs_batch)
+                batch_pairs = batch_size if (first_offset + batch_size) <= count_pairs else (count_pairs - first_offset)
+                try:
+                    a_array = string_pairs[0][first_offset : first_offset + batch_pairs]
+                    b_array = string_pairs[1][first_offset : first_offset + batch_pairs]
+                    results = similarity_func(a_array, b_array)
+                    batch_cells = cells_per_pair[first_offset : first_offset + batch_pairs].sum()
+                except Exception as e:
+                    print(f"\nError at offset {first_offset} (batch_size={batch_size}):")
+                    print(f"  Batch range: [{first_offset}:{first_offset + batch_pairs}]")
+                    print(f"  First pair: A={string_pairs[0][first_offset]}..., B={string_pairs[1][first_offset]}...")
+                    print(f"  Error: {type(e).__name__}: {e}")
+                    raise
 
             # To validate the results, compute a checksum (handles numpy/list/scalar)
             batch_checksum = _checksum_from_results(results)
@@ -200,10 +214,12 @@ def _checksum_from_results(results: Any) -> int:
 
 
 def benchmark_third_party_edit_distances(
-    string_pairs: List[Tuple[str, str]],
+    string_pairs: Tuple[List[str], List[str]],
     timeout_seconds: int = 10,
     filter_pattern: Optional[re.Pattern] = None,
     batch_size: int = 2048,
+    cells_per_pair_binary: Optional[np.ndarray] = None,
+    cells_per_pair_utf8: Optional[np.ndarray] = None,
 ):
     """Benchmark various edit distance implementations."""
 
@@ -213,9 +229,9 @@ def benchmark_third_party_edit_distances(
             "rapidfuzz.Levenshtein.distance",
             string_pairs,
             rf.distance,
-            timeout_seconds,
-            batch_size=1,  # ? Batch API is different
-            is_utf8=True,  # UTF-8 codepoints
+            timeout_seconds=timeout_seconds,
+            batch_size=None,  # pass individual strings
+            cells_per_pair=cells_per_pair_utf8,  # UTF-8 codepoints
         )
 
     # RapidFuzz batch API
@@ -224,8 +240,6 @@ def benchmark_third_party_edit_distances(
     #         f"rapidfuzz.Levenshtein.cpdist(batch={batch_size})",
     #         string_pairs,
     #         rf.cpdist,
-    #         batch_size=timeout_seconds,
-    #         is_utf8=batch_size,
     #     )
 
     # python-Levenshtein
@@ -234,9 +248,9 @@ def benchmark_third_party_edit_distances(
             "Levenshtein.distance",
             string_pairs,
             le.distance,
-            timeout_seconds,
-            batch_size=1,
-            is_utf8=True,  # UTF-8 codepoints
+            timeout_seconds=timeout_seconds,
+            batch_size=None,  # pass individual strings
+            cells_per_pair=cells_per_pair_utf8,  # UTF-8 codepoints
         )
 
     # Jellyfish
@@ -245,9 +259,9 @@ def benchmark_third_party_edit_distances(
             "jellyfish.levenshtein_distance",
             string_pairs,
             jf.levenshtein_distance,
-            timeout_seconds,
-            batch_size=1,
-            is_utf8=True,  # UTF-8 codepoints
+            timeout_seconds=timeout_seconds,
+            batch_size=None,  # pass individual strings
+            cells_per_pair=cells_per_pair_utf8,  # UTF-8 codepoints
         )
 
     # EditDistance
@@ -256,9 +270,9 @@ def benchmark_third_party_edit_distances(
             "editdistance.eval",
             string_pairs,
             ed.eval,
-            timeout_seconds,
-            batch_size=1,
-            is_utf8=True,  # UTF-8 codepoints
+            timeout_seconds=timeout_seconds,
+            batch_size=None,  # pass individual strings
+            cells_per_pair=cells_per_pair_utf8,  # UTF-8 codepoints
         )
 
     # NLTK
@@ -267,9 +281,9 @@ def benchmark_third_party_edit_distances(
             "nltk.edit_distance",
             string_pairs,
             nltk_ed,
-            timeout_seconds,
-            batch_size=1,
-            is_utf8=True,  # UTF-8 codepoints
+            timeout_seconds=timeout_seconds,
+            batch_size=None,  # pass individual strings
+            cells_per_pair=cells_per_pair_utf8,  # UTF-8 codepoints
         )
 
     # Edlib
@@ -282,9 +296,9 @@ def benchmark_third_party_edit_distances(
             "edlib.align",
             string_pairs,
             kernel,
-            timeout_seconds,
-            batch_size=1,
-            is_utf8=False,  # Binary/bytes
+            timeout_seconds=timeout_seconds,
+            batch_size=None,  # pass individual strings
+            cells_per_pair=cells_per_pair_binary,  # Binary/bytes
         )
 
     # Polyleven (if available)
@@ -293,40 +307,38 @@ def benchmark_third_party_edit_distances(
             "polyleven.levenshtein",
             string_pairs,
             polyleven.levenshtein,
-            timeout_seconds,
-            batch_size=1,
-            is_utf8=False,  # Binary/bytes
+            timeout_seconds=timeout_seconds,
+            batch_size=None,  # pass individual strings
+            cells_per_pair=cells_per_pair_binary,  # Binary/bytes
         )
 
     # cuDF edit_distance
-    if name_matches(f"cudf.edit_distance(batch={batch_size})", filter_pattern) and CUDF_AVAILABLE:
+    if name_matches(f"cudf.edit_distance(1xGPU,batch={batch_size})", filter_pattern) and CUDF_AVAILABLE:
 
-        def batch_kernel(a_list: List[str], b_list: List[str]) -> List[int]:
-            # Create cuDF Series from string lists
-            s1 = cudf.Series(a_list)
-            s2 = cudf.Series(b_list)
-            # Compute edit distances and return as list
-            results = s1.str.edit_distance(s2)
+        def batch_kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
+            results = a_array.str.edit_distance(b_array)
             return results.to_arrow().to_numpy()
 
+        moved_pairs = (cudf.Series(string_pairs[0]), cudf.Series(string_pairs[1]))
         log_similarity_operation(
-            f"cudf.edit_distance(batch={batch_size})",
-            string_pairs,
+            f"cudf.edit_distance(1xGPU,batch={batch_size})",
+            moved_pairs,
             batch_kernel,
             timeout_seconds=timeout_seconds,
             batch_size=batch_size,
-            is_utf8=True,  # UTF-8 codepoints
+            cells_per_pair=cells_per_pair_utf8,  # UTF-8 codepoints
         )
 
 
 def benchmark_stringzillas_edit_distances(
-    string_pairs: List[Tuple[str, str]],
+    string_pairs: Tuple[List[str], List[str]],
+    cells_per_pair: np.ndarray,
+    is_utf8: bool,
     timeout_seconds: int = 10,
     batch_size: int = 1,
     filter_pattern: Optional[re.Pattern] = None,
     szs_class: Any = szs.LevenshteinDistances,
     szs_name: str = "stringzillas.LevenshteinDistances",
-    is_utf8: bool = False,
 ):
     """Benchmark various edit distance implementations."""
 
@@ -338,23 +350,23 @@ def benchmark_stringzillas_edit_distances(
     except Exception:
         gpu_scope = None
 
+    moved_pairs = (sz.Strs(string_pairs[0]), sz.Strs(string_pairs[1]))
+
     # Single-input variants on 1 CPU core
     if name_matches(f"{szs_name}(1xCPU)", filter_pattern):
 
         engine = szs_class(capabilities=default_scope)
 
-        def kernel(a: str, b: str) -> int:
-            a_array = sz.Strs([a])
-            b_array = sz.Strs([b])
-            return engine(a_array, b_array, default_scope)[0]
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
+            return engine(a_array, b_array, default_scope)
 
         log_similarity_operation(
             f"{szs_name}(1xCPU)",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=1,
-            is_utf8=is_utf8,
+            cells_per_pair=cells_per_pair,
         )
 
     # Single-input variants on all CPU cores
@@ -362,18 +374,16 @@ def benchmark_stringzillas_edit_distances(
 
         engine = szs_class(capabilities=cpu_scope)
 
-        def kernel(a: str, b: str) -> int:
-            a_array = sz.Strs([a])
-            b_array = sz.Strs([b])
-            return engine(a_array, b_array, cpu_scope)[0]
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
+            return engine(a_array, b_array, cpu_scope)
 
         log_similarity_operation(
             f"{szs_name}({cpu_cores}xCPU)",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=1,
-            is_utf8=is_utf8,
+            cells_per_pair=cells_per_pair,
         )
 
     # Single-input variants on GPU
@@ -381,18 +391,16 @@ def benchmark_stringzillas_edit_distances(
 
         engine = szs_class(capabilities=gpu_scope)
 
-        def kernel(a: str, b: str) -> int:
-            a_array = sz.Strs([a])
-            b_array = sz.Strs([b])
-            return engine(a_array, b_array, gpu_scope)[0]
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
+            return engine(a_array, b_array, gpu_scope)
 
         log_similarity_operation(
             f"{szs_name}(1xGPU)",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=1,
-            is_utf8=is_utf8,
+            cells_per_pair=cells_per_pair,
         )
 
     # Batch-input variants on 1 CPU core
@@ -400,18 +408,16 @@ def benchmark_stringzillas_edit_distances(
 
         engine = szs_class(capabilities=default_scope)
 
-        def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
-            a_array = sz.Strs(a_list)
-            b_array = sz.Strs(b_list)
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
             return engine(a_array, b_array, default_scope)
 
         log_similarity_operation(
             f"{szs_name}(1xCPU,batch={batch_size})",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=batch_size,
-            is_utf8=is_utf8,
+            cells_per_pair=cells_per_pair,
         )
 
     # Batch-input variants on all CPU cores
@@ -419,18 +425,16 @@ def benchmark_stringzillas_edit_distances(
 
         engine = szs_class(capabilities=cpu_scope)
 
-        def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
-            a_array = sz.Strs(a_list)
-            b_array = sz.Strs(b_list)
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
             return engine(a_array, b_array, cpu_scope)
 
         log_similarity_operation(
             f"{szs_name}({cpu_cores}xCPU,batch={batch_size})",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=batch_size,
-            is_utf8=is_utf8,
+            cells_per_pair=cells_per_pair,
         )
 
     # Batch-input variants on GPU
@@ -438,27 +442,26 @@ def benchmark_stringzillas_edit_distances(
 
         engine = szs_class(capabilities=gpu_scope)
 
-        def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
-            a_array = sz.Strs(a_list)
-            b_array = sz.Strs(b_list)
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
             return engine(a_array, b_array, gpu_scope)
 
         log_similarity_operation(
             f"{szs_name}(1xGPU,batch={batch_size})",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=batch_size,
-            is_utf8=is_utf8,
+            cells_per_pair=cells_per_pair,
         )
 
 
 def benchmark_third_party_similarity_scores(
-    string_pairs: List[Tuple[str, str]],
+    string_pairs: Tuple[List[str], List[str]],
     timeout_seconds: int = 10,
     filter_pattern: Optional[re.Pattern] = None,
     gap_open: int = -10,
     gap_extend: int = -2,
+    cells_per_pair: Optional[np.ndarray] = None,
 ):
     """Benchmark various similarity scoring implementations."""
 
@@ -473,14 +476,14 @@ def benchmark_third_party_similarity_scores(
             "biopython.PairwiseAligner.score",
             string_pairs,
             aligner.score,
-            timeout_seconds,
-            1,
-            False,
+            timeout_seconds=timeout_seconds,
+            batch_size=None,  # pass individual strings
+            cells_per_pair=cells_per_pair,
         )
 
 
 def benchmark_stringzillas_similarity_scores(
-    string_pairs: List[Tuple[str, str]],
+    string_pairs: Tuple[List[str], List[str]],
     timeout_seconds: int = 10,
     batch_size: int = 2048,
     filter_pattern: Optional[re.Pattern] = None,
@@ -488,6 +491,7 @@ def benchmark_stringzillas_similarity_scores(
     szs_name: str = "stringzillas.NeedlemanWunschScores",
     gap_open: int = -10,
     gap_extend: int = -2,
+    cells_per_pair: Optional[np.ndarray] = None,
 ):
     """Benchmark various edit distance implementations."""
 
@@ -515,6 +519,8 @@ def benchmark_stringzillas_similarity_scores(
                 reconstructed_column = ord(packed_column_aminoacid)
                 blosum[reconstructed_row, reconstructed_column] = subs_packed[packed_row, packed_column]
 
+    moved_pairs = (sz.Strs(string_pairs[0]), sz.Strs(string_pairs[1]))
+
     # Single-input variants on 1 CPU core
     if name_matches(f"{szs_name}(1xCPU)", filter_pattern):
 
@@ -525,18 +531,16 @@ def benchmark_stringzillas_similarity_scores(
             extend=gap_extend,
         )
 
-        def kernel(a: str, b: str) -> int:
-            a_array = sz.Strs([a])
-            b_array = sz.Strs([b])
-            return engine(a_array, b_array, default_scope)[0]
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
+            return engine(a_array, b_array, default_scope)
 
         log_similarity_operation(
             f"{szs_name}(1xCPU)",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=1,
-            is_utf8=False,
+            cells_per_pair=cells_per_pair,
         )
 
     # Single-input variants on all CPU cores
@@ -549,18 +553,16 @@ def benchmark_stringzillas_similarity_scores(
             extend=gap_extend,
         )
 
-        def kernel(a: str, b: str) -> int:
-            a_array = sz.Strs([a])
-            b_array = sz.Strs([b])
-            return engine(a_array, b_array, cpu_scope)[0]
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
+            return engine(a_array, b_array, cpu_scope)
 
         log_similarity_operation(
             f"{szs_name}({cpu_cores}xCPU)",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=1,
-            is_utf8=False,
+            cells_per_pair=cells_per_pair,
         )
 
     # Single-input variants on GPU
@@ -573,18 +575,16 @@ def benchmark_stringzillas_similarity_scores(
             extend=gap_extend,
         )
 
-        def kernel(a: str, b: str) -> int:
-            a_array = sz.Strs([a])
-            b_array = sz.Strs([b])
-            return engine(a_array, b_array, gpu_scope)[0]
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
+            return engine(a_array, b_array, gpu_scope)
 
         log_similarity_operation(
             f"{szs_name}(1xGPU)",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=1,
-            is_utf8=False,
+            cells_per_pair=cells_per_pair,
         )
 
     # Batch-input variants on 1 CPU core
@@ -597,18 +597,16 @@ def benchmark_stringzillas_similarity_scores(
             extend=gap_extend,
         )
 
-        def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
-            a_array = sz.Strs(a_list)
-            b_array = sz.Strs(b_list)
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
             return engine(a_array, b_array, default_scope)
 
         log_similarity_operation(
             f"{szs_name}(1xCPU,batch={batch_size})",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=batch_size,
-            is_utf8=False,
+            cells_per_pair=cells_per_pair,
         )
 
     # Batch-input variants on all CPU cores
@@ -621,18 +619,16 @@ def benchmark_stringzillas_similarity_scores(
             extend=gap_extend,
         )
 
-        def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
-            a_array = sz.Strs(a_list)
-            b_array = sz.Strs(b_list)
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
             return engine(a_array, b_array, cpu_scope)
 
         log_similarity_operation(
             f"{szs_name}({cpu_cores}xCPU,batch={batch_size})",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=batch_size,
-            is_utf8=False,
+            cells_per_pair=cells_per_pair,
         )
 
     # Batch-input variants on GPU
@@ -645,22 +641,20 @@ def benchmark_stringzillas_similarity_scores(
             extend=gap_extend,
         )
 
-        def kernel(a_list: List[str], b_list: List[str]) -> List[int]:
-            a_array = sz.Strs(a_list)
-            b_array = sz.Strs(b_list)
+        def kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
             return engine(a_array, b_array, gpu_scope)
 
         log_similarity_operation(
             f"{szs_name}(1xGPU,batch={batch_size})",
-            string_pairs,
+            moved_pairs,
             kernel,
-            timeout_seconds,
+            timeout_seconds=timeout_seconds,
             batch_size=batch_size,
-            is_utf8=False,
+            cells_per_pair=cells_per_pair,
         )
 
 
-def generate_random_pairs(strings: List[str], num_pairs: int) -> List[Tuple[str, str]]:
+def generate_random_pairs(strings: Sequence, num_pairs: int) -> Tuple[List[str], List[str]]:
     """Generate random string pairs from a list of strings."""
     return [(random.choice(strings), random.choice(strings)) for _ in range(num_pairs)]
 
@@ -724,16 +718,19 @@ def main():
 
     # Load dataset and generate pairs
     dataset = load_dataset(args.dataset, size_limit=args.dataset_limit)
-    strings = [line.strip() for line in dataset.split("\n") if line.strip()]
+    strings = tokenize_dataset(dataset, tokens_mode=args.tokens)
 
     # Generate random pairs
-    num_pairs = args.max_pairs or min(100_000, len(strings) * 10)
-    pairs = generate_random_pairs(strings, num_pairs)
+    num_pairs = args.max_pairs or min(100_000, len(strings))
+    first_strs = [random.choice(strings) for _ in range(num_pairs)]
+    second_strs = [random.choice(strings) for _ in range(num_pairs)]
 
-    total_chars = sum(len(a) + len(b) for a, b in pairs)
-    avg_length = total_chars / (2 * len(pairs))
+    total_chars = sum(len(a) + len(b) for a, b in zip(first_strs, second_strs))
+    avg_length = total_chars / (2 * num_pairs)
+    cells_per_pair_binary = np.array([cells_in_pair(a, b, is_utf8=False) for a, b in zip(first_strs, second_strs)])
+    cells_per_pair_utf8 = np.array([cells_in_pair(a, b, is_utf8=True) for a, b in zip(first_strs, second_strs)])
 
-    print(f"Prepared {len(pairs):,} string pairs from {len(strings):,} unique strings")
+    print(f"Prepared {num_pairs:,} string pairs from {len(strings):,} unique strings")
     print(f"Average string length: {avg_length:.1f} chars")
     print(f"Total characters: {total_chars:,}")
     print(f"Timeout per benchmark: {args.time_limit}s")
@@ -741,28 +738,32 @@ def main():
 
     print("\n=== Uniform Gap Costs ===")
     benchmark_third_party_edit_distances(
-        pairs,
+        (first_strs, second_strs),
         timeout_seconds=args.time_limit,
         filter_pattern=filter_pattern,
         batch_size=args.batch_size,
+        cells_per_pair_binary=cells_per_pair_binary,
+        cells_per_pair_utf8=cells_per_pair_utf8,
     )
 
     benchmark_stringzillas_edit_distances(
-        pairs,
+        (first_strs, second_strs),
         timeout_seconds=args.time_limit,
         batch_size=args.batch_size,
         filter_pattern=filter_pattern,
         szs_class=szs.LevenshteinDistances,
         szs_name="stringzillas.LevenshteinDistances",
+        cells_per_pair=cells_per_pair_binary,
         is_utf8=False,
     )
     benchmark_stringzillas_edit_distances(
-        pairs,
+        (first_strs, second_strs),
         timeout_seconds=args.time_limit,
         batch_size=args.batch_size,
         filter_pattern=filter_pattern,
         szs_class=szs.LevenshteinDistancesUTF8,
         szs_name="stringzillas.LevenshteinDistancesUTF8",
+        cells_per_pair=cells_per_pair_utf8,
         is_utf8=True,
     )
 
@@ -770,14 +771,15 @@ def main():
         # Linear gap costs (open == extend)
         print("\n=== Linear Gap Costs ===")
         benchmark_third_party_similarity_scores(
-            pairs,
+            (first_strs, second_strs),
             timeout_seconds=args.time_limit,
             filter_pattern=filter_pattern,
             gap_open=-2,
             gap_extend=-2,
+            cells_per_pair=cells_per_pair_binary,
         )
         benchmark_stringzillas_similarity_scores(
-            pairs,
+            (first_strs, second_strs),
             timeout_seconds=args.time_limit,
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
@@ -785,9 +787,10 @@ def main():
             szs_name="stringzillas.NeedlemanWunschScores",
             gap_open=-2,
             gap_extend=-2,
+            cells_per_pair=cells_per_pair_binary,
         )
         benchmark_stringzillas_similarity_scores(
-            pairs,
+            (first_strs, second_strs),
             timeout_seconds=args.time_limit,
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
@@ -795,19 +798,21 @@ def main():
             szs_name="stringzillas.SmithWatermanScores",
             gap_open=-2,
             gap_extend=-2,
+            cells_per_pair=cells_per_pair_binary,
         )
 
         # Affine gap costs (open != extend)
         print("\n=== Affine Gap Costs ===")
         benchmark_third_party_similarity_scores(
-            pairs,
+            (first_strs, second_strs),
             timeout_seconds=args.time_limit,
             filter_pattern=filter_pattern,
             gap_open=-10,
             gap_extend=-2,
+            cells_per_pair=cells_per_pair_binary,
         )
         benchmark_stringzillas_similarity_scores(
-            pairs,
+            (first_strs, second_strs),
             timeout_seconds=args.time_limit,
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
@@ -815,9 +820,10 @@ def main():
             szs_name="stringzillas.NeedlemanWunschScores",
             gap_open=-10,
             gap_extend=-2,
+            cells_per_pair=cells_per_pair_binary,
         )
         benchmark_stringzillas_similarity_scores(
-            pairs,
+            (first_strs, second_strs),
             timeout_seconds=args.time_limit,
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
@@ -825,6 +831,7 @@ def main():
             szs_name="stringzillas.SmithWatermanScores",
             gap_open=-10,
             gap_extend=-2,
+            cells_per_pair=cells_per_pair_binary,
         )
 
     return 0
