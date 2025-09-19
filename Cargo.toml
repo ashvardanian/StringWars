@@ -5,7 +5,7 @@ edition = "2018"
 
 [dependencies]
 criterion = "0.7.0"
-stringzilla = { version = "4.0.11", features = ["cpus"] }
+stringzilla = { version = "4.0.13", features = ["cuda"] }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
@@ -29,8 +29,9 @@ bench_hash = [
     "cityhash",    # CityHash
 ]
 bench_sequence = [
-    "arrow", # Sorting
-    "rayon", # Parallel Sorting
+    "arrow",  # Sorting
+    "rayon",  # Parallel Sorting
+    "polars", # DataFrame library with sorting
 ]
 bench_similarities = [
     "rapidfuzz",  # Levenshtein Distance (also `strsim`)
@@ -139,6 +140,12 @@ optional = true
 [dependencies.rayon]
 version = "1.10.0"
 optional = true
+
+[dependencies.polars]
+version = "0.51"
+optional = true
+default-features = false
+features = ["lazy", "strings", "parquet"]
 
 
 [dependencies.zeroize]
