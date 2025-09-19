@@ -23,6 +23,7 @@ To run the benchmarks with the appropriate CPU features enabled, you can use the
 ```sh
 RUSTFLAGS="-C target-cpu=native" \
     RAYON_NUM_THREADS=1 \
+    POLARS_MAX_THREADS=1 \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
     cargo criterion --features bench_sequence bench_sequence --jobs $(nproc)
@@ -37,12 +38,13 @@ use std::sync::Arc;
 use criterion::{Criterion, SamplingMode};
 
 use arrow::array::{ArrayRef, LargeStringArray};
-use arrow::compute::{lexsort_to_indices, SortColumn, SortOptions};
+use arrow::compute::{lexsort_to_indices, SortColumn};
+use polars::prelude::*;
 use rayon::prelude::*;
 use stringzilla::sz;
 
 mod utils;
-use utils::ComparisonsWallTime;
+use utils::{ComparisonsWallTime, should_run_benchmark};
 
 fn log_stringzilla_metadata() {
     let v = sz::version();
@@ -87,7 +89,7 @@ fn load_dataset() -> Vec<String> {
 
 fn bench_argsort(
     group: &mut criterion::BenchmarkGroup<'_, ComparisonsWallTime>,
-    unsorted: &Vec<String>,
+    unsorted: &[String],
 ) {
     // ? We have a very long benchmark, flat sampling is what we need.
     // ? https://bheisler.github.io/criterion.rs/book/user_guide/advanced_configuration.html#sampling-mode
@@ -98,12 +100,32 @@ fn bench_argsort(
     let throughput = unsorted.len() as f64 * (unsorted.len() as f64).log2();
     group.throughput(criterion::Throughput::Elements(throughput as u64));
 
+    // Pre-allocate reusable index vector to avoid allocation on hot path
+    let mut reusable_indices = Vec::with_capacity(unsorted.len());
+
+    // Pre-allocate SortOptions to avoid .default() calls on hot path
+    const POLARS_SORT_OPTIONS: SortOptions = SortOptions {
+        descending: false,
+        nulls_last: false,
+        multithreaded: true,
+        maintain_order: false,
+    };
+    let polars_sort_multiple_options = SortMultipleOptions::default();
+
+    // Pre-allocate static string for column name
+    const COLUMN_NAME: &str = "strings";
+
+    // Pre-allocate Polars data structures to avoid allocation on hot path
+    let polars_series = Series::new(COLUMN_NAME.into(), unsorted);
+    let polars_dataframe = DataFrame::new(vec![polars_series.clone()]).unwrap();
+
     // Benchmark: StringZilla's argsort
     group.bench_function("stringzilla::argsort_permutation", |b| {
         b.iter(|| {
-            let mut indices: Vec<usize> = (0..unsorted.len()).collect();
-            sz::argsort_permutation(&unsorted, &mut indices).expect("StringZilla argsort failed");
-            black_box(indices);
+            reusable_indices.clear();
+            reusable_indices.extend(0..unsorted.len());
+            sz::argsort_permutation(&unsorted, &mut reusable_indices).expect("StringZilla argsort failed");
+            black_box(&reusable_indices);
         })
     });
 
@@ -112,12 +134,12 @@ fn bench_argsort(
     // https://arrow.apache.org/rust/arrow/compute/fn.lexsort_to_indices.html
     // ! We can't use the conventional `StringArray` in most of our workloads, as it will
     // ! overflow the 32-bit tape offset capacity and panic.
-    let array = Arc::new(LargeStringArray::from(unsorted.clone())) as ArrayRef;
+    let array = Arc::new(LargeStringArray::from(unsorted.to_vec())) as ArrayRef;
     group.bench_function("arrow::lexsort_to_indices", |b| {
         b.iter(|| {
             let column_to_sort = SortColumn {
                 values: array.clone(),
-                options: Some(SortOptions {
+                options: Some(arrow::compute::SortOptions {
                     descending: false,
                     nulls_first: true,
                 }),
@@ -132,18 +154,46 @@ fn bench_argsort(
     // Benchmark: Standard library argsort using `sort_unstable_by_key`
     group.bench_function("std::sort_unstable_by_key", |b| {
         b.iter(|| {
-            let mut indices: Vec<usize> = (0..unsorted.len()).collect();
-            indices.sort_unstable_by_key(|&i| &unsorted[i]);
-            black_box(&indices);
+            reusable_indices.clear();
+            reusable_indices.extend(0..unsorted.len());
+            reusable_indices.sort_unstable_by_key(|&i| &unsorted[i]);
+            black_box(&reusable_indices);
         })
     });
 
     // Benchmark: Parallel argsort using Rayon
     group.bench_function("rayon::par_sort_unstable_by_key", |b| {
         b.iter(|| {
-            let mut indices: Vec<usize> = (0..unsorted.len()).collect();
-            indices.par_sort_unstable_by_key(|&i| &unsorted[i]);
-            black_box(&indices);
+            reusable_indices.clear();
+            reusable_indices.extend(0..unsorted.len());
+            reusable_indices.par_sort_unstable_by_key(|&i| &unsorted[i]);
+            black_box(&reusable_indices);
+        })
+    });
+
+    // Benchmark: Polars Series sort
+    group.bench_function("polars::Series::sort", |b| {
+        b.iter(|| {
+            let sorted = polars_series.sort(POLARS_SORT_OPTIONS).unwrap();
+            black_box(sorted);
+        })
+    });
+
+    // Benchmark: Polars Series argsort (returning indices)
+    group.bench_function("polars::Series::arg_sort", |b| {
+        b.iter(|| {
+            let indices = polars_series.arg_sort(POLARS_SORT_OPTIONS);
+            black_box(indices);
+        })
+    });
+
+    // Benchmark: Polars DataFrame sort
+    group.bench_function("polars::DataFrame::sort", |b| {
+        b.iter(|| {
+            let sorted = polars_dataframe
+                .sort([COLUMN_NAME], polars_sort_multiple_options.clone())
+                .unwrap();
+            black_box(sorted);
         })
     });
 }

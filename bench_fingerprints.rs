@@ -49,7 +49,7 @@ use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version}
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
 mod utils;
-use utils::{set_fingerprints_bytes_per_hash, HashesWallTime};
+use utils::{set_fingerprints_bytes_per_hash, HashesWallTime, should_run_benchmark};
 
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];

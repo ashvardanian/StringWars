@@ -46,7 +46,7 @@ use stringzilla::szs::{
 };
 
 mod utils;
-use utils::CupsWallTime;
+use utils::{should_run_benchmark, CupsWallTime};
 
 // Pull some metadata logging functionality
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
@@ -63,8 +63,8 @@ fn configure_bench() -> Criterion<CupsWallTime> {
     Criterion::default()
         .with_measurement(CupsWallTime::default())
         .sample_size(10) // smallest possible, that won't panic
-        .warm_up_time(std::time::Duration::from_secs(1))
-        .measurement_time(std::time::Duration::from_secs(5))
+        .warm_up_time(std::time::Duration::from_secs(5))
+        .measurement_time(std::time::Duration::from_secs(30))
 }
 
 /// Creates batch subviews from bytes tape views for processing
@@ -399,63 +399,34 @@ fn perform_uniform_benchmarks(
     let per_batch_utf8 = (batch_size as u64) * avg_cells_utf8;
 
     // RapidFuzz baselines (no batching; scan one-by-one)
-    g.throughput(Throughput::Elements(per_pair_bytes));
-    g.bench_function("rapidfuzz::levenshtein<Bytes>(1xCPU)", |b| {
-        let mut pair_index = 0;
-        b.iter(|| {
-            let a_bytes = &tape_a_view[pair_index % pairs_count];
-            let b_bytes = &tape_b_view[pair_index % pairs_count];
-            pair_index = (pair_index + 1) % pairs_count;
-            levenshtein::distance(a_bytes.iter().copied(), b_bytes.iter().copied())
-        })
-    });
+    if should_run_benchmark("rapidfuzz::levenshtein<Bytes>(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair_bytes));
+        g.bench_function("rapidfuzz::levenshtein<Bytes>(1xCPU)", |b| {
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                levenshtein::distance(a_bytes.iter().copied(), b_bytes.iter().copied())
+            })
+        });
+    }
 
-    g.throughput(Throughput::Elements(per_pair_utf8));
-    g.bench_function("rapidfuzz::levenshtein<Chars>(1xCPU)", |b| {
-        let mut pair_index = 0;
-        b.iter(|| {
-            let a_str = &chars_a_view[pair_index % pairs_count];
-            let b_str = &chars_b_view[pair_index % pairs_count];
-            pair_index = (pair_index + 1) % pairs_count;
-            levenshtein::distance(a_str.chars(), b_str.chars())
-        })
-    });
+    if should_run_benchmark("rapidfuzz::levenshtein<Chars>(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair_utf8));
+        g.bench_function("rapidfuzz::levenshtein<Chars>(1xCPU)", |b| {
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_str = &chars_a_view[pair_index % pairs_count];
+                let b_str = &chars_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                levenshtein::distance(a_str.chars(), b_str.chars())
+            })
+        });
 
-    // StringZilla Binary Levenshtein Distance (uniform costs: 0,1,1,1)
-    g.throughput(Throughput::Elements(per_batch_bytes));
-    g.bench_function("stringzillas::LevenshteinDistances(1xCPU)", |b| {
-        let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
-        results.resize(batch_size, 0);
-        let mut start_idx = 0;
-        b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
-                &tape_a_view,
-                &tape_b_view,
-                &mut start_idx,
-                batch_size,
-                pairs_count,
-            );
-            lev_single
-                .compute_into(
-                    &cpu_single,
-                    AnyBytesTape::View64(batch_a_view),
-                    AnyBytesTape::View64(batch_b_view),
-                    &mut results[..actual_batch_size],
-                )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to compute LevenshteinDistances on CPU (single-threaded): {}",
-                        e
-                    );
-                });
-            std::hint::black_box(&results);
-        })
-    });
-
-    g.throughput(Throughput::Elements(per_batch_bytes));
-    g.bench_function(
-        &format!("stringzillas::LevenshteinDistances({}xCPU)", num_cores),
-        |b| {
+        // StringZilla Binary Levenshtein Distance (uniform costs: 0,1,1,1)
+        g.throughput(Throughput::Elements(per_batch_bytes));
+        g.bench_function("stringzillas::LevenshteinDistances(1xCPU)", |b| {
             let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
             let mut start_idx = 0;
@@ -467,25 +438,136 @@ fn perform_uniform_benchmarks(
                     batch_size,
                     pairs_count,
                 );
-                lev_parallel
+                lev_single
                     .compute_into(
-                        &cpu_parallel,
+                        &cpu_single,
                         AnyBytesTape::View64(batch_a_view),
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
                     .unwrap_or_else(|e| {
                         panic!(
-                            "Failed to compute LevenshteinDistances on CPU (multi-threaded): {}",
+                            "Failed to compute LevenshteinDistances on CPU (single-threaded): {}",
                             e
                         );
                     });
                 std::hint::black_box(&results);
             })
+        });
+    }
+
+    if should_run_benchmark(&format!(
+        "stringzillas::LevenshteinDistances({}xCPU)",
+        num_cores
+    )) {
+        g.throughput(Throughput::Elements(per_batch_bytes));
+        g.bench_function(
+            &format!("stringzillas::LevenshteinDistances({}xCPU)", num_cores),
+            |b| {
+                let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
+                results.resize(batch_size, 0);
+                let mut start_idx = 0;
+                b.iter(|| {
+                    let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
+                        &tape_a_view,
+                        &tape_b_view,
+                        &mut start_idx,
+                        batch_size,
+                        pairs_count,
+                    );
+                    lev_parallel
+                        .compute_into(
+                            &cpu_parallel,
+                            AnyBytesTape::View64(batch_a_view),
+                            AnyBytesTape::View64(batch_b_view),
+                            &mut results[..actual_batch_size],
+                        )
+                        .unwrap_or_else(|e| {
+                            panic!(
+                            "Failed to compute LevenshteinDistances on CPU (multi-threaded): {}",
+                            e
+                        );
+                        });
+                    std::hint::black_box(&results);
+                })
+            },
+        );
+    }
+
+    // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
+    if should_run_benchmark("stringzillas::LevenshteinDistancesUtf8(1xCPU)") {
+        g.throughput(Throughput::Elements(per_batch_utf8));
+        g.bench_function("stringzillas::LevenshteinDistancesUtf8(1xCPU)", |b| {
+            let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
+            results.resize(batch_size, 0);
+            let mut start_idx = 0;
+            b.iter(|| {
+                let (batch_a_view, batch_b_view, actual_batch_size) = chars_tape_slice(
+                    &chars_a_view,
+                    &chars_b_view,
+                    &mut start_idx,
+                    batch_size,
+                    pairs_count,
+                );
+                lev_utf8_single
+                    .compute_into(
+                        &cpu_single,
+                        AnyCharsTape::View64(batch_a_view),
+                        AnyCharsTape::View64(batch_b_view),
+                        &mut results[..actual_batch_size],
+                    )
+                    .unwrap_or_else(|e| {
+                        panic!(
+                        "Failed to compute LevenshteinDistancesUtf8 on CPU (single-threaded): {}",
+                        e
+                    );
+                    });
+                std::hint::black_box(&results);
+            })
+        });
+    }
+
+    if should_run_benchmark(&format!(
+        "stringzillas::LevenshteinDistancesUtf8({}xCPU)",
+        num_cores
+    )) {
+        g.throughput(Throughput::Elements(per_batch_utf8));
+        g.bench_function(
+            &format!("stringzillas::LevenshteinDistancesUtf8({}xCPU)", num_cores),
+        |b| {
+            let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
+            results.resize(batch_size, 0);
+            let mut start_idx = 0;
+            b.iter(|| {
+                let (batch_a_view, batch_b_view, actual_batch_size) = chars_tape_slice(
+                    &chars_a_view,
+                    &chars_b_view,
+                    &mut start_idx,
+                    batch_size,
+                    pairs_count,
+                );
+                lev_utf8_parallel
+                    .compute_into(
+                        &cpu_parallel,
+                        AnyCharsTape::View64(batch_a_view),
+                        AnyCharsTape::View64(batch_b_view),
+                        &mut results[..actual_batch_size],
+                    )
+                    .unwrap_or_else(|e| {
+                        panic!("Failed to compute LevenshteinDistancesUtf8 on CPU (multi-threaded): {}", e);
+                    });
+                std::hint::black_box(&results);
+            })
         },
     );
+    }
 
-    if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_lev_gpu.as_ref()) {
+    if maybe_gpu.is_ok()
+        && maybe_lev_gpu.is_some()
+        && should_run_benchmark("stringzillas::LevenshteinDistances(1xGPU)")
+    {
+        let gpu = maybe_gpu.as_ref().unwrap();
+        let engine = maybe_lev_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch_bytes));
         let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
@@ -513,67 +595,6 @@ fn perform_uniform_benchmarks(
             })
         });
     }
-
-    // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
-    g.throughput(Throughput::Elements(per_batch_utf8));
-    g.bench_function("stringzillas::LevenshteinDistancesUtf8(1xCPU)", |b| {
-        let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
-        results.resize(batch_size, 0);
-        let mut start_idx = 0;
-        b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = chars_tape_slice(
-                &chars_a_view,
-                &chars_b_view,
-                &mut start_idx,
-                batch_size,
-                pairs_count,
-            );
-            lev_utf8_single
-                .compute_into(
-                    &cpu_single,
-                    AnyCharsTape::View64(batch_a_view),
-                    AnyCharsTape::View64(batch_b_view),
-                    &mut results[..actual_batch_size],
-                )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to compute LevenshteinDistancesUtf8 on CPU (single-threaded): {}",
-                        e
-                    );
-                });
-            std::hint::black_box(&results);
-        })
-    });
-
-    g.throughput(Throughput::Elements(per_batch_utf8));
-    g.bench_function(
-        &format!("stringzillas::LevenshteinDistancesUtf8({}xCPU)", num_cores),
-        |b| {
-            let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
-            results.resize(batch_size, 0);
-            let mut start_idx = 0;
-            b.iter(|| {
-                let (batch_a_view, batch_b_view, actual_batch_size) = chars_tape_slice(
-                    &chars_a_view,
-                    &chars_b_view,
-                    &mut start_idx,
-                    batch_size,
-                    pairs_count,
-                );
-                lev_utf8_parallel
-                    .compute_into(
-                        &cpu_parallel,
-                        AnyCharsTape::View64(batch_a_view),
-                        AnyCharsTape::View64(batch_b_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|e| {
-                        panic!("Failed to compute LevenshteinDistancesUtf8 on CPU (multi-threaded): {}", e);
-                    });
-                std::hint::black_box(&results);
-            })
-        },
-    );
 }
 
 /// Linear gap cost benchmarks: NW/SW with linear penalties (match=2, mismatch=-1, open=-2, extend=-2)
@@ -675,7 +696,9 @@ fn perform_linear_benchmarks(
         },
     );
 
-    if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_nw_gpu.as_ref()) {
+    if maybe_gpu.is_ok() && maybe_nw_gpu.is_some() {
+        let gpu = maybe_gpu.as_ref().unwrap();
+        let engine = maybe_nw_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch));
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
@@ -768,7 +791,9 @@ fn perform_linear_benchmarks(
         },
     );
 
-    if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sw_gpu.as_ref()) {
+    if maybe_gpu.is_ok() && maybe_sw_gpu.is_some() {
+        let gpu = maybe_gpu.as_ref().unwrap();
+        let engine = maybe_sw_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch));
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
@@ -897,7 +922,9 @@ fn perform_affine_benchmarks(
         },
     );
 
-    if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_nw_gpu.as_ref()) {
+    if maybe_gpu.is_ok() && maybe_nw_gpu.is_some() {
+        let gpu = maybe_gpu.as_ref().unwrap();
+        let engine = maybe_nw_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch));
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
@@ -990,7 +1017,9 @@ fn perform_affine_benchmarks(
         },
     );
 
-    if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sw_gpu.as_ref()) {
+    if maybe_gpu.is_ok() && maybe_sw_gpu.is_some() {
+        let gpu = maybe_gpu.as_ref().unwrap();
+        let engine = maybe_sw_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch));
         let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
         results.resize(batch_size, 0);
