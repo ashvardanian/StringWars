@@ -44,7 +44,7 @@ use rayon::prelude::*;
 use stringzilla::sz;
 
 mod utils;
-use utils::{ComparisonsWallTime, should_run_benchmark};
+use utils::{should_run, ComparisonsWallTime};
 
 fn log_stringzilla_metadata() {
     let v = sz::version();
@@ -109,6 +109,7 @@ fn bench_argsort(
         nulls_last: false,
         multithreaded: true,
         maintain_order: false,
+        limit: None,
     };
     let polars_sort_multiple_options = SortMultipleOptions::default();
 
@@ -117,17 +118,20 @@ fn bench_argsort(
 
     // Pre-allocate Polars data structures to avoid allocation on hot path
     let polars_series = Series::new(COLUMN_NAME.into(), unsorted);
-    let polars_dataframe = DataFrame::new(vec![polars_series.clone()]).unwrap();
+    let polars_dataframe = DataFrame::new(vec![polars_series.clone().into()]).unwrap();
 
     // Benchmark: StringZilla's argsort
-    group.bench_function("stringzilla::argsort_permutation", |b| {
-        b.iter(|| {
-            reusable_indices.clear();
-            reusable_indices.extend(0..unsorted.len());
-            sz::argsort_permutation(&unsorted, &mut reusable_indices).expect("StringZilla argsort failed");
-            black_box(&reusable_indices);
-        })
-    });
+    if should_run("stringzilla::argsort_permutation") {
+        group.bench_function("stringzilla::argsort_permutation", |b| {
+            b.iter(|| {
+                reusable_indices.clear();
+                reusable_indices.extend(0..unsorted.len());
+                sz::argsort_permutation(&unsorted, &mut reusable_indices)
+                    .expect("StringZilla argsort failed");
+                black_box(&reusable_indices);
+            })
+        });
+    }
 
     // Benchmark: Apache Arrow's `lexsort_to_indices`
     // https://arrow.apache.org/rust/arrow/compute/fn.lexsort.html
@@ -135,67 +139,79 @@ fn bench_argsort(
     // ! We can't use the conventional `StringArray` in most of our workloads, as it will
     // ! overflow the 32-bit tape offset capacity and panic.
     let array = Arc::new(LargeStringArray::from(unsorted.to_vec())) as ArrayRef;
-    group.bench_function("arrow::lexsort_to_indices", |b| {
-        b.iter(|| {
-            let column_to_sort = SortColumn {
-                values: array.clone(),
-                options: Some(arrow::compute::SortOptions {
-                    descending: false,
-                    nulls_first: true,
-                }),
-            };
-            match lexsort_to_indices(&[column_to_sort], None) {
-                Ok(indices) => black_box(indices),
-                Err(e) => panic!("Arrow lexsort failed: {:?}", e),
-            }
-        })
-    });
+    if should_run("arrow::lexsort_to_indices") {
+        group.bench_function("arrow::lexsort_to_indices", |b| {
+            b.iter(|| {
+                let column_to_sort = SortColumn {
+                    values: array.clone(),
+                    options: Some(arrow::compute::SortOptions {
+                        descending: false,
+                        nulls_first: true,
+                    }),
+                };
+                match lexsort_to_indices(&[column_to_sort], None) {
+                    Ok(indices) => black_box(indices),
+                    Err(e) => panic!("Arrow lexsort failed: {:?}", e),
+                }
+            })
+        });
+    }
 
     // Benchmark: Standard library argsort using `sort_unstable_by_key`
-    group.bench_function("std::sort_unstable_by_key", |b| {
-        b.iter(|| {
-            reusable_indices.clear();
-            reusable_indices.extend(0..unsorted.len());
-            reusable_indices.sort_unstable_by_key(|&i| &unsorted[i]);
-            black_box(&reusable_indices);
-        })
-    });
+    if should_run("std::sort_unstable_by_key") {
+        group.bench_function("std::sort_unstable_by_key", |b| {
+            b.iter(|| {
+                reusable_indices.clear();
+                reusable_indices.extend(0..unsorted.len());
+                reusable_indices.sort_unstable_by_key(|&i| &unsorted[i]);
+                black_box(&reusable_indices);
+            })
+        });
+    }
 
     // Benchmark: Parallel argsort using Rayon
-    group.bench_function("rayon::par_sort_unstable_by_key", |b| {
-        b.iter(|| {
-            reusable_indices.clear();
-            reusable_indices.extend(0..unsorted.len());
-            reusable_indices.par_sort_unstable_by_key(|&i| &unsorted[i]);
-            black_box(&reusable_indices);
-        })
-    });
+    if should_run("rayon::par_sort_unstable_by_key") {
+        group.bench_function("rayon::par_sort_unstable_by_key", |b| {
+            b.iter(|| {
+                reusable_indices.clear();
+                reusable_indices.extend(0..unsorted.len());
+                reusable_indices.par_sort_unstable_by_key(|&i| &unsorted[i]);
+                black_box(&reusable_indices);
+            })
+        });
+    }
 
     // Benchmark: Polars Series sort
-    group.bench_function("polars::Series::sort", |b| {
-        b.iter(|| {
-            let sorted = polars_series.sort(POLARS_SORT_OPTIONS).unwrap();
-            black_box(sorted);
-        })
-    });
+    if should_run("polars::Series::sort") {
+        group.bench_function("polars::Series::sort", |b| {
+            b.iter(|| {
+                let sorted = polars_series.sort(POLARS_SORT_OPTIONS).unwrap();
+                let _ = black_box(sorted);
+            })
+        });
+    }
 
     // Benchmark: Polars Series argsort (returning indices)
-    group.bench_function("polars::Series::arg_sort", |b| {
-        b.iter(|| {
-            let indices = polars_series.arg_sort(POLARS_SORT_OPTIONS);
-            black_box(indices);
-        })
-    });
+    if should_run("polars::Series::arg_sort") {
+        group.bench_function("polars::Series::arg_sort", |b| {
+            b.iter(|| {
+                let indices = polars_series.arg_sort(POLARS_SORT_OPTIONS);
+                black_box(indices);
+            })
+        });
+    }
 
     // Benchmark: Polars DataFrame sort
-    group.bench_function("polars::DataFrame::sort", |b| {
-        b.iter(|| {
-            let sorted = polars_dataframe
-                .sort([COLUMN_NAME], polars_sort_multiple_options.clone())
-                .unwrap();
-            black_box(sorted);
-        })
-    });
+    if should_run("polars::DataFrame::sort") {
+        group.bench_function("polars::DataFrame::sort", |b| {
+            b.iter(|| {
+                let sorted = polars_dataframe
+                    .sort([COLUMN_NAME], polars_sort_multiple_options.clone())
+                    .unwrap();
+                black_box(sorted);
+            })
+        });
+    }
 }
 
 fn main() {

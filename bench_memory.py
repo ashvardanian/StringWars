@@ -31,7 +31,7 @@ import Crypto as pycryptodome
 from Crypto.Cipher import AES as PyCryptoDomeAES
 import cv2
 
-from utils import add_common_args, load_dataset, name_matches, now_ns, tokenize_dataset
+from utils import add_common_args, load_dataset, should_run, now_ns, tokenize_dataset
 
 
 def log_system_info():
@@ -258,39 +258,39 @@ def main() -> int:
     tokens_mv = [memoryview(bytearray(token)) for token in tokens_b]
 
     # Python bytes.translate (always allocating)
-    if name_matches("bytes.translate(new)", pattern):
+    if should_run("bytes.translate(new)", pattern):
         bench_translate("bytes.translate(new)", tokens_b, reverse, bytes_translate, args.time_limit)
 
     # OpenCV allocating
-    if name_matches("opencv.LUT(new)", pattern):
+    if should_run("opencv.LUT(new)", pattern):
         bench_translate("opencv.LUT(new)", tokens_np, reverse_np, opencv_lut_allocating, args.time_limit)
 
     # OpenCV in-place
-    if name_matches("opencv.LUT(inplace)", pattern):
+    if should_run("opencv.LUT(inplace)", pattern):
         bench_translate("opencv.LUT(inplace)", tokens_np, reverse_np, opencv_lut_inplace, args.time_limit)
 
     # NumPy indexing allocating
-    if name_matches("numpy.indexing(new)", pattern):
+    if should_run("numpy.indexing(new)", pattern):
         bench_translate("numpy.indexing(new)", tokens_np, reverse_np, numpy_lut_indexing_allocating, args.time_limit)
 
     # NumPy indexing in-place
-    if name_matches("numpy.indexing(inplace)", pattern):
+    if should_run("numpy.indexing(inplace)", pattern):
         bench_translate("numpy.indexing(inplace)", tokens_np, reverse_np, numpy_lut_indexing_inplace, args.time_limit)
 
     # NumPy take allocating
-    if name_matches("numpy.take(new)", pattern):
+    if should_run("numpy.take(new)", pattern):
         bench_translate("numpy.take(new)", tokens_np, reverse_np, numpy_lut_take_allocating, args.time_limit)
 
     # NumPy take in-place
-    if name_matches("numpy.take(inplace)", pattern):
+    if should_run("numpy.take(inplace)", pattern):
         bench_translate("numpy.take(inplace)", tokens_np, reverse_np, numpy_lut_take_inplace, args.time_limit)
 
     # StringZilla allocating
-    if name_matches("stringzilla.translate(new)", pattern):
+    if should_run("stringzilla.translate(new)", pattern):
         bench_translate("stringzilla.translate(new)", tokens_b, reverse, sz_translate_allocating, args.time_limit)
 
     # StringZilla in-place (need memoryviews for each token)
-    if name_matches("stringzilla.translate(inplace)", pattern):
+    if should_run("stringzilla.translate(inplace)", pattern):
         bench_translate("stringzilla.translate(inplace)", tokens_mv, reverse, sz_translate_inplace, args.time_limit)
 
     # ---------------- Random byte generation ----------------
@@ -298,15 +298,15 @@ def main() -> int:
     print("--- Random Byte Generation ---")
     sizes = sizes_from_tokens(tokens_b)
 
-    if name_matches("pycryptodome.AES-CTR", pattern):
+    if should_run("pycryptodome.AES-CTR", pattern):
         bench_generator("pycryptodome.AES-CTR", sizes, make_pycryptodome_aes_ctr(), args.time_limit)
-    if name_matches("stringzilla.fill_random", pattern):
+    if should_run("stringzilla.fill_random", pattern):
         bench_generator("stringzilla.fill_random", sizes, make_stringzilla_fill_random(), args.time_limit)
-    if name_matches("stringzilla.random", pattern):
+    if should_run("stringzilla.random", pattern):
         bench_generator("stringzilla.random", sizes, sz.random, args.time_limit)
-    if name_matches("numpy.PCG64", pattern):
+    if should_run("numpy.PCG64", pattern):
         bench_generator("numpy.PCG64", sizes, make_numpy_pcg64(), args.time_limit)
-    if name_matches("numpy.Philox", pattern):
+    if should_run("numpy.Philox", pattern):
         bench_generator("numpy.Philox", sizes, make_numpy_philox(), args.time_limit)
 
     return 0

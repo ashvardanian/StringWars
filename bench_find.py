@@ -32,7 +32,7 @@ from importlib.metadata import version as pkg_version
 import stringzilla as sz
 import ahocorasick as ahoc
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, name_matches
+from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, should_run
 
 
 def log_system_info():
@@ -173,15 +173,15 @@ def main():
     log_system_info()
 
     print("\n=== Substring Search Benchmarks ===")
-    if name_matches("str.find", filter_pattern):
+    if should_run("str.find", filter_pattern):
         bench_op("str.find", pythonic_str, tokens[::-1], count_find, args.time_limit)
-    if name_matches("stringzilla.Str.find", filter_pattern):
+    if should_run("stringzilla.Str.find", filter_pattern):
         bench_op("stringzilla.Str.find", stringzilla_str, tokens[::-1], count_find, args.time_limit)
-    if name_matches("str.rfind", filter_pattern):
+    if should_run("str.rfind", filter_pattern):
         bench_op("str.rfind", pythonic_str, tokens, count_rfind, args.time_limit)
-    if name_matches("stringzilla.Str.rfind", filter_pattern):
+    if should_run("stringzilla.Str.rfind", filter_pattern):
         bench_op("stringzilla.Str.rfind", stringzilla_str, tokens, count_rfind, args.time_limit)
-    if name_matches("pyahocorasick.iter", filter_pattern):
+    if should_run("pyahocorasick.iter", filter_pattern):
         bench_op("pyahocorasick.iter", pythonic_str, tokens[::-1], count_aho, args.time_limit)
 
     print("\n=== Character Set Search ===")
@@ -191,9 +191,9 @@ def main():
     else:
         re_chars = re.compile(r"[\t\n\r ]")  # whitespace: space, tab, LF, CR
         sz_chars = " \t\n\r"
-    if name_matches("re.finditer", filter_pattern):
+    if should_run("re.finditer", filter_pattern):
         bench_op("re.finditer", pythonic_str, [re_chars], count_regex, args.time_limit)
-    if name_matches("stringzilla.Str.find_first_of", filter_pattern):
+    if should_run("stringzilla.Str.find_first_of", filter_pattern):
         bench_op("stringzilla.Str.find_first_of", stringzilla_str, [sz_chars], count_byteset, args.time_limit)
 
     return 0

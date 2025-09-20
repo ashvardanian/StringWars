@@ -4,7 +4,8 @@ use std::env;
 use std::time::Instant;
 
 /// Filter helper function to check if a benchmark should run based on STRINGWARS_FILTER env var
-pub fn should_run_benchmark(name: &str) -> bool {
+#[allow(dead_code)]
+pub fn should_run(name: &str) -> bool {
     if let Ok(filter) = env::var("STRINGWARS_FILTER") {
         name.contains(&filter)
     } else {

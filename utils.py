@@ -145,8 +145,8 @@ def add_common_args(parser):
     )
 
 
-def name_matches(name: str, pattern: Optional[re.Pattern]) -> bool:
-    """Check if benchmark name matches filter pattern."""
+def should_run(name: str, pattern: Optional[re.Pattern]) -> bool:
+    """Check if benchmark should run based on filter pattern."""
     if pattern is None:
         return True
     assert hasattr(pattern, "search"), "Pattern must be a compiled regex"

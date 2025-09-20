@@ -46,7 +46,7 @@ use stringzilla::szs::{
 };
 
 mod utils;
-use utils::{should_run_benchmark, CupsWallTime};
+use utils::{should_run, CupsWallTime};
 
 // Pull some metadata logging functionality
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
@@ -399,7 +399,7 @@ fn perform_uniform_benchmarks(
     let per_batch_utf8 = (batch_size as u64) * avg_cells_utf8;
 
     // RapidFuzz baselines (no batching; scan one-by-one)
-    if should_run_benchmark("rapidfuzz::levenshtein<Bytes>(1xCPU)") {
+    if should_run("rapidfuzz::levenshtein<Bytes>(1xCPU)") {
         g.throughput(Throughput::Elements(per_pair_bytes));
         g.bench_function("rapidfuzz::levenshtein<Bytes>(1xCPU)", |b| {
             let mut pair_index = 0;
@@ -412,7 +412,7 @@ fn perform_uniform_benchmarks(
         });
     }
 
-    if should_run_benchmark("rapidfuzz::levenshtein<Chars>(1xCPU)") {
+    if should_run("rapidfuzz::levenshtein<Chars>(1xCPU)") {
         g.throughput(Throughput::Elements(per_pair_utf8));
         g.bench_function("rapidfuzz::levenshtein<Chars>(1xCPU)", |b| {
             let mut pair_index = 0;
@@ -456,7 +456,7 @@ fn perform_uniform_benchmarks(
         });
     }
 
-    if should_run_benchmark(&format!(
+    if should_run(&format!(
         "stringzillas::LevenshteinDistances({}xCPU)",
         num_cores
     )) {
@@ -495,7 +495,7 @@ fn perform_uniform_benchmarks(
     }
 
     // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
-    if should_run_benchmark("stringzillas::LevenshteinDistancesUtf8(1xCPU)") {
+    if should_run("stringzillas::LevenshteinDistancesUtf8(1xCPU)") {
         g.throughput(Throughput::Elements(per_batch_utf8));
         g.bench_function("stringzillas::LevenshteinDistancesUtf8(1xCPU)", |b| {
             let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
@@ -527,7 +527,7 @@ fn perform_uniform_benchmarks(
         });
     }
 
-    if should_run_benchmark(&format!(
+    if should_run(&format!(
         "stringzillas::LevenshteinDistancesUtf8({}xCPU)",
         num_cores
     )) {
@@ -564,7 +564,7 @@ fn perform_uniform_benchmarks(
 
     if maybe_gpu.is_ok()
         && maybe_lev_gpu.is_some()
-        && should_run_benchmark("stringzillas::LevenshteinDistances(1xGPU)")
+        && should_run("stringzillas::LevenshteinDistances(1xGPU)")
     {
         let gpu = maybe_gpu.as_ref().unwrap();
         let engine = maybe_lev_gpu.as_ref().unwrap();

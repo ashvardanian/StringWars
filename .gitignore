@@ -1,4 +1,8 @@
+# Builds
 /target
+/__pycache__
+
+# Datasets
 /acgt_*.txt
 /xlsum.csv
 /leipzig1M.txt

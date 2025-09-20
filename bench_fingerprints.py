@@ -37,7 +37,7 @@ from datasketch import MinHash
 import stringzillas as szs
 import stringzilla as sz
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, name_matches
+from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, should_run
 
 # For RAPIDS cuDF GPU-accelerated MinHash
 try:
