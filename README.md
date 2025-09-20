@@ -200,15 +200,19 @@ Generating random byte-streams:
 
 Performing in-place lookups in a precomputed table of 256 bytes:
 
-| Library                       |    Short Words |     Long Lines |
-| ----------------------------- | -------------: | -------------: |
-| Rust 🦀                        |                |                |
-| serial code                   | __0.61 GiB/s__ |     1.49 GiB/s |
-| `stringzilla::lookup_inplace` |     0.54 GiB/s | __9.90 GiB/s__ |
-|                               |                |                |
-| Python 🐍                      |                |                |
-| `bytes.translate`             |     1.18 GiB/s |     1.10 GiB/s |
-| `stringzilla.Str.translate`   | __2.15 GiB/s__ | __2.26 GiB/s__ |
+| Library                         |    Short Words |     Long Lines |
+| ------------------------------- | -------------: | -------------: |
+| Rust 🦀                          |                |                |
+| serial code                     | __0.61 GiB/s__ |     1.49 GiB/s |
+| `stringzilla::lookup_inplace`   |     0.54 GiB/s | __9.90 GiB/s__ |
+|                                 |                |                |
+| Python 🐍                        |                |                |
+| `bytes.translate`               |     0.05 GiB/s |     1.92 GiB/s |
+| `numpy.take`                    |     0.01 GiB/s |     0.85 GiB/s |
+| `opencv.LUT`                    |     0.01 GiB/s |     1.95 GiB/s |
+| `opencv.LUT` inplace            |     0.01 GiB/s |     2.16 GiB/s |
+| `stringzilla.translate`         |     0.07 GiB/s |     7.92 GiB/s |
+| `stringzilla.translate` inplace | __0.06 GiB/s__ | __8.14 GiB/s__ |
 
 
 ## Similarities Scoring

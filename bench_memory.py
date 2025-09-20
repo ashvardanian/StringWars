@@ -3,18 +3,19 @@
 #   "stringzilla",
 #   "numpy",
 #   "pycryptodome",
+#   "opencv-python",
 # ]
 # ///
 """
 Python memory-centric benchmarks analogous to bench_memory.rs.
 
 Includes two groups:
-- Lookup-table transforms (256-byte LUT): bytes.translate, stringzilla.Str.translate
+- Lookup-table transforms (256-byte LUT): bytes.translate, stringzilla.Str.translate, OpenCV LUT, NumPy indexing
 - Random byte generation: NumPy PCG64, NumPy Philox, and PyCryptodome AES-CTR
 
 Examples:
   python bench_memory.py --dataset README.md --tokens lines
-  python bench_memory.py --dataset README.md --tokens words -k "translate|AES-CTR|PCG64|Philox"
+  python bench_memory.py --dataset README.md --tokens words -k "translate|LUT|AES-CTR|PCG64|Philox"
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import stringzilla as sz
 import numpy as np
 import Crypto as pycryptodome
 from Crypto.Cipher import AES as PyCryptoDomeAES
+import cv2
 
 from utils import add_common_args, load_dataset, name_matches, now_ns, tokenize_dataset
 
@@ -37,24 +39,68 @@ def log_system_info():
     print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
     print(f"- NumPy: {np.__version__}")
     print(f"- PyCryptoDome: {pycryptodome.__version__}")
+    print(f"- OpenCV: {cv2.__version__} (defaults to {cv2.getNumThreads()} threads)")
     print()
 
 
-def sz_translate(haystack: sz.Str, look_up_table: bytes) -> int:
-    # StringZilla translation using 256-byte LUT
-    result = haystack.translate(look_up_table)
+def sz_translate_allocating(haystack: bytes, look_up_table: bytes) -> int:
+    """StringZilla translation with allocation (bytes input)."""
+    result = sz.translate(haystack, look_up_table)
     return len(result)
 
 
+def sz_translate_inplace(haystack: memoryview, look_up_table: bytes) -> int:
+    """StringZilla translation in-place (memoryview input)."""
+    sz.translate(haystack, look_up_table, inplace=True)
+    return len(haystack)
+
+
 def bytes_translate(haystack_bytes: bytes, lut: bytes) -> int:
+    """Python bytes.translate (always allocating)."""
     result = haystack_bytes.translate(lut)
     return len(result)
 
 
+def opencv_lut_allocating(haystack_array: np.ndarray, lut: np.ndarray) -> int:
+    """OpenCV LUT with allocation."""
+    result = cv2.LUT(haystack_array, lut)
+    return len(result)
+
+
+def opencv_lut_inplace(haystack_array: np.ndarray, lut: np.ndarray) -> int:
+    """OpenCV LUT in-place."""
+    cv2.LUT(haystack_array, lut, dst=haystack_array)
+    return len(haystack_array)
+
+
+def numpy_lut_indexing_allocating(haystack_array: np.ndarray, lut: np.ndarray) -> int:
+    """NumPy array indexing (always allocating)."""
+    result = lut[haystack_array]
+    return len(result)
+
+
+def numpy_lut_indexing_inplace(haystack_array: np.ndarray, lut: np.ndarray) -> int:
+    """NumPy array indexing in-place."""
+    haystack_array[:] = lut[haystack_array]
+    return len(haystack_array)
+
+
+def numpy_lut_take_allocating(haystack_array: np.ndarray, lut: np.ndarray) -> int:
+    """NumPy take function (always allocating)."""
+    result = np.take(lut, haystack_array)
+    return len(result)
+
+
+def numpy_lut_take_inplace(haystack_array: np.ndarray, lut: np.ndarray) -> int:
+    """NumPy take function in-place."""
+    np.take(lut, haystack_array, out=haystack_array)
+    return len(haystack_array)
+
+
 def bench_translate(
     name: str,
-    haystack,
-    tables: List[bytes],
+    tokens,
+    table: bytes,
     op: Callable[[object, bytes], int],
     time_limit_seconds: float,
 ) -> None:
@@ -63,17 +109,17 @@ def bench_translate(
 
     requested = 0
     produced_bytes = 0
+    check_frequency = 100
 
-    i = 0
-    while True:
-        table = tables[i % len(tables)]
-        produced_bytes += op(haystack, table)
+    for token in tokens:
+        produced_bytes += op(token, table)
         requested += 1
+        check_frequency -= 1
 
-        if requested % 10 == 0:
+        if check_frequency == 0:
             if (now_ns() - start_time) >= time_limit_ns:
                 break
-        i += 1
+            check_frequency = 100
 
     secs = (now_ns() - start_time) / 1e9
     gbps = produced_bytes / (1e9 * secs) if secs > 0 else 0.0
@@ -196,32 +242,60 @@ def main() -> int:
         except re.error as e:
             parser.error(f"Invalid regex for --filter: {e}")
 
+    # Disable OpenCV multithreading for more consistent results
+    cv2.setNumThreads(1)
+
     # ---------------- Lookup-table transforms ----------------
-    print("\n=== Lookup-table Transforms ===")
-    identity = bytes(range(256))
-    reverse = bytes(reversed(identity))
-    repeated = bytes(range(64)) * 4
-    hex_table = b"0123456789abcdef" * 16
+    print()
+    print("--- LUT Transforms ---")
 
-    # Operate on the full contiguous string via StringZilla's view
-    sz_str = sz.Str(text)
-    if name_matches("stringzilla.Str.translate(reverse)", pattern):
-        bench_translate("stringzilla.Str.translate(reverse)", sz_str, [reverse], sz_translate, args.time_limit)
-    if name_matches("stringzilla.Str.translate(repeated)", pattern):
-        bench_translate("stringzilla.Str.translate(repeated)", sz_str, [repeated], sz_translate, args.time_limit)
-    if name_matches("stringzilla.Str.translate(hex)", pattern):
-        bench_translate("stringzilla.Str.translate(hex)", sz_str, [hex_table], sz_translate, args.time_limit)
+    # Create reverse LUT
+    reverse = bytes(reversed(range(256)))
+    reverse_np = np.arange(255, -1, -1, dtype=np.uint8)
 
-    # Python bytes.translate on the contiguous bytes
-    if name_matches("bytes.translate(reverse)", pattern):
-        bench_translate("bytes.translate(reverse)", data, [reverse], bytes_translate, args.time_limit)
-    if name_matches("bytes.translate(repeated)", pattern):
-        bench_translate("bytes.translate(repeated)", data, [repeated], bytes_translate, args.time_limit)
-    if name_matches("bytes.translate(hex)", pattern):
-        bench_translate("bytes.translate(hex)", data, [hex_table], bytes_translate, args.time_limit)
+    # Convert tokens to numpy arrays for token-based benchmarks
+    tokens_np = [np.array(np.frombuffer(token, dtype=np.uint8)) for token in tokens_b]
+    tokens_mv = [memoryview(bytearray(token)) for token in tokens_b]
+
+    # Python bytes.translate (always allocating)
+    if name_matches("bytes.translate(new)", pattern):
+        bench_translate("bytes.translate(new)", tokens_b, reverse, bytes_translate, args.time_limit)
+
+    # OpenCV allocating
+    if name_matches("opencv.LUT(new)", pattern):
+        bench_translate("opencv.LUT(new)", tokens_np, reverse_np, opencv_lut_allocating, args.time_limit)
+
+    # OpenCV in-place
+    if name_matches("opencv.LUT(inplace)", pattern):
+        bench_translate("opencv.LUT(inplace)", tokens_np, reverse_np, opencv_lut_inplace, args.time_limit)
+
+    # NumPy indexing allocating
+    if name_matches("numpy.indexing(new)", pattern):
+        bench_translate("numpy.indexing(new)", tokens_np, reverse_np, numpy_lut_indexing_allocating, args.time_limit)
+
+    # NumPy indexing in-place
+    if name_matches("numpy.indexing(inplace)", pattern):
+        bench_translate("numpy.indexing(inplace)", tokens_np, reverse_np, numpy_lut_indexing_inplace, args.time_limit)
+
+    # NumPy take allocating
+    if name_matches("numpy.take(new)", pattern):
+        bench_translate("numpy.take(new)", tokens_np, reverse_np, numpy_lut_take_allocating, args.time_limit)
+
+    # NumPy take in-place
+    if name_matches("numpy.take(inplace)", pattern):
+        bench_translate("numpy.take(inplace)", tokens_np, reverse_np, numpy_lut_take_inplace, args.time_limit)
+
+    # StringZilla allocating
+    if name_matches("stringzilla.translate(new)", pattern):
+        bench_translate("stringzilla.translate(new)", tokens_b, reverse, sz_translate_allocating, args.time_limit)
+
+    # StringZilla in-place (need memoryviews for each token)
+    if name_matches("stringzilla.translate(inplace)", pattern):
+        bench_translate("stringzilla.translate(inplace)", tokens_mv, reverse, sz_translate_inplace, args.time_limit)
 
     # ---------------- Random byte generation ----------------
-    print("\n=== Random Byte Generation ===")
+    print()
+    print("--- Random Byte Generation ---")
     sizes = sizes_from_tokens(tokens_b)
 
     if name_matches("pycryptodome.AES-CTR", pattern):

@@ -35,3 +35,4 @@ polars # https://github.com/pola-rs/polars
 # For memory RNG benchmarks
 numpy # https://github.com/numpy/numpy
 pycryptodome # https://github.com/Legrandin/pycryptodome
+opencv-python # https://github.com/opencv/opencv-python

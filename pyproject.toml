@@ -44,7 +44,7 @@ similarities = [
 hash = ["stringzilla", "xxhash", "blake3", "google-crc32c", "mmh3", "cityhash"]
 
 # Random byte generators and translation tables
-memory = ["stringzilla", "numpy", "pycryptodome"]
+memory = ["stringzilla", "numpy", "pycryptodome", "opencv-python"]
 
 [tool.ruff]
 # Enforce 120-column lines across formatting and linting
