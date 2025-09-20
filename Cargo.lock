@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "addr2line"
-version = "1.1.0"
+version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfbe277e56a376000877090da837660b4427aad530e3028d44e0bffe4f89a1c1"
 dependencies = [
@@ -3884,7 +3884,7 @@ dependencies = [
 
 [[package]]
 name = "stringwars"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "ahash",
  "aho-corasick",
