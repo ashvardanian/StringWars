@@ -1,24 +1,22 @@
-# StringWa.rs: The Empire Strikes Text
+# StringWa.rs: Text Processing on CPUs & GPUs, in Python & Rust 🦀
 
 ![StringWa.rs Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
 
-_Not to pick a fight, but let there be String Wars!_ 😅
-Jokes aside, many __great__ libraries for string processing exist.
-_Mostly, of course, written in Assembly, C, and C++, but some in Rust as well._ 😅
-And many of those "native" projects also ship first‑class Python bindings — so you'll see their Rust crates and Python wheels side‑by‑side in the comparisons.
+There are many __great__ libraries for string processing!
+Mostly, of course, written in Assembly, C, and C++, but some in Rust as well. 😅
 
-Where Rust decimates C and C++, however, is the __simplicity__ of dependency management, making it great for benchmarking "Systems Software" and lining up apples‑to‑apples across native crates and their Python bindings.
-So, to accelerate the development of the [`StringZilla`](https://github.com/ashvardanian/StringZilla) C library _(with Rust and Python bindings)_, I've created this repository to compare it against some of my & communities most beloved Rust projects, like:
+Where Rust decimates C and C++, is the __simplicity__ of dependency management, making it great for benchmarking "Systems Software" and lining up apples-to-apples across native crates and their Python bindings.
+So, to accelerate the development of the [`StringZilla`](https://github.com/ashvardanian/StringZilla) C, C++, and CUDA libraries (with Rust and Python bindings), I've created this repository to compare it against some of my & communities most beloved Rust projects, like:
 
 - [`memchr`](https://github.com/BurntSushi/memchr) for substring search.
 - [`rapidfuzz`](https://github.com/rapidfuzz/rapidfuzz-rs) for edit distances.
-- [`aHash`](https://github.com/tkaitchuck/aHash) for hashing.
-- [`aho_corasick`](https://github.com/BurntSushi/aho-corasick) for multi-pattern search.
-- [`tantivy`](https://github.com/quickwit-oss/tantivy) for document retrieval.
+- [`aHash`](https://github.com/tkaitchuck/aHash) and [`crc32fast`](https://github.com/srijs/rust-crc32fast) for hashing.
+- [`aho_corasick`](https://github.com/BurntSushi/aho-corasick) and [`regex`](https://github.com/rust-lang/regex) for multi-search.
+- [`arrow`](https://github.com/apache/arrow-rs) and [`polars`](https://github.com/pola-rs/polars) for collections.
 
 Of course, the functionality of the projects is different, as are the APIs and the usage patterns.
 So, I focus on the workloads for which StringZilla was designed and compare the throughput of the core operations.
-Notably, I also favor modern hardware with support for a wider range SIMD instructions, like mask-equipped AVX-512 on x86 starting from the 2015 Intel Skylake-X CPUs or more recent predicated variable-length SVE and SVE2 on Arm, that aren't supported by most of the existing libraries and Rust tooling.
+Notably, I also favor modern hardware with support for a wider range SIMD instructions, like mask-equipped AVX-512 on x86 starting from the 2015 Intel Skylake-X CPUs or more recent predicated variable-length SVE and SVE2 on Arm, that aren't often supported by existing libraries and tooling.
 
 > [!IMPORTANT]  
 > The numbers in the tables below are provided for reference only and may vary depending on the CPU, compiler, dataset, and tokenization method.
@@ -158,24 +156,26 @@ Those operations mostly are implemented using conventional algorithms:
 - Comparison-based Quicksort or Mergesort for sorting.
 - Hash-based or Tree-based algorithms for intersections.
 
-Assuming the comparisons can be accelerated with SIMD and so can be the hash functions, StringZilla could already provide a performance boost in such applications, but starting with v4 it also provides specialized algorithms for sorting and intersections.
+Assuming the compares can be accelerated with SIMD and so can be the hash functions, StringZilla could already provide a performance boost in such applications, but starting with v4 it also provides specialized algorithms for sorting and intersections.
 Those are directly compatible with arbitrary string-comparable collection types with a support of an indexed access to the elements.
 
-| Library                                     |                  Short Words |                 Long Lines |
-| ------------------------------------------- | ---------------------------: | -------------------------: |
-| Rust 🦀                                      |                              |                            |
-| `std::sort_unstable_by_key`                 |        54.35 M comparisons/s |      57.70 M comparisons/s |
-| `rayon::par_sort_unstable_by_key` on 1x CPU |        47.08 M comparisons/s |      50.35 M comparisons/s |
-| `arrow::lexsort_to_indices`                 |       122.20 M comparisons/s |  __84.73 M comparisons/s__ |
-| `stringzilla::argsort_permutation`          |   __182.88 M comparisons/s__ |      74.64 M comparisons/s |
-|                                             |                              |                            |
-| Python 🐍                                    |                              |                            |
-| `list.sort` on 1x CPU                       |        47.06 M comparisons/s |      22.36 M comparisons/s |
-| `pandas.Series.sort_values` on 1x CPU       |         9.39 M comparisons/s |      11.93 M comparisons/s |
-| `pyarrow.compute.sort_indices` on 1x CPU    |        62.17 M comparisons/s |       5.53 M comparisons/s |
-| `polars.Series.sort` on 1x CPU              |       223.38 M comparisons/s | __181.60 M comparisons/s__ |
-| `cudf.Series.sort_values` on 1x GPU         | __9'463.59 M comparisons/s__ |      66.44 M comparisons/s |
-| `stringzilla.Strs.sorted` on 1x CPU         |       171.13 M comparisons/s |      77.88 M comparisons/s |
+| Library                                     |               Short Words |              Long Lines |
+| ------------------------------------------- | ------------------------: | ----------------------: |
+| Rust 🦀                                      |                           |                         |
+| `std::sort_unstable_by_key`                 |        54.35 M compares/s |      57.70 M compares/s |
+| `rayon::par_sort_unstable_by_key` on 1x CPU |        47.08 M compares/s |      50.35 M compares/s |
+| `polars::Series::sort`                      |       200.34 M compares/s |      65.44 M compares/s |
+| `polars::Series::arg_sort`                  |        25.01 M compares/s |      14.05 M compares/s |
+| `arrow::lexsort_to_indices`                 |       122.20 M compares/s |  __84.73 M compares/s__ |
+| `stringzilla::argsort_permutation`          |   __213.73 M compares/s__ |      74.64 M compares/s |
+|                                             |                           |                         |
+| Python 🐍                                    |                           |                         |
+| `list.sort` on 1x CPU                       |        47.06 M compares/s |      22.36 M compares/s |
+| `pandas.Series.sort_values` on 1x CPU       |         9.39 M compares/s |      11.93 M compares/s |
+| `pyarrow.compute.sort_indices` on 1x CPU    |        62.17 M compares/s |       5.53 M compares/s |
+| `polars.Series.sort` on 1x CPU              |       223.38 M compares/s | __181.60 M compares/s__ |
+| `cudf.Series.sort_values` on 1x GPU         | __9'463.59 M compares/s__ |      66.44 M compares/s |
+| `stringzilla.Strs.sorted` on 1x CPU         |       171.13 M compares/s |      77.88 M compares/s |
 
 ## Random Generation & Lookup Tables
 
