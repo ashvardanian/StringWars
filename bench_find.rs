@@ -126,6 +126,19 @@ fn bench_substring_forward(
         })
     });
 
+    // Benchmark for `memmem::Finder` forward search with pre-constructed matcher.
+    let mut tokens = needles.iter().cycle();
+    g.bench_function("memmem::Finder", |b| {
+        b.iter(|| {
+            let token = black_box(*tokens.next().unwrap());
+            let finder = memmem::Finder::new(token);
+            let mut pos: usize = 0;
+            while let Some(found) = finder.find(&haystack[pos..]) {
+                pos += found + token.len();
+            }
+        })
+    });
+
     // Benchmark for default `std::str::find` forward search.
     let mut tokens = needles.iter().cycle();
     g.bench_function("std::str::find", |b| {
@@ -134,17 +147,6 @@ fn bench_substring_forward(
             let mut pos = 0;
             while let Some(found) = haystack[pos..].find(token) {
                 pos += found + token.len();
-            }
-        })
-    });
-
-    // Benchmark for `memmem::find_iter` forward search using a cycle iterator.
-    let mut tokens = needles.iter().cycle();
-    g.bench_function("memmem::find_iter", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            for match_ in memmem::find_iter(haystack, token) {
-                black_box(match_);
             }
         })
     });
@@ -190,6 +192,23 @@ fn bench_substring_backward(
         })
     });
 
+    // Benchmark for `memmem::FinderRev` backward search with pre-constructed matcher.
+    let mut tokens = needles.iter().cycle();
+    g.bench_function("memmem::FinderRev", |b| {
+        b.iter(|| {
+            let token = black_box(*tokens.next().unwrap());
+            let finder = memmem::FinderRev::new(token);
+            let mut pos: Option<usize> = Some(haystack.len());
+            while let Some(end) = pos {
+                if let Some(found) = finder.rfind(&haystack[..end]) {
+                    pos = Some(found);
+                } else {
+                    break;
+                }
+            }
+        })
+    });
+
     // Benchmark for default `std::str::rfind` backward search.
     let mut tokens = needles.iter().cycle();
     g.bench_function("std::str::rfind", |b| {
@@ -202,17 +221,6 @@ fn bench_substring_backward(
                 } else {
                     break;
                 }
-            }
-        })
-    });
-
-    // Benchmark for `memmem::rfind_iter` forward search using a cycle iterator.
-    let mut tokens = needles.iter().cycle();
-    g.bench_function("memmem::rfind_iter", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            for match_ in memmem::rfind_iter(haystack, token) {
-                black_box(match_);
             }
         })
     });

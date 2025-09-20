@@ -98,32 +98,32 @@ Most of the time, programmers don't think about replacing the `str::find` method
 In many languages it's offloaded to the C standard library [`memmem`](https://man7.org/linux/man-pages/man3/memmem.3.html) or [`strstr`](https://en.cppreference.com/w/c/string/byte/strstr) for `NULL`-terminated strings.
 The C standard library is, however, also implemented by humans, and a better solution can be created.
 
-| Library             |     Short Words |      Long Lines |
-| ------------------- | --------------: | --------------: |
-| Rust 🦀              |                 |                 |
-| `std::str::find`    |      9.48 GiB/s |     10.88 GiB/s |
-| `memmem::find`      |      9.51 GiB/s |     10.83 GiB/s |
-| `stringzilla::find` | __10.45 GiB/s__ | __10.89 GiB/s__ |
-|                     |                 |                 |
-| Python 🐍            |                 |                 |
-| `str.find`          |      1.05 GiB/s |      1.23 GiB/s |
-| `stringzilla.find`  | __10.82 GiB/s__ | __11.79 GiB/s__ |
-
-> Higher-throughput evaluation with `memmem` is possible, if the "matcher" object is reused to iterate through the string instead of constructing a new one for each search.
+| Library             | Short Word Queries | Long Line Queries |
+| ------------------- | -----------------: | ----------------: |
+| Rust 🦀              |                    |                   |
+| `std::str::find`    |         9.45 GiB/s |       10.88 GiB/s |
+| `memmem::find`      |         9.48 GiB/s |       10.83 GiB/s |
+| `memmem::Finder`    |         9.51 GiB/s |   __10.99 GiB/s__ |
+| `stringzilla::find` |    __10.51 GiB/s__ |       10.82 GiB/s |
+|                     |                    |                   |
+| Python 🐍            |                    |                   |
+| `str.find`          |         1.05 GiB/s |        1.23 GiB/s |
+| `stringzilla.find`  |    __10.82 GiB/s__ |   __11.79 GiB/s__ |
 
 Interestingly, the reverse order search is almost never implemented in SIMD, assuming fewer people ever need it.
 Still, those are provided by StringZilla mostly for parsing tasks and feature parity.
 
-| Library              |    Short Words |      Long Lines |
-| -------------------- | -------------: | --------------: |
-| Rust 🦀               |                |                 |
-| `std::str::rfind`    |     2.96 GiB/s |      3.65 GiB/s |
-| `memmem::rfind`      |     2.95 GiB/s |      3.71 GiB/s |
-| `stringzilla::rfind` | __9.78 GiB/s__ | __10.43 GiB/s__ |
-|                      |                |                 |
-| Python 🐍             |                |                 |
-| `str.rfind`          |     1.54 GiB/s |      3.84 GiB/s |
-| `stringzilla.rfind`  | __7.15 GiB/s__ | __11.56 GiB/s__ |
+| Library              | Short Word Queries | Long Line Queries |
+| -------------------- | -----------------: | ----------------: |
+| Rust 🦀               |                    |                   |
+| `std::str::rfind`    |         2.72 GiB/s |        5.94 GiB/s |
+| `memmem::rfind`      |         2.70 GiB/s |        5.90 GiB/s |
+| `memmem::FinderRev`  |         2.79 GiB/s |        5.81 GiB/s |
+| `stringzilla::rfind` |    __10.34 GiB/s__ |   __10.66 GiB/s__ |
+|                      |                    |                   |
+| Python 🐍             |                    |                   |
+| `str.rfind`          |         1.54 GiB/s |        3.84 GiB/s |
+| `stringzilla.rfind`  |     __7.15 GiB/s__ |   __11.56 GiB/s__ |
 
 
 ## Byte-Set Search
