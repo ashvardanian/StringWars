@@ -47,6 +47,9 @@ use memchr::memmem;
 use regex::bytes::Regex;
 use stringzilla::sz;
 
+mod utils;
+use utils::should_run;
+
 fn log_stringzilla_metadata() {
     let v = sz::version();
     println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
@@ -104,52 +107,60 @@ fn bench_substring_forward(
 
     // Benchmark for StringZilla forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("stringzilla::find", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let mut pos: usize = 0;
-            while let Some(found) = sz::find(&haystack[pos..], token) {
-                pos += found + token.len();
-            }
-        })
-    });
+    if should_run("stringzilla::find") {
+        g.bench_function("stringzilla::find", |b| {
+            b.iter(|| {
+                let token = black_box(*tokens.next().unwrap());
+                let mut pos: usize = 0;
+                while let Some(found) = sz::find(&haystack[pos..], token) {
+                    pos += found + token.len();
+                }
+            })
+        });
+    }
 
     // Benchmark for `memmem::find` forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("memmem::find", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let mut pos: usize = 0;
-            while let Some(found) = memmem::find(&haystack[pos..], token) {
-                pos += found + token.len();
-            }
-        })
-    });
+    if should_run("memmem::find") {
+        g.bench_function("memmem::find", |b| {
+            b.iter(|| {
+                let token = black_box(*tokens.next().unwrap());
+                let mut pos: usize = 0;
+                while let Some(found) = memmem::find(&haystack[pos..], token) {
+                    pos += found + token.len();
+                }
+            })
+        });
+    }
 
     // Benchmark for `memmem::Finder` forward search with pre-constructed matcher.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("memmem::Finder", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let finder = memmem::Finder::new(token);
-            let mut pos: usize = 0;
-            while let Some(found) = finder.find(&haystack[pos..]) {
-                pos += found + token.len();
-            }
-        })
-    });
+    if should_run("memmem::Finder") {
+        g.bench_function("memmem::Finder", |b| {
+            b.iter(|| {
+                let token = black_box(*tokens.next().unwrap());
+                let finder = memmem::Finder::new(token);
+                let mut pos: usize = 0;
+                while let Some(found) = finder.find(&haystack[pos..]) {
+                    pos += found + token.len();
+                }
+            })
+        });
+    }
 
     // Benchmark for default `std::str::find` forward search.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("std::str::find", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let mut pos = 0;
-            while let Some(found) = haystack[pos..].find(token) {
-                pos += found + token.len();
-            }
-        })
-    });
+    if should_run("std::str::find") {
+        g.bench_function("std::str::find", |b| {
+            b.iter(|| {
+                let token = black_box(*tokens.next().unwrap());
+                let mut pos = 0;
+                while let Some(found) = haystack[pos..].find(token) {
+                    pos += found + token.len();
+                }
+            })
+        });
+    }
 }
 
 /// Benchmarks backward substring search using "StringZilla", "MemMem", and standard strings.
@@ -162,68 +173,76 @@ fn bench_substring_backward(
 
     // Benchmark for StringZilla backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("stringzilla::rfind", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let mut pos: Option<usize> = Some(haystack.len());
-            while let Some(end) = pos {
-                if let Some(found) = sz::rfind(&haystack[..end], token) {
-                    pos = Some(found);
-                } else {
-                    break;
+    if should_run("stringzilla::rfind") {
+        g.bench_function("stringzilla::rfind", |b| {
+            b.iter(|| {
+                let token = black_box(*tokens.next().unwrap());
+                let mut pos: Option<usize> = Some(haystack.len());
+                while let Some(end) = pos {
+                    if let Some(found) = sz::rfind(&haystack[..end], token) {
+                        pos = Some(found);
+                    } else {
+                        break;
+                    }
                 }
-            }
-        })
-    });
+            })
+        });
+    }
 
     // Benchmark for `memmem::rfind` backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("memmem::rfind", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let mut pos: Option<usize> = Some(haystack.len());
-            while let Some(end) = pos {
-                if let Some(found) = memmem::rfind(&haystack[..end], token) {
-                    pos = Some(found);
-                } else {
-                    break;
+    if should_run("memmem::rfind") {
+        g.bench_function("memmem::rfind", |b| {
+            b.iter(|| {
+                let token = black_box(*tokens.next().unwrap());
+                let mut pos: Option<usize> = Some(haystack.len());
+                while let Some(end) = pos {
+                    if let Some(found) = memmem::rfind(&haystack[..end], token) {
+                        pos = Some(found);
+                    } else {
+                        break;
+                    }
                 }
-            }
-        })
-    });
+            })
+        });
+    }
 
     // Benchmark for `memmem::FinderRev` backward search with pre-constructed matcher.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("memmem::FinderRev", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let finder = memmem::FinderRev::new(token);
-            let mut pos: Option<usize> = Some(haystack.len());
-            while let Some(end) = pos {
-                if let Some(found) = finder.rfind(&haystack[..end]) {
-                    pos = Some(found);
-                } else {
-                    break;
+    if should_run("memmem::FinderRev") {
+        g.bench_function("memmem::FinderRev", |b| {
+            b.iter(|| {
+                let token = black_box(*tokens.next().unwrap());
+                let finder = memmem::FinderRev::new(token);
+                let mut pos: Option<usize> = Some(haystack.len());
+                while let Some(end) = pos {
+                    if let Some(found) = finder.rfind(&haystack[..end]) {
+                        pos = Some(found);
+                    } else {
+                        break;
+                    }
                 }
-            }
-        })
-    });
+            })
+        });
+    }
 
     // Benchmark for default `std::str::rfind` backward search.
     let mut tokens = needles.iter().cycle();
-    g.bench_function("std::str::rfind", |b| {
-        b.iter(|| {
-            let token = black_box(*tokens.next().unwrap());
-            let mut pos: Option<usize> = Some(haystack.len());
-            while let Some(end) = pos {
-                if let Some(found) = haystack[..end].rfind(token) {
-                    pos = Some(found);
-                } else {
-                    break;
+    if should_run("std::str::rfind") {
+        g.bench_function("std::str::rfind", |b| {
+            b.iter(|| {
+                let token = black_box(*tokens.next().unwrap());
+                let mut pos: Option<usize> = Some(haystack.len());
+                while let Some(end) = pos {
+                    if let Some(found) = haystack[..end].rfind(token) {
+                        pos = Some(found);
+                    } else {
+                        break;
+                    }
                 }
-            }
-        })
-    });
+            })
+        });
+    }
 }
 
 /// Benchmarks byteset search using "StringZilla", "bstr", "RegEx", and "AhoCorasick"
@@ -243,62 +262,73 @@ fn bench_byteset_forward(
     let sz_tabs = sz::Byteset::from(BYTES_TABS);
     let sz_html = sz::Byteset::from(BYTES_HTML);
     let sz_digits = sz::Byteset::from(BYTES_DIGITS);
-    g.bench_function("stringzilla::find_byteset", |b| {
-        b.iter(|| {
-            for token in needles.iter() {
-                let mut pos: usize = 0;
-                while let Some(found) = sz::find_byteset(&token[pos..], sz_tabs) {
-                    pos += found + 1;
+    if should_run("stringzilla::find_byteset") {
+        g.bench_function("stringzilla::find_byteset", |b| {
+            b.iter(|| {
+                for token in needles.iter() {
+                    let mut pos: usize = 0;
+                    while let Some(found) = sz::find_byteset(&token[pos..], sz_tabs) {
+                        pos += found + 1;
+                    }
+                    pos = 0;
+                    while let Some(found) = sz::find_byteset(&token[pos..], sz_html) {
+                        pos += found + 1;
+                    }
+                    pos = 0;
+                    while let Some(found) = sz::find_byteset(&token[pos..], sz_digits) {
+                        pos += found + 1;
+                    }
                 }
-                pos = 0;
-                while let Some(found) = sz::find_byteset(&token[pos..], sz_html) {
-                    pos += found + 1;
-                }
-                pos = 0;
-                while let Some(found) = sz::find_byteset(&token[pos..], sz_digits) {
-                    pos += found + 1;
-                }
-            }
-        })
-    });
+            })
+        });
+    }
 
     // Benchmark for bstr's byteset search.
-    g.bench_function("bstr::iter", |b| {
-        b.iter(|| {
-            for token in needles.iter() {
-                let mut pos: usize = 0;
-                // Inline search for `BYTES_TABS`.
-                while let Some(found) = token[pos..].iter().position(|&c| BYTES_TABS.contains(&c)) {
-                    pos += found + 1;
+    if should_run("bstr::iter") {
+        g.bench_function("bstr::iter", |b| {
+            b.iter(|| {
+                for token in needles.iter() {
+                    let mut pos: usize = 0;
+                    // Inline search for `BYTES_TABS`.
+                    while let Some(found) =
+                        token[pos..].iter().position(|&c| BYTES_TABS.contains(&c))
+                    {
+                        pos += found + 1;
+                    }
+                    pos = 0;
+                    // Inline search for `BYTES_HTML`.
+                    while let Some(found) =
+                        token[pos..].iter().position(|&c| BYTES_HTML.contains(&c))
+                    {
+                        pos += found + 1;
+                    }
+                    pos = 0;
+                    // Inline search for `BYTES_DIGITS`.
+                    while let Some(found) =
+                        token[pos..].iter().position(|&c| BYTES_DIGITS.contains(&c))
+                    {
+                        pos += found + 1;
+                    }
                 }
-                pos = 0;
-                // Inline search for `BYTES_HTML`.
-                while let Some(found) = token[pos..].iter().position(|&c| BYTES_HTML.contains(&c)) {
-                    pos += found + 1;
-                }
-                pos = 0;
-                // Inline search for `BYTES_DIGITS`.
-                while let Some(found) = token[pos..].iter().position(|&c| BYTES_DIGITS.contains(&c))
-                {
-                    pos += found + 1;
-                }
-            }
-        })
-    });
+            })
+        });
+    }
 
     // Benchmark for Regex-based byteset search.
     let re_tabs = Regex::new("[\n\r\x0B\x0C]").unwrap();
     let re_html = Regex::new("[</>&'\"=\\[\\]]").unwrap();
     let re_digits = Regex::new("[0-9]").unwrap();
-    g.bench_function("regex::find_iter", |b| {
-        b.iter(|| {
-            for token in needles.iter() {
-                black_box(re_tabs.find_iter(token.as_bytes()).count());
-                black_box(re_html.find_iter(token.as_bytes()).count());
-                black_box(re_digits.find_iter(token.as_bytes()).count());
-            }
-        })
-    });
+    if should_run("regex::find_iter") {
+        g.bench_function("regex::find_iter", |b| {
+            b.iter(|| {
+                for token in needles.iter() {
+                    black_box(re_tabs.find_iter(token.as_bytes()).count());
+                    black_box(re_html.find_iter(token.as_bytes()).count());
+                    black_box(re_digits.find_iter(token.as_bytes()).count());
+                }
+            })
+        });
+    }
 
     // Benchmark for Aho–Corasick-based byteset search.
     let ac_tabs = AhoCorasick::new(
@@ -322,15 +352,17 @@ fn bench_byteset_forward(
             .collect::<Vec<_>>(),
     )
     .expect("failed to create AhoCorasick FSA");
-    g.bench_function("aho_corasick::find_iter", |b| {
-        b.iter(|| {
-            for token in needles.iter() {
-                black_box(ac_tabs.find_iter(token).count());
-                black_box(ac_html.find_iter(token).count());
-                black_box(ac_digits.find_iter(token).count());
-            }
-        })
-    });
+    if should_run("aho_corasick::find_iter") {
+        g.bench_function("aho_corasick::find_iter", |b| {
+            b.iter(|| {
+                for token in needles.iter() {
+                    black_box(ac_tabs.find_iter(token).count());
+                    black_box(ac_html.find_iter(token).count());
+                    black_box(ac_digits.find_iter(token).count());
+                }
+            })
+        });
+    }
 }
 
 fn main() {
