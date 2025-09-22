@@ -402,3 +402,16 @@ wget --no-clobber -O xlsum.csv.gz https://github.com/ashvardanian/xl-sum/release
 gzip -d xlsum.csv.gz
 STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs $(nproc)
 ```
+
+### DNA Corpus
+
+For bioinformatics workloads, I use the following datasets with increasing string lengths:
+
+```bash
+wget --no-clobber -O acgt_100.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_100.txt?download=true
+wget --no-clobber -O acgt_1k.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_1k.txt?download=true
+wget --no-clobber -O acgt_10k.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_10k.txt?download=true
+wget --no-clobber -O acgt_100k.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_100k.txt?download=true
+wget --no-clobber -O acgt_1m.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_1m.txt?download=true
+wget --no-clobber -O acgt_10m.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_10m.txt?download=true
+```
