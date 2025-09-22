@@ -38,9 +38,8 @@ RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_BATCH=32768 \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features "cuda bench_similarities" bench_similarities --jobs $(nproc)
-    STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_similarities bench_similarities --jobs 1
+    STRINGWARS_FILTER=1xGPU \
+    cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1
 ```
 "#]
 use core::convert::TryInto;

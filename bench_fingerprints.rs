@@ -39,7 +39,8 @@ RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_BATCH=32768 \
     STRINGWARS_NDIM=256 \
-    cargo criterion --features "cuda bench_fingerprints" bench_fingerprints --jobs $(nproc)
+    STRINGWARS_FILTER=1xGPU \
+    cargo criterion --features "cuda bench_fingerprints" bench_fingerprints --jobs 1
 ```
 "#]
 
@@ -168,7 +169,7 @@ fn configure_bench() -> Criterion<HashesWallTime> {
         .with_measurement(HashesWallTime::default())
         .sample_size(10)
         .warm_up_time(std::time::Duration::from_secs(1))
-        .measurement_time(std::time::Duration::from_secs(10))
+        .measurement_time(std::time::Duration::from_secs(30))
 }
 
 fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {

@@ -319,6 +319,17 @@ cargo fetch --all-features
 cargo build --all-features
 ```
 
+By default StringWa.rs links `stringzilla` in CPU mode.
+If the machine has an NVIDIA GPU with CUDA installed, enable the CUDA kernels explicitly when running benches, for example:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_TOKENS=lines \
+    STRINGWARS_FILTER=GPU \
+    cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1
+```
+
 Wars always take long, and so do these benchmarks.
 Every one of them includes a few seconds of a warm-up phase to ensure that the CPU caches are filled and the results are not affected by cold start or SIMD-related frequency scaling.
 Each of them accepts a few environment variables to control the dataset, the tokenization, and the error bounds.
