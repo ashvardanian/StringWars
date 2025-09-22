@@ -31,6 +31,16 @@ RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_NDIM=256 \
     cargo criterion --features bench_fingerprints bench_fingerprints --jobs 1
 ```
+
+To run on a GPU-capable machine, enable the CUDA feature and consider larger batches:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_BATCH=32768 \
+    STRINGWARS_NDIM=256 \
+    cargo criterion --features "cuda bench_fingerprints" bench_fingerprints --jobs $(nproc)
+```
 "#]
 
 use core::convert::TryInto;
