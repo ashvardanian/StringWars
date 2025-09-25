@@ -109,7 +109,7 @@ fn bench_lookup_table(
     }
 
     // Benchmark using StringZilla's `lookup_inplace`.
-    if should_run("stringzilla::lookup_inplace") {
+    if should_run("lookup-table/stringzilla::lookup_inplace") {
         g.bench_function("stringzilla::lookup_inplace", |b| {
             b.iter(|| {
                 for token in tokens.iter_mut() {
@@ -121,7 +121,7 @@ fn bench_lookup_table(
     }
 
     // Benchmark a plain serial mapping using the same lookup table.
-    if should_run("serial") {
+    if should_run("lookup-table/serial") {
         g.bench_function("serial", |b| {
             b.iter(|| {
                 for token in tokens.iter_mut() {
@@ -144,7 +144,7 @@ fn bench_generate_random(
     g.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark for StringZilla AES-based PRNG
-    if should_run("stringzilla::fill_random") {
+    if should_run("generate-random/stringzilla::fill_random") {
         g.bench_function("stringzilla::fill_random", |b| {
             b.iter(|| {
                 for token in tokens.iter_mut() {
@@ -155,7 +155,7 @@ fn bench_generate_random(
     }
 
     // Benchmark using zeroize to obfuscate (zero out) the buffer.
-    if should_run("zeroize::zeroize") {
+    if should_run("generate-random/zeroize::zeroize") {
         g.bench_function("zeroize::zeroize", |b| {
             b.iter(|| {
                 for token in tokens.iter_mut() {
@@ -167,7 +167,7 @@ fn bench_generate_random(
     }
 
     // Benchmark using `getrandom` to randomize the buffer via the OS.
-    if should_run("getrandom::fill") {
+    if should_run("generate-random/getrandom::fill") {
         g.bench_function("getrandom::fill", |b| {
             b.iter(|| {
                 for token in tokens.iter_mut() {
@@ -179,7 +179,7 @@ fn bench_generate_random(
     }
 
     // Benchmark using `rand_chacha::ChaCha20Rng`.
-    if should_run("rand_chacha::ChaCha20Rng") {
+    if should_run("generate-random/rand_chacha::ChaCha20Rng") {
         g.bench_function("rand_chacha::ChaCha20Rng", |b| {
             b.iter(|| {
                 for token in tokens.iter_mut() {
@@ -192,7 +192,7 @@ fn bench_generate_random(
     }
 
     // Benchmark using `rand_xoshiro::Xoshiro128Plus`.
-    if should_run("rand_xoshiro::Xoshiro128Plus") {
+    if should_run("generate-random/rand_xoshiro::Xoshiro128Plus") {
         g.bench_function("rand_xoshiro::Xoshiro128Plus", |b| {
             b.iter(|| {
                 for token in tokens.iter_mut() {

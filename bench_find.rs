@@ -107,7 +107,7 @@ fn bench_substring_forward(
 
     // Benchmark for StringZilla forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    if should_run("stringzilla::find") {
+    if should_run("substring-forward/stringzilla::find") {
         g.bench_function("stringzilla::find", |b| {
             b.iter(|| {
                 let token = black_box(*tokens.next().unwrap());
@@ -121,7 +121,7 @@ fn bench_substring_forward(
 
     // Benchmark for `memmem::find` forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    if should_run("memmem::find") {
+    if should_run("substring-forward/memmem::find") {
         g.bench_function("memmem::find", |b| {
             b.iter(|| {
                 let token = black_box(*tokens.next().unwrap());
@@ -135,7 +135,7 @@ fn bench_substring_forward(
 
     // Benchmark for `memmem::Finder` forward search with pre-constructed matcher.
     let mut tokens = needles.iter().cycle();
-    if should_run("memmem::Finder") {
+    if should_run("substring-forward/memmem::Finder") {
         g.bench_function("memmem::Finder", |b| {
             b.iter(|| {
                 let token = black_box(*tokens.next().unwrap());
@@ -150,7 +150,7 @@ fn bench_substring_forward(
 
     // Benchmark for default `std::str::find` forward search.
     let mut tokens = needles.iter().cycle();
-    if should_run("std::str::find") {
+    if should_run("substring-forward/std::str::find") {
         g.bench_function("std::str::find", |b| {
             b.iter(|| {
                 let token = black_box(*tokens.next().unwrap());
@@ -173,7 +173,7 @@ fn bench_substring_backward(
 
     // Benchmark for StringZilla backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    if should_run("stringzilla::rfind") {
+    if should_run("substring-backward/stringzilla::rfind") {
         g.bench_function("stringzilla::rfind", |b| {
             b.iter(|| {
                 let token = black_box(*tokens.next().unwrap());
@@ -191,7 +191,7 @@ fn bench_substring_backward(
 
     // Benchmark for `memmem::rfind` backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    if should_run("memmem::rfind") {
+    if should_run("substring-backward/memmem::rfind") {
         g.bench_function("memmem::rfind", |b| {
             b.iter(|| {
                 let token = black_box(*tokens.next().unwrap());
@@ -209,7 +209,7 @@ fn bench_substring_backward(
 
     // Benchmark for `memmem::FinderRev` backward search with pre-constructed matcher.
     let mut tokens = needles.iter().cycle();
-    if should_run("memmem::FinderRev") {
+    if should_run("substring-backward/memmem::FinderRev") {
         g.bench_function("memmem::FinderRev", |b| {
             b.iter(|| {
                 let token = black_box(*tokens.next().unwrap());
@@ -228,7 +228,7 @@ fn bench_substring_backward(
 
     // Benchmark for default `std::str::rfind` backward search.
     let mut tokens = needles.iter().cycle();
-    if should_run("std::str::rfind") {
+    if should_run("substring-backward/std::str::rfind") {
         g.bench_function("std::str::rfind", |b| {
             b.iter(|| {
                 let token = black_box(*tokens.next().unwrap());
@@ -262,7 +262,7 @@ fn bench_byteset_forward(
     let sz_tabs = sz::Byteset::from(BYTES_TABS);
     let sz_html = sz::Byteset::from(BYTES_HTML);
     let sz_digits = sz::Byteset::from(BYTES_DIGITS);
-    if should_run("stringzilla::find_byteset") {
+    if should_run("byteset-forward/stringzilla::find_byteset") {
         g.bench_function("stringzilla::find_byteset", |b| {
             b.iter(|| {
                 for token in needles.iter() {
@@ -284,7 +284,7 @@ fn bench_byteset_forward(
     }
 
     // Benchmark for bstr's byteset search.
-    if should_run("bstr::iter") {
+    if should_run("byteset-forward/bstr::iter") {
         g.bench_function("bstr::iter", |b| {
             b.iter(|| {
                 for token in needles.iter() {
@@ -318,7 +318,7 @@ fn bench_byteset_forward(
     let re_tabs = Regex::new("[\n\r\x0B\x0C]").unwrap();
     let re_html = Regex::new("[</>&'\"=\\[\\]]").unwrap();
     let re_digits = Regex::new("[0-9]").unwrap();
-    if should_run("regex::find_iter") {
+    if should_run("byteset-forward/regex::find_iter") {
         g.bench_function("regex::find_iter", |b| {
             b.iter(|| {
                 for token in needles.iter() {
@@ -352,7 +352,7 @@ fn bench_byteset_forward(
             .collect::<Vec<_>>(),
     )
     .expect("failed to create AhoCorasick FSA");
-    if should_run("aho_corasick::find_iter") {
+    if should_run("byteset-forward/aho_corasick::find_iter") {
         g.bench_function("aho_corasick::find_iter", |b| {
             b.iter(|| {
                 for token in needles.iter() {

@@ -121,7 +121,7 @@ fn bench_argsort(
     let polars_dataframe = DataFrame::new(vec![polars_series.clone().into()]).unwrap();
 
     // Benchmark: StringZilla's argsort
-    if should_run("stringzilla::argsort_permutation") {
+    if should_run("argsort/stringzilla::argsort_permutation") {
         group.bench_function("stringzilla::argsort_permutation", |b| {
             b.iter(|| {
                 reusable_indices.clear();
@@ -139,7 +139,7 @@ fn bench_argsort(
     // ! We can't use the conventional `StringArray` in most of our workloads, as it will
     // ! overflow the 32-bit tape offset capacity and panic.
     let array = Arc::new(LargeStringArray::from(unsorted.to_vec())) as ArrayRef;
-    if should_run("arrow::lexsort_to_indices") {
+    if should_run("argsort/arrow::lexsort_to_indices") {
         group.bench_function("arrow::lexsort_to_indices", |b| {
             b.iter(|| {
                 let column_to_sort = SortColumn {
@@ -158,7 +158,7 @@ fn bench_argsort(
     }
 
     // Benchmark: Standard library argsort using `sort_unstable_by_key`
-    if should_run("std::sort_unstable_by_key") {
+    if should_run("argsort/std::sort_unstable_by_key") {
         group.bench_function("std::sort_unstable_by_key", |b| {
             b.iter(|| {
                 reusable_indices.clear();
@@ -170,7 +170,7 @@ fn bench_argsort(
     }
 
     // Benchmark: Parallel argsort using Rayon
-    if should_run("rayon::par_sort_unstable_by_key") {
+    if should_run("argsort/rayon::par_sort_unstable_by_key") {
         group.bench_function("rayon::par_sort_unstable_by_key", |b| {
             b.iter(|| {
                 reusable_indices.clear();
@@ -182,7 +182,7 @@ fn bench_argsort(
     }
 
     // Benchmark: Polars Series sort
-    if should_run("polars::Series::sort") {
+    if should_run("argsort/polars::Series::sort") {
         group.bench_function("polars::Series::sort", |b| {
             b.iter(|| {
                 let sorted = polars_series.sort(POLARS_SORT_OPTIONS).unwrap();
@@ -192,7 +192,7 @@ fn bench_argsort(
     }
 
     // Benchmark: Polars Series argsort (returning indices)
-    if should_run("polars::Series::arg_sort") {
+    if should_run("argsort/polars::Series::arg_sort") {
         group.bench_function("polars::Series::arg_sort", |b| {
             b.iter(|| {
                 let indices = polars_series.arg_sort(POLARS_SORT_OPTIONS);
@@ -202,7 +202,7 @@ fn bench_argsort(
     }
 
     // Benchmark: Polars DataFrame sort
-    if should_run("polars::DataFrame::sort") {
+    if should_run("argsort/polars::DataFrame::sort") {
         group.bench_function("polars::DataFrame::sort", |b| {
             b.iter(|| {
                 let sorted = polars_dataframe

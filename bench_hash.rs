@@ -118,7 +118,7 @@ fn bench_stateless(
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark: StringZilla `bytesum` reference
-    if should_run("stringzilla::bytesum") {
+    if should_run("stateless/stringzilla::bytesum") {
         group.bench_function("stringzilla::bytesum", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -130,7 +130,7 @@ fn bench_stateless(
     }
 
     // Benchmark: StringZilla
-    if should_run("stringzilla::hash") {
+    if should_run("stateless/stringzilla::hash") {
         group.bench_function("stringzilla::hash", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -142,7 +142,8 @@ fn bench_stateless(
     }
 
     // Benchmark: SipHash via `std::DefaultHasher`
-    if should_run("std::DefaultHasher::hash_one") {
+    if should_run("stateless/std::DefaultHasher::hash_one") {
+        let std_builder = std::collections::hash_map::RandomState::new();
         group.bench_function("std::DefaultHasher::hash_one", |b| {
             let std_builder = std::collections::hash_map::RandomState::new();
             b.iter(|| {
@@ -155,7 +156,8 @@ fn bench_stateless(
     }
 
     // Benchmark: aHash
-    if should_run("aHash::hash_one") {
+    if should_run("stateless/aHash::hash_one") {
+        let hash_builder = RandomState::with_seed(42);
         group.bench_function("aHash::hash_one", |b| {
             let hash_builder = RandomState::with_seed(42);
             b.iter(|| {
@@ -168,7 +170,7 @@ fn bench_stateless(
     }
 
     // Benchmark: xxHash
-    if should_run("xxh3::xxh3_64") {
+    if should_run("stateless/xxh3::xxh3_64") {
         group.bench_function("xxh3::xxh3_64", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -180,7 +182,7 @@ fn bench_stateless(
     }
 
     // Benchmark: gxhash
-    if should_run("gxhash::gxhash64") {
+    if should_run("stateless/gxhash::gxhash64") {
         group.bench_function("gxhash::gxhash64", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -192,7 +194,7 @@ fn bench_stateless(
     }
 
     // Benchmark: CRC32
-    if should_run("crc32fast::hash") {
+    if should_run("stateless/crc32fast::hash") {
         group.bench_function("crc32fast::hash", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -204,7 +206,7 @@ fn bench_stateless(
     }
 
     // Benchmark: MurmurHash3 (x64_128) via `murmur3` (stateless)
-    if should_run("murmur3::x64_128") {
+    if should_run("stateless/murmur3::x64_128") {
         group.bench_function("murmur3::x64_128", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -217,7 +219,7 @@ fn bench_stateless(
     }
 
     // Benchmark: CityHash64 via `cityhash` (stateless)
-    if should_run("cityhash::city_hash_64") {
+    if should_run("stateless/cityhash::city_hash_64") {
         group.bench_function("cityhash::city_hash_64", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -229,7 +231,7 @@ fn bench_stateless(
     }
 
     // Benchmark: Blake3 - should be by far the slowest, as it's a cryptographic hash.
-    if should_run("blake3") {
+    if should_run("stateless/blake3") {
         group.bench_function("blake3", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -251,7 +253,7 @@ fn bench_stateful(
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark: StringZilla `hash`
-    if should_run("stringzilla::Hasher") {
+    if should_run("stateful/stringzilla::Hasher") {
         group.bench_function("stringzilla::Hasher", |b| {
             b.iter(|| {
                 let mut hasher = sz::Hasher::new(0);
@@ -264,7 +266,7 @@ fn bench_stateful(
     }
 
     // Benchmark: SipHash via `std::DefaultHasher`
-    if should_run("std::DefaultHasher") {
+    if should_run("stateful/std::DefaultHasher") {
         group.bench_function("std::DefaultHasher", |b| {
             let std_builder = std::collections::hash_map::RandomState::new();
             b.iter(|| {
@@ -278,7 +280,7 @@ fn bench_stateful(
     }
 
     // Benchmark: aHash
-    if should_run("aHash::AHasher") {
+    if should_run("stateful/aHash::AHasher") {
         group.bench_function("aHash::AHasher", |b| {
             let state: AHashState = RandomState::with_seed(42);
             b.iter(|| {
@@ -292,7 +294,7 @@ fn bench_stateful(
     }
 
     // Benchmark: CRC32
-    if should_run("crc32fast::Hasher") {
+    if should_run("stateful/crc32fast::Hasher") {
         group.bench_function("crc32fast::Hasher", |b| {
             b.iter(|| {
                 let mut hasher = crc32fast::Hasher::new();
