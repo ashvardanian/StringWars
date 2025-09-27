@@ -387,7 +387,10 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     }
 
     // StringZilla: Nx CPU
-    if should_run(&format!("fingerprinting/stringzillas::Fingerprints({}xCPU)", num_cores)) {
+    if should_run(&format!(
+        "fingerprinting/stringzillas::Fingerprints({}xCPU)",
+        num_cores
+    )) {
         g.throughput(Throughput::Elements(per_batch_hash_ops));
         g.bench_function(
             &format!("stringzillas::Fingerprints({}xCPU)", num_cores),

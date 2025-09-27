@@ -50,6 +50,7 @@ use criterion::{Criterion, Throughput};
 use fork_union::count_logical_cores;
 use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 
+use bio::alignment::{distance as bio_distance, pairwise::Aligner};
 use rapidfuzz::distance::levenshtein;
 use stringzilla::szs::{
     error_costs_256x256_unary, AnyBytesTape, AnyCharsTape, DeviceScope, LevenshteinDistances,
@@ -434,8 +435,22 @@ fn perform_uniform_benchmarks(
                 levenshtein::distance(a_str.chars(), b_str.chars())
             })
         });
+    }
 
-        // StringZilla Binary Levenshtein Distance (uniform costs: 0,1,1,1)
+    if should_run("uniform/bio::levenshtein(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair_bytes));
+        g.bench_function("bio::levenshtein(1xCPU)", |b| {
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                std::hint::black_box(bio_distance::levenshtein(a_bytes, b_bytes))
+            })
+        });
+    }
+
+    if should_run("uniform/stringzillas::LevenshteinDistances(1xCPU)") {
         g.throughput(Throughput::Elements(per_batch_bytes));
         g.bench_function("stringzillas::LevenshteinDistances(1xCPU)", |b| {
             let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
@@ -644,7 +659,65 @@ fn perform_linear_benchmarks(
         .ok()
         .and_then(|gpu| SmithWatermanScores::new(gpu, &matrix, -2, -2).ok());
 
+    let mut max_len = 0usize;
+    for idx in 0..pairs_count {
+        let a_len = tape_a_view[idx].len();
+        let b_len = tape_b_view[idx].len();
+        if a_len > max_len {
+            max_len = a_len;
+        }
+        if b_len > max_len {
+            max_len = b_len;
+        }
+    }
+    let max_len = std::cmp::max(1, max_len);
+
     let per_batch = (batch_size as u64) * avg_cells_bytes;
+    let per_pair = avg_cells_bytes;
+
+    if should_run("linear/bio::pairwise::global(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair));
+        g.bench_function("bio::pairwise::global(1xCPU)", |b| {
+            let mut aligner =
+                Aligner::with_capacity(
+                    max_len,
+                    max_len,
+                    -2,
+                    -2,
+                    |a: u8, b: u8| if a == b { 2 } else { -1 },
+                );
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                let score = aligner.global(a_bytes, b_bytes).score;
+                std::hint::black_box(score);
+            })
+        });
+    }
+
+    if should_run("linear/bio::pairwise::local(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair));
+        g.bench_function("bio::pairwise::local(1xCPU)", |b| {
+            let mut aligner =
+                Aligner::with_capacity(
+                    max_len,
+                    max_len,
+                    -2,
+                    -2,
+                    |a: u8, b: u8| if a == b { 2 } else { -1 },
+                );
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                let score = aligner.local(a_bytes, b_bytes).score;
+                std::hint::black_box(score);
+            })
+        });
+    }
 
     // Needleman-Wunsch (Global alignment)
     if should_run("stringzillas::NeedlemanWunschScores(1xCPU)") {
@@ -890,7 +963,65 @@ fn perform_affine_benchmarks(
         .ok()
         .and_then(|gpu| SmithWatermanScores::new(gpu, &matrix, -5, -1).ok());
 
+    let mut max_len = 0usize;
+    for idx in 0..pairs_count {
+        let a_len = tape_a_view[idx].len();
+        let b_len = tape_b_view[idx].len();
+        if a_len > max_len {
+            max_len = a_len;
+        }
+        if b_len > max_len {
+            max_len = b_len;
+        }
+    }
+    let max_len = std::cmp::max(1, max_len);
+
     let per_batch = (batch_size as u64) * avg_cells_bytes;
+    let per_pair = avg_cells_bytes;
+
+    if should_run("affine/bio::pairwise::global(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair));
+        g.bench_function("bio::pairwise::global(1xCPU)", |b| {
+            let mut aligner =
+                Aligner::with_capacity(
+                    max_len,
+                    max_len,
+                    -5,
+                    -1,
+                    |a: u8, b: u8| if a == b { 2 } else { -1 },
+                );
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                let score = aligner.global(a_bytes, b_bytes).score;
+                std::hint::black_box(score);
+            })
+        });
+    }
+
+    if should_run("affine/bio::pairwise::local(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair));
+        g.bench_function("bio::pairwise::local(1xCPU)", |b| {
+            let mut aligner =
+                Aligner::with_capacity(
+                    max_len,
+                    max_len,
+                    -5,
+                    -1,
+                    |a: u8, b: u8| if a == b { 2 } else { -1 },
+                );
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                let score = aligner.local(a_bytes, b_bytes).score;
+                std::hint::black_box(score);
+            })
+        });
+    }
 
     // Needleman-Wunsch (Global alignment)
     if should_run("stringzillas::NeedlemanWunschScores(1xCPU)") {

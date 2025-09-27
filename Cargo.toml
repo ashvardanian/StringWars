@@ -76,6 +76,7 @@ optional = true
 [dependencies.bio]
 version = "3.0.0"
 default-features = false
+features = ["runtime-dispatch-simd"]
 optional = true
 
 [dependencies.bstr]
