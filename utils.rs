@@ -1,6 +1,22 @@
-use criterion::measurement::{Measurement, ValueFormatter};
-use criterion::Throughput;
 use std::env;
+
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
+use criterion::measurement::{Measurement, ValueFormatter};
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
+use criterion::Throughput;
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
 use std::time::Instant;
 
 /// Filter helper function to check if a benchmark should run based on STRINGWARS_FILTER env var
@@ -17,6 +33,11 @@ pub fn should_run(name: &str) -> bool {
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // Simple SI scaling helper
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
 fn scale_si(mut v: f64) -> (f64, &'static str) {
     if v >= 1_000_000_000.0 {
         v /= 1_000_000_000.0;
@@ -32,6 +53,11 @@ fn scale_si(mut v: f64) -> (f64, &'static str) {
     }
 }
 
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
 fn format_seconds(value: f64) -> String {
     // value is seconds
     if value < 1e-6 {
