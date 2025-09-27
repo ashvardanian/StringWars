@@ -13,7 +13,7 @@ categories = ["text-processing", "development-tools::profiling"]
 
 [dependencies]
 criterion = "0.7.0"
-stringzilla = { version = "4.0.13", default-features = false }
+stringzilla = { version = "4.0.14", default-features = false }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
@@ -69,12 +69,12 @@ bench_fingerprints = [
 # - `unicode-segmentation`
 
 [dependencies.memchr]
-version = "2.7.1"
+version = "2.7.6"
 default-features = false
 optional = true
 
 [dependencies.bio]
-version = "2.2.0"
+version = "3.0.0"
 default-features = false
 optional = true
 
@@ -88,7 +88,7 @@ version = "1.1.3"
 optional = true
 
 [dependencies.regex]
-version = "1.11.2"
+version = "1.11.3"
 optional = true
 
 [dependencies.rapidfuzz]
