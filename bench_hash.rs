@@ -37,6 +37,7 @@ RUSTFLAGS="-C target-cpu=native" \
 
 For `gxhash`, ensure that your CPU supports the required AES and SSE2 instructions.
 "#]
+use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -44,21 +45,61 @@ use std::hash::{BuildHasher, Hasher};
 use std::hint::black_box;
 use std::io::Cursor;
 
+use bit_set::BitSet;
 use criterion::{Criterion, Throughput};
 
-use ahash::RandomState;
+use ahash::RandomState as AHashState;
 use blake3;
 use cityhash;
 use crc32fast;
 use gxhash;
 use murmur3;
 use stringzilla::sz;
+use xxhash_rust::xxh3::xxh3_64;
 
 mod utils;
 use utils::should_run;
-use xxhash_rust::xxh3::xxh3_64;
 
-type AHashState = RandomState;
+/// Counts collisions for a given hash function using a bitset sized to the number of unique tokens
+fn count_collisions<F>(unique_tokens: &[&[u8]], hash_fn: F) -> usize
+where
+    F: Fn(&[u8]) -> u64,
+{
+    if unique_tokens.is_empty() {
+        return 0;
+    }
+
+    let table_size = unique_tokens.len();
+    let mut bitset = BitSet::with_capacity(table_size);
+    let mut collisions = 0;
+
+    for token in unique_tokens {
+        let hash = hash_fn(token);
+        let bit_pos = (hash as usize) % table_size;
+        collisions += !bitset.insert(bit_pos) as usize;
+    }
+
+    collisions
+}
+
+/// Calculate and print collision rate for a hash function using a bitset matching the unique token count
+fn print_collision_rate<F>(unique_tokens: &[&[u8]], hash_fn: F)
+where
+    F: Fn(&[u8]) -> u64,
+{
+    let n_unique = unique_tokens.len();
+    if n_unique == 0 {
+        return;
+    }
+
+    let collisions = count_collisions(unique_tokens, hash_fn);
+    let rate = (collisions as f64 / n_unique as f64) * 100.0;
+
+    println!(
+        "                        collisions: {:.2}% ({} collisions across {} buckets)",
+        rate, collisions, n_unique
+    );
+}
 
 fn log_stringzilla_metadata() {
     let v = sz::version();
@@ -117,6 +158,16 @@ fn bench_stateless(
     let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
+    // Precompute unique tokens once for collision detection
+    let unique_set: HashSet<&[u8]> = tokens.iter().copied().collect();
+    let unique_tokens: Vec<&[u8]> = unique_set.into_iter().collect();
+
+    println!(
+        "\nCollision statistics for {} unique tokens (from {} total):",
+        unique_tokens.len(),
+        tokens.len()
+    );
+
     // Benchmark: StringZilla `bytesum` reference
     if should_run("stateless/stringzilla::bytesum") {
         group.bench_function("stringzilla::bytesum", |b| {
@@ -139,13 +190,13 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| sz::hash(t));
     }
 
     // Benchmark: SipHash via `std::DefaultHasher`
     if should_run("stateless/std::DefaultHasher::hash_one") {
         let std_builder = std::collections::hash_map::RandomState::new();
         group.bench_function("std::DefaultHasher::hash_one", |b| {
-            let std_builder = std::collections::hash_map::RandomState::new();
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(*token);
@@ -153,13 +204,13 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| std_builder.hash_one(t));
     }
 
     // Benchmark: aHash
     if should_run("stateless/aHash::hash_one") {
-        let hash_builder = RandomState::with_seed(42);
+        let hash_builder = AHashState::with_seed(42);
         group.bench_function("aHash::hash_one", |b| {
-            let hash_builder = RandomState::with_seed(42);
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(*token);
@@ -167,6 +218,7 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| hash_builder.hash_one(t));
     }
 
     // Benchmark: xxHash
@@ -179,6 +231,7 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| xxh3_64(t));
     }
 
     // Benchmark: gxhash
@@ -191,6 +244,7 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| gxhash::gxhash64(t, 42));
     }
 
     // Benchmark: CRC32
@@ -203,6 +257,7 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| crc32fast::hash(t) as u64);
     }
 
     // Benchmark: MurmurHash3 (x64_128) via `murmur3` (stateless)
@@ -216,6 +271,10 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| {
+            let mut cursor = Cursor::new(t);
+            murmur3::murmur3_x64_128(&mut cursor, 0).unwrap() as u64
+        });
     }
 
     // Benchmark: CityHash64 via `cityhash` (stateless)
@@ -228,6 +287,7 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| cityhash::city_hash_64(t));
     }
 
     // Benchmark: Blake3 - should be by far the slowest, as it's a cryptographic hash.
@@ -240,7 +300,16 @@ fn bench_stateless(
                 }
             })
         });
+        print_collision_rate(&unique_tokens, |t| {
+            let hash = blake3::hash(t);
+            let bytes = hash.as_bytes();
+            u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])
+        });
     }
+
+    println!();
 }
 
 /// Benchmarks stateful hashes seeing one slice at a time
@@ -282,7 +351,7 @@ fn bench_stateful(
     // Benchmark: aHash
     if should_run("stateful/aHash::AHasher") {
         group.bench_function("aHash::AHasher", |b| {
-            let state: AHashState = RandomState::with_seed(42);
+            let state = AHashState::with_seed(42);
             b.iter(|| {
                 let mut aggregate = state.build_hasher();
                 for token in tokens {

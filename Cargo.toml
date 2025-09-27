@@ -37,6 +37,7 @@ bench_hash = [
     "crc32fast",   # CRC32
     "murmur3",     # MurmurHash3
     "cityhash",    # CityHash
+    "bit-set",     # for collision counting
 ]
 bench_sequence = [
     "arrow",  # Sorting
@@ -181,6 +182,10 @@ optional = true
 [dependencies.probabilistic-collections]
 git = "https://github.com/ashvardanian/probabilistic-collections-rs"
 branch = "master"
+optional = true
+
+[dependencies.bit-set]
+version = "0.8"
 optional = true
 
 [[bench]]
