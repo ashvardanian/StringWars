@@ -29,6 +29,8 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::hint::black_box;
+use std::ptr;
+use std::slice;
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput};
@@ -205,6 +207,177 @@ fn bench_generate_random(
     }
 }
 
+fn bench_memset(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    tokens: &mut [&mut [u8]],
+) {
+    const FILL_VALUE: u8 = 0xAA;
+    let templates: Vec<Vec<u8>> = tokens.iter().map(|token| (**token).to_vec()).collect();
+    let total_bytes: usize = templates.iter().map(|buf| buf.len()).sum();
+    if total_bytes == 0 {
+        return;
+    }
+    g.throughput(Throughput::Bytes(total_bytes as u64));
+
+    if should_run("memset/stringzilla::fill") {
+        let mut buffers = templates.clone();
+        g.bench_function("stringzilla::fill", |b| {
+            b.iter(|| {
+                for buffer in buffers.iter_mut() {
+                    sz::fill(buffer, FILL_VALUE);
+                    black_box(&buffer);
+                }
+            })
+        });
+    }
+
+    if should_run("memset/std::ptr::write_bytes") {
+        let mut buffers = templates.clone();
+        g.bench_function("std::ptr::write_bytes", |b| {
+            b.iter(|| {
+                for buffer in buffers.iter_mut() {
+                    unsafe {
+                        ptr::write_bytes(buffer.as_mut_ptr(), FILL_VALUE, buffer.len());
+                    }
+                    black_box(&buffer);
+                }
+            })
+        });
+    }
+
+    if should_run("memset/slice::fill") {
+        let mut buffers = templates.clone();
+        g.bench_function("slice::fill", |b| {
+            b.iter(|| {
+                for buffer in buffers.iter_mut() {
+                    buffer.fill(FILL_VALUE);
+                    black_box(&buffer);
+                }
+            })
+        });
+    }
+}
+
+fn bench_memcpy(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    tokens: &mut [&mut [u8]],
+) {
+    let sources: Vec<Vec<u8>> = tokens.iter().map(|token| (**token).to_vec()).collect();
+    let dest_template: Vec<Vec<u8>> = sources.iter().map(|src| vec![0u8; src.len()]).collect();
+    let total_bytes: usize = sources.iter().map(|buf| buf.len()).sum();
+    if total_bytes == 0 {
+        return;
+    }
+    g.throughput(Throughput::Bytes(total_bytes as u64));
+
+    if should_run("memcpy/stringzilla::copy") {
+        let mut dests = dest_template.clone();
+        g.bench_function("stringzilla::copy", |b| {
+            b.iter(|| {
+                for (src, dst) in sources.iter().zip(dests.iter_mut()) {
+                    sz::copy(dst, src);
+                    black_box(&dst);
+                }
+            })
+        });
+    }
+
+    if should_run("memcpy/slice::copy_from_slice") {
+        let mut dests = dest_template.clone();
+        g.bench_function("slice::copy_from_slice", |b| {
+            b.iter(|| {
+                for (src, dst) in sources.iter().zip(dests.iter_mut()) {
+                    dst.copy_from_slice(src);
+                    black_box(&dst);
+                }
+            })
+        });
+    }
+
+    if should_run("memcpy/std::ptr::copy_nonoverlapping") {
+        let mut dests = dest_template.clone();
+        g.bench_function("std::ptr::copy_nonoverlapping", |b| {
+            b.iter(|| {
+                for (src, dst) in sources.iter().zip(dests.iter_mut()) {
+                    unsafe {
+                        ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), src.len());
+                    }
+                    black_box(&dst);
+                }
+            })
+        });
+    }
+}
+
+fn bench_memmove(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    tokens: &mut [&mut [u8]],
+) {
+    const SHIFT: usize = 8;
+    let templates: Vec<Vec<u8>> = tokens
+        .iter()
+        .filter_map(|token| {
+            let slice = &**token;
+            if slice.len() <= SHIFT {
+                None
+            } else {
+                Some(slice.to_vec())
+            }
+        })
+        .collect();
+    if templates.is_empty() {
+        return;
+    }
+    let total_bytes: usize = templates.iter().map(|buf| buf.len() - SHIFT).sum();
+    g.throughput(Throughput::Bytes(total_bytes as u64));
+
+    if should_run("memmove/stringzilla::move_") {
+        let mut buffers = templates.clone();
+        g.bench_function("stringzilla::move_", |b| {
+            b.iter(|| {
+                for buffer in buffers.iter_mut() {
+                    let move_len = buffer.len() - SHIFT;
+                    unsafe {
+                        let src = slice::from_raw_parts(buffer.as_ptr(), move_len);
+                        let dst =
+                            slice::from_raw_parts_mut(buffer.as_mut_ptr().add(SHIFT), move_len);
+                        sz::move_(dst, &src);
+                    }
+                    black_box(&buffer);
+                }
+            })
+        });
+    }
+
+    if should_run("memmove/std::ptr::copy") {
+        let mut buffers = templates.clone();
+        g.bench_function("std::ptr::copy", |b| {
+            b.iter(|| {
+                for buffer in buffers.iter_mut() {
+                    let move_len = buffer.len() - SHIFT;
+                    unsafe {
+                        ptr::copy(buffer.as_ptr(), buffer.as_mut_ptr().add(SHIFT), move_len);
+                    }
+                    black_box(&buffer);
+                }
+            })
+        });
+    }
+
+    if should_run("memmove/slice::copy_within") {
+        let mut buffers = templates.clone();
+        g.bench_function("slice::copy_within", |b| {
+            b.iter(|| {
+                for buffer in buffers.iter_mut() {
+                    let move_len = buffer.len() - SHIFT;
+                    buffer.copy_within(0..move_len, SHIFT);
+                    black_box(&buffer);
+                }
+            })
+        });
+    }
+}
+
 fn main() {
     log_stringzilla_metadata();
 
@@ -225,6 +398,21 @@ fn main() {
     // Benchmarks for random string generation
     let mut group = criterion.benchmark_group("generate-random");
     bench_generate_random(&mut group, &mut tokens[..]);
+    group.finish();
+
+    // Benchmarks for memory fill operations
+    let mut group = criterion.benchmark_group("memset");
+    bench_memset(&mut group, &mut tokens[..]);
+    group.finish();
+
+    // Benchmarks for memory copy operations
+    let mut group = criterion.benchmark_group("memcpy");
+    bench_memcpy(&mut group, &mut tokens[..]);
+    group.finish();
+
+    // Benchmarks for memory move operations
+    let mut group = criterion.benchmark_group("memmove");
+    bench_memmove(&mut group, &mut tokens[..]);
     group.finish();
 
     criterion.final_summary();
