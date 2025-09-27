@@ -2,6 +2,14 @@
 name = "stringwars"
 version = "1.1.4"
 edition = "2018"
+authors = ["Ash Vardanian <1983160+ashvardanian@users.noreply.github.com>"]
+description = "Comparing performance-oriented string-processing libraries for substring search, multi-pattern matching, hashing, edit-distances, sketching, and sorting across CPUs and GPUs in Rust 🦀"
+license = "Apache-2.0"
+repository = "https://github.com/ashvardanian/StringWars"
+homepage = "https://ashvardanian.com/posts/stringwars-on-gpus"
+readme = "README.md"
+keywords = ["string", "benchmark", "simd", "gpu", "stringzilla"]
+categories = ["text-processing", "development-tools::profiling"]
 
 [dependencies]
 criterion = "0.7.0"

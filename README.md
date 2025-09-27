@@ -1,6 +1,8 @@
-# StringWa.rs: Text Processing on CPUs & GPUs, in Python & Rust 🦀
+# StringWars
 
-![StringWa.rs Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
+## Text Processing on CPUs & GPUs, in Python 🐍 & Rust 🦀
+
+![StringWars Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
 
 There are many __great__ libraries for string processing!
 Mostly, of course, written in Assembly, C, and C++, but some in Rust as well. 😅
@@ -126,7 +128,7 @@ Still, those are provided by StringZilla mostly for parsing tasks and feature pa
 
 ## Byte-Set Search
 
-StringWa.rs takes a few representative examples of various character sets that appear in real parsing or string validation tasks:
+StringWars takes a few representative examples of various character sets that appear in real parsing or string validation tasks:
 
 - tabulation characters, like `\n\r\v\f`;
 - HTML and XML markup characters, like `</>&'\"=[]`;
@@ -328,7 +330,7 @@ cargo fetch --all-features
 cargo build --all-features
 ```
 
-By default StringWa.rs links `stringzilla` in CPU mode.
+By default StringWars links `stringzilla` in CPU mode.
 If the machine has an NVIDIA GPU with CUDA installed, enable the CUDA kernels explicitly when running benches, for example:
 
 ```bash
@@ -428,10 +430,10 @@ STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs $(nproc)
 For bioinformatics workloads, I use the following datasets with increasing string lengths:
 
 ```bash
-wget --no-clobber -O acgt_100.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_100.txt?download=true
-wget --no-clobber -O acgt_1k.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_1k.txt?download=true
-wget --no-clobber -O acgt_10k.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_10k.txt?download=true
-wget --no-clobber -O acgt_100k.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_100k.txt?download=true
-wget --no-clobber -O acgt_1m.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_1m.txt?download=true
-wget --no-clobber -O acgt_10m.txt https://huggingface.co/datasets/ashvardanian/StringWa.rs/resolve/main/acgt_10m.txt?download=true
+wget --no-clobber -O acgt_100.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100.txt?download=true
+wget --no-clobber -O acgt_1k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1k.txt?download=true
+wget --no-clobber -O acgt_10k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10k.txt?download=true
+wget --no-clobber -O acgt_100k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100k.txt?download=true
+wget --no-clobber -O acgt_1m.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1m.txt?download=true
+wget --no-clobber -O acgt_10m.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10m.txt?download=true
 ```
