@@ -47,6 +47,7 @@ On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can 
 | `crc32fast::hash`     |  32   |    ✅    |     0.49 GiB/s |      8.45 GiB/s |
 | `xxh3::xxh3_64`       |  64   |    ✅    |     1.08 GiB/s |      9.48 GiB/s |
 | `aHash::hash_one`     |  64   |    ❌    |     1.23 GiB/s |      8.61 GiB/s |
+| `foldhash::hash_one`  |  64   |    ❌    |     1.02 GiB/s |      8.24 GiB/s |
 | `gxhash::gxhash64`    |  64   |    ❌    | __2.68 GiB/s__ |      9.19 GiB/s |
 | `stringzilla::hash`   |  64   |    ✅    |     1.84 GiB/s | __11.23 GiB/s__ |
 |                       |       |         |                |                 |
@@ -70,6 +71,7 @@ This is especially important in distributed systems, where the data is too large
 | Rust 🦀                     |       |         |                |                |
 | `std::hash::DefaultHasher` |  64   |    ❌    |     0.51 GiB/s |     3.92 GiB/s |
 | `aHash::AHasher`           |  64   |    ❌    | __1.30 GiB/s__ | __8.56 GiB/s__ |
+| `foldhash::FoldHasher`     |  64   |    ❌    |     1.27 GiB/s |     8.18 GiB/s |
 | `crc32fast::Hasher`        |  32   |    ✅    |     0.37 GiB/s |     8.39 GiB/s |
 | `stringzilla::Hasher`      |  64   |    ✅    |     0.89 GiB/s |     6.39 GiB/s |
 |                            |       |         |                |                |

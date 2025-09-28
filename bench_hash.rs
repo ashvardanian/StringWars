@@ -13,6 +13,7 @@ The benchmarks compare the performance of different hash functions including:
 - aHash (both incremental and single-entry variants)
 - xxHash (xxh3) through the third-party `xxhash-rust` crate
 - gxhash (gxhash64)
+- FoldHash (a fast hash with good quality)
 - CRC32 (IEEE) via `crc32fast`
 - Blake3 (the only cryptographic hash in the comparison, for reference)
 
@@ -52,6 +53,7 @@ use ahash::RandomState as AHashState;
 use blake3;
 use cityhash;
 use crc32fast;
+use foldhash;
 use gxhash;
 use murmur3;
 use stringzilla::sz;
@@ -247,6 +249,20 @@ fn bench_stateless(
         print_collision_rate(&unique_tokens, |t| gxhash::gxhash64(t, 42));
     }
 
+    // Benchmark: FoldHash
+    if should_run("stateless/foldhash::hash_one") {
+        let foldhash_builder = foldhash::fast::RandomState::default();
+        group.bench_function("foldhash::hash_one", |b| {
+            b.iter(|| {
+                for token in tokens {
+                    let t = black_box(*token);
+                    let _ = black_box(foldhash_builder.hash_one(t));
+                }
+            })
+        });
+        print_collision_rate(&unique_tokens, |t| foldhash_builder.hash_one(t));
+    }
+
     // Benchmark: CRC32
     if should_run("stateless/crc32fast::hash") {
         group.bench_function("crc32fast::hash", |b| {
@@ -352,6 +368,20 @@ fn bench_stateful(
     if should_run("stateful/aHash::AHasher") {
         group.bench_function("aHash::AHasher", |b| {
             let state = AHashState::with_seed(42);
+            b.iter(|| {
+                let mut aggregate = state.build_hasher();
+                for token in tokens {
+                    aggregate.write(token);
+                }
+                black_box(aggregate.finish());
+            })
+        });
+    }
+
+    // Benchmark: FoldHash
+    if should_run("stateful/foldhash::FoldHasher") {
+        group.bench_function("foldhash::FoldHasher", |b| {
+            let state = foldhash::fast::RandomState::default();
             b.iter(|| {
                 let mut aggregate = state.build_hasher();
                 for token in tokens {

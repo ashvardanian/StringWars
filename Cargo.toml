@@ -37,6 +37,7 @@ bench_hash = [
     "crc32fast",   # CRC32
     "murmur3",     # MurmurHash3
     "cityhash",    # CityHash
+    "foldhash",    # FoldHash
     "bit-set",     # for collision counting
 ]
 bench_sequence = [
@@ -126,6 +127,10 @@ optional = true
 
 [dependencies.cityhash]
 version = "0.1"
+optional = true
+
+[dependencies.foldhash]
+version = "0.2"
 optional = true
 
 [dependencies.gxhash]
