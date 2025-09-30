@@ -49,7 +49,7 @@ On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can 
 | `aHash::hash_one`     |  64   |    ❌    |     1.23 GiB/s |      8.61 GiB/s |
 | `foldhash::hash_one`  |  64   |    ❌    |     1.02 GiB/s |      8.24 GiB/s |
 | `gxhash::gxhash64`    |  64   |    ❌    | __2.68 GiB/s__ |      9.19 GiB/s |
-| `stringzilla::hash`   |  64   |    ✅    |     1.84 GiB/s | __11.23 GiB/s__ |
+| `stringzilla::hash`   |  64   |    ✅    |     1.84 GiB/s | __11.38 GiB/s__ |
 |                       |       |         |                |                 |
 | Python 🐍              |       |         |                |                 |
 | `hash`                | 32/64 |    ❌    |     0.13 GiB/s |      4.27 GiB/s |
@@ -66,19 +66,19 @@ On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can 
 In larger systems, however, we often need the ability to incrementally hash the data.
 This is especially important in distributed systems, where the data is too large to fit into memory at once.
 
-| Library                    | Bits  | Ports ¹ |    Short Words |     Long Lines |
-| -------------------------- | :---: | :-----: | -------------: | -------------: |
-| Rust 🦀                     |       |         |                |                |
-| `std::hash::DefaultHasher` |  64   |    ❌    |     0.51 GiB/s |     3.92 GiB/s |
-| `aHash::AHasher`           |  64   |    ❌    | __1.30 GiB/s__ | __8.56 GiB/s__ |
-| `foldhash::FoldHasher`     |  64   |    ❌    |     1.27 GiB/s |     8.18 GiB/s |
-| `crc32fast::Hasher`        |  32   |    ✅    |     0.37 GiB/s |     8.39 GiB/s |
-| `stringzilla::Hasher`      |  64   |    ✅    |     0.89 GiB/s |     6.39 GiB/s |
-|                            |       |         |                |                |
-| Python 🐍                   |       |         |                |                |
-| `xxhash.xxh3_64`           |  64   |    ✅    |     0.09 GiB/s |      7.09 GB/s |
-| `google_crc32c.Checksum`   |  32   |    ✅    |     0.04 GiB/s |     5.96 GiB/s |
-| `stringzilla.Hasher`       |  64   |    ✅    | __0.35 GiB/s__ |  __6.04 GB/s__ |
+| Library                    | Bits  | Ports ¹ |    Short Words |      Long Lines |
+| -------------------------- | :---: | :-----: | -------------: | --------------: |
+| Rust 🦀                     |       |         |                |                 |
+| `std::hash::DefaultHasher` |  64   |    ❌    |     0.51 GiB/s |      3.92 GiB/s |
+| `aHash::AHasher`           |  64   |    ❌    | __1.30 GiB/s__ |      8.56 GiB/s |
+| `foldhash::FoldHasher`     |  64   |    ❌    |     1.27 GiB/s |      8.18 GiB/s |
+| `crc32fast::Hasher`        |  32   |    ✅    |     0.37 GiB/s |      8.39 GiB/s |
+| `stringzilla::Hasher`      |  64   |    ✅    |     0.89 GiB/s | __11.03 GiB/s__ |
+|                            |       |         |                |                 |
+| Python 🐍                   |       |         |                |                 |
+| `xxhash.xxh3_64`           |  64   |    ✅    |     0.09 GiB/s |       7.09 GB/s |
+| `google_crc32c.Checksum`   |  32   |    ✅    |     0.04 GiB/s |      5.96 GiB/s |
+| `stringzilla.Hasher`       |  64   |    ✅    | __0.35 GiB/s__ |   __6.04 GB/s__ |
 
 For reference, one may want to put those numbers next to check-sum calculation speeds on one end of complexity and cryptographic hashing speeds on the other end.
 
