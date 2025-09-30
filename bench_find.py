@@ -16,9 +16,9 @@ Environment variables:
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
 Examples:
-  python bench_find.py --dataset README.md --tokens lines
-  python bench_find.py --dataset xlsum.csv --tokens words -k "str.find"
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_find.py
+  uv run bench_find.py --dataset README.md --tokens lines
+  uv run bench_find.py --dataset xlsum.csv --tokens words -k "str.find"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run bench_find.py
 
 Timing via time.monotonic_ns.; throughput in decimal GB/s. Filter with -k/--filter.
 """

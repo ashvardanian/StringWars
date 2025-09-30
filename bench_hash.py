@@ -30,9 +30,9 @@ Environment variables:
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
 Examples:
-  python bench_hash.py --dataset README.md --tokens lines
-  python bench_hash.py --dataset xlsum.csv --tokens words -k "xxhash"
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_hash.py
+  uv run bench_hash.py --dataset README.md --tokens lines
+  uv run bench_hash.py --dataset xlsum.csv --tokens words -k "xxhash"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run bench_hash.py
 """
 
 import argparse
