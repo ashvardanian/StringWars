@@ -40,28 +40,29 @@ Many of them have similar pitfalls:
 StringZilla addresses those issues and seems to provide competitive performance.
 On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
 
-| Library               | Bits  | Ports ¹ |    Short Words |      Long Lines |
-| --------------------- | :---: | :-----: | -------------: | --------------: |
-| Rust 🦀                |       |         |                |                 |
-| `std::hash`           |  64   |    ❌    |     0.43 GiB/s |      3.74 GiB/s |
-| `crc32fast::hash`     |  32   |    ✅    |     0.49 GiB/s |      8.45 GiB/s |
-| `xxh3::xxh3_64`       |  64   |    ✅    |     1.08 GiB/s |      9.48 GiB/s |
-| `aHash::hash_one`     |  64   |    ❌    |     1.23 GiB/s |      8.61 GiB/s |
-| `foldhash::hash_one`  |  64   |    ❌    |     1.02 GiB/s |      8.24 GiB/s |
-| `gxhash::gxhash64`    |  64   |    ❌    | __2.68 GiB/s__ |      9.19 GiB/s |
-| `stringzilla::hash`   |  64   |    ✅    |     1.84 GiB/s | __11.38 GiB/s__ |
-|                       |       |         |                |                 |
-| Python 🐍              |       |         |                |                 |
-| `hash`                | 32/64 |    ❌    |     0.13 GiB/s |      4.27 GiB/s |
-| `xxhash.xxh3_64`      |  64   |    ✅    |     0.04 GiB/s |      6.38 GiB/s |
-| `google_crc32c.value` |  32   |    ✅    |     0.04 GiB/s |      5.96 GiB/s |
-| `mmh3.hash32`         |  32   |    ✅    |     0.05 GiB/s |      2.65 GiB/s |
-| `mmh3.hash64`         |  64   |    ✅    |     0.03 GiB/s |      4.45 GiB/s |
-| `cityhash.CityHash64` |  64   |    ✅    |     0.06 GiB/s |      4.87 GiB/s |
-| `stringzilla.hash`    |  64   |    ✅    | __0.14 GiB/s__ |  __9.19 GiB/s__ |
+| Library               | Bits  | Ports ¹ | Arm ² |    Short Words |      Long Lines |
+| --------------------- | :---: | :-----: | :---: | -------------: | --------------: |
+| Rust 🦀                |       |         |       |                |                 |
+| `std::hash`           |  64   |    ❌    |   ✅   |     0.43 GiB/s |      3.74 GiB/s |
+| `crc32fast::hash`     |  32   |    ✅    |   ✅   |     0.49 GiB/s |      8.45 GiB/s |
+| `xxh3::xxh3_64`       |  64   |    ✅    |   ✅   |     1.08 GiB/s |      9.48 GiB/s |
+| `aHash::hash_one`     |  64   |    ❌    |   ✅   |     1.23 GiB/s |      8.61 GiB/s |
+| `foldhash::hash_one`  |  64   |    ❌    |   ✅   |     1.02 GiB/s |      8.24 GiB/s |
+| `gxhash::gxhash64`    |  64   |    ❌    |   ❌   |     2.68 GiB/s |      9.19 GiB/s |
+| `stringzilla::hash`   |  64   |    ✅    |   ✅   | __1.84 GiB/s__ | __11.38 GiB/s__ |
+|                       |       |         |       |                |
+| Python 🐍              |       |         |       |                |
+| `hash`                | 32/64 |    ❌    |   ✅   |     0.13 GiB/s |      4.27 GiB/s |
+| `xxhash.xxh3_64`      |  64   |    ✅    |   ✅   |     0.04 GiB/s |      6.38 GiB/s |
+| `google_crc32c.value` |  32   |    ✅    |   ✅   |     0.04 GiB/s |      5.96 GiB/s |
+| `mmh3.hash32`         |  32   |    ✅    |   ✅   |     0.05 GiB/s |      2.65 GiB/s |
+| `mmh3.hash64`         |  64   |    ✅    |   ✅   |     0.03 GiB/s |      4.45 GiB/s |
+| `cityhash.CityHash64` |  64   |    ✅    |   ❌   |     0.06 GiB/s |      4.87 GiB/s |
+| `stringzilla.hash`    |  64   |    ✅    |   ✅   | __0.14 GiB/s__ |  __9.19 GiB/s__ |
 
 
 > ¹ Portability means availability in multiple other programming languages, like C, C++, Python, Java, Go, JavaScript, etc.
+> ² Most hash functions work on both x86 and Arm, as well as many other CPU architectures, but gxHash, and many MurMurHash and CityHash implementations don't.
 
 In larger systems, however, we often need the ability to incrementally hash the data.
 This is especially important in distributed systems, where the data is too large to fit into memory at once.

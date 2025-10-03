@@ -12,9 +12,11 @@ The benchmarks compare the performance of different hash functions including:
 - StringZilla (`bytesum`, `hash`, and incremental `hash` function variants)
 - aHash (both incremental and single-entry variants)
 - xxHash (xxh3) through the third-party `xxhash-rust` crate
-- gxhash (gxhash64)
+- gxhash (gxhash64, x86_64 only)
 - FoldHash (a fast hash with good quality)
 - CRC32 (IEEE) via `crc32fast`
+- MurmurHash32 via `murmurhash32`
+- CityHash64 via `cityhash` (x86_64 only)
 - Blake3 (the only cryptographic hash in the comparison, for reference)
 
 ## Usage Examples
@@ -36,7 +38,7 @@ RUSTFLAGS="-C target-cpu=native" \
     cargo criterion --features bench_hash bench_hash --jobs $(nproc)
 ```
 
-For `gxhash`, ensure that your CPU supports the required AES and SSE2 instructions.
+Note: `gxhash` and `cityhash` are only compiled on x86_64 targets as they require x86-specific instructions.
 "#]
 use std::collections::HashSet;
 use std::env;
@@ -44,18 +46,19 @@ use std::error::Error;
 use std::fs;
 use std::hash::{BuildHasher, Hasher};
 use std::hint::black_box;
-use std::io::Cursor;
 
 use bit_set::BitSet;
 use criterion::{Criterion, Throughput};
 
 use ahash::RandomState as AHashState;
 use blake3;
+#[cfg(target_arch = "x86_64")]
 use cityhash;
 use crc32fast;
 use foldhash;
+#[cfg(target_arch = "x86_64")]
 use gxhash;
-use murmur3;
+use murmurhash32;
 use stringzilla::sz;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -236,7 +239,8 @@ fn bench_stateless(
         print_collision_rate(&unique_tokens, |t| xxh3_64(t));
     }
 
-    // Benchmark: gxhash
+    // Benchmark: gxhash (x86_64 only)
+    #[cfg(target_arch = "x86_64")]
     if should_run("stateless/gxhash::gxhash64") {
         group.bench_function("gxhash::gxhash64", |b| {
             b.iter(|| {
@@ -276,24 +280,21 @@ fn bench_stateless(
         print_collision_rate(&unique_tokens, |t| crc32fast::hash(t) as u64);
     }
 
-    // Benchmark: MurmurHash3 (x64_128) via `murmur3` (stateless)
-    if should_run("stateless/murmur3::x64_128") {
-        group.bench_function("murmur3::x64_128", |b| {
+    // Benchmark: MurmurHash32 via `murmurhash32` (stateless)
+    if should_run("stateless/murmurhash32") {
+        group.bench_function("murmurhash32", |b| {
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(*token);
-                    let mut cursor = Cursor::new(t);
-                    let _ = black_box(murmur3::murmur3_x64_128(&mut cursor, 0).unwrap());
+                    let _ = black_box(murmurhash32::murmurhash3(t) as u64);
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| {
-            let mut cursor = Cursor::new(t);
-            murmur3::murmur3_x64_128(&mut cursor, 0).unwrap() as u64
-        });
+        print_collision_rate(&unique_tokens, |t| murmurhash32::murmurhash3(t) as u64);
     }
 
-    // Benchmark: CityHash64 via `cityhash` (stateless)
+    // Benchmark: CityHash64 via `cityhash` (stateless, x86_64 only)
+    #[cfg(target_arch = "x86_64")]
     if should_run("stateless/cityhash::city_hash_64") {
         group.bench_function("cityhash::city_hash_64", |b| {
             b.iter(|| {
