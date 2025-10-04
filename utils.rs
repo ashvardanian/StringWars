@@ -22,8 +22,28 @@ use std::time::Instant;
 /// Filter helper function to check if a benchmark should run based on STRINGWARS_FILTER env var
 #[allow(dead_code)]
 pub fn should_run(name: &str) -> bool {
+    use std::sync::Once;
+    static FILTER_INIT: Once = Once::new();
+
     if let Ok(filter) = env::var("STRINGWARS_FILTER") {
-        name.contains(&filter)
+        FILTER_INIT.call_once(|| {
+            eprintln!("STRINGWARS_FILTER active: '{}'", filter);
+        });
+
+        if let Ok(re) = regex::Regex::new(&filter) {
+            let matches = re.is_match(name);
+            if !matches {
+                eprintln!("  Skipping: {}", name);
+            }
+            matches
+        } else {
+            // Fallback to substring match if regex is invalid
+            eprintln!(
+                "Warning: Invalid regex pattern '{}', falling back to substring match",
+                filter
+            );
+            name.contains(&filter)
+        }
     } else {
         true
     }
