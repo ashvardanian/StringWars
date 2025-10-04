@@ -17,17 +17,22 @@ The benchmarks compare the performance of different hash functions including:
 - CRC32 (IEEE) via `crc32fast`
 - MurmurHash32 via `murmurhash32`
 - CityHash64 via `cityhash` (x86_64 only)
-- Blake3 (the only cryptographic hash in the comparison, for reference)
+- Blake3 (cryptographic hash)
+- SHA256 via `sha2` (cryptographic hash)
+- SHA256 via `ring` (cryptographic hash)
+- SHA256 via `stringzilla` (cryptographic hash)
 
 ## Usage Examples
 
-The benchmarks use two environment variables to control the input dataset and mode:
+The benchmarks use environment variables to control the input dataset and mode:
 
 - `STRINGWARS_DATASET`: Path to the input dataset file.
 - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
   - `lines`: Process the dataset line by line.
   - `words`: Process the dataset word by word.
   - `file`: Process the entire file as a single token.
+- `STRINGWARS_COLLISIONS`: Set to `1` or `true` to enable collision detection (disabled by default to avoid OOM on large datasets).
+- `STRINGWARS_FILTER`: Regex pattern to filter which benchmarks to run (e.g., `sha` for SHA benchmarks, `stateless/.*hash` for stateless hashes).
 
 To run the benchmarks with the appropriate CPU features enabled, you can use the following commands:
 
@@ -59,6 +64,8 @@ use foldhash;
 #[cfg(target_arch = "x86_64")]
 use gxhash;
 use murmurhash32;
+use ring::digest as ring_digest;
+use sha2::{Digest, Sha256};
 use stringzilla::sz;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -116,7 +123,7 @@ fn log_stringzilla_metadata() {
 fn configure_bench() -> Criterion {
     Criterion::default()
         .configure_from_args()
-        .sample_size(30) // Number of samples to collect.
+        .sample_size(10) // 10 is the lowest supported by Criterion
         .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
         .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
 }
@@ -163,15 +170,25 @@ fn bench_stateless(
     let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
-    // Precompute unique tokens once for collision detection
-    let unique_set: HashSet<&[u8]> = tokens.iter().copied().collect();
-    let unique_tokens: Vec<&[u8]> = unique_set.into_iter().collect();
+    // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable
+    // This avoids OOM on large datasets (can use GBs of RAM for deduplication)
+    let enable_collision_detection = env::var("STRINGWARS_COLLISIONS")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
 
-    println!(
-        "\nCollision statistics for {} unique tokens (from {} total):",
-        unique_tokens.len(),
-        tokens.len()
-    );
+    let unique_tokens: Vec<&[u8]> = if enable_collision_detection {
+        println!("\nComputing unique tokens for collision detection...");
+        let unique_set: HashSet<&[u8]> = tokens.iter().copied().collect();
+        let unique: Vec<&[u8]> = unique_set.into_iter().collect();
+        println!(
+            "Collision statistics for {} unique tokens (from {} total):",
+            unique.len(),
+            tokens.len()
+        );
+        unique
+    } else {
+        Vec::new()
+    };
 
     // Benchmark: StringZilla `bytesum` reference
     if should_run("stateless/stringzilla::bytesum") {
@@ -195,7 +212,9 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| sz::hash(t));
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| sz::hash(t));
+        }
     }
 
     // Benchmark: SipHash via `std::DefaultHasher`
@@ -209,7 +228,9 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| std_builder.hash_one(t));
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| std_builder.hash_one(t));
+        }
     }
 
     // Benchmark: aHash
@@ -223,7 +244,9 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| hash_builder.hash_one(t));
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| hash_builder.hash_one(t));
+        }
     }
 
     // Benchmark: xxHash
@@ -236,7 +259,9 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| xxh3_64(t));
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| xxh3_64(t));
+        }
     }
 
     // Benchmark: gxhash (x86_64 only)
@@ -250,7 +275,9 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| gxhash::gxhash64(t, 42));
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| gxhash::gxhash64(t, 42));
+        }
     }
 
     // Benchmark: FoldHash
@@ -264,7 +291,9 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| foldhash_builder.hash_one(t));
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| foldhash_builder.hash_one(t));
+        }
     }
 
     // Benchmark: CRC32
@@ -277,7 +306,9 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| crc32fast::hash(t) as u64);
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| crc32fast::hash(t) as u64);
+        }
     }
 
     // Benchmark: MurmurHash32 via `murmurhash32` (stateless)
@@ -290,7 +321,9 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| murmurhash32::murmurhash3(t) as u64);
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| murmurhash32::murmurhash3(t) as u64);
+        }
     }
 
     // Benchmark: CityHash64 via `cityhash` (stateless, x86_64 only)
@@ -304,10 +337,12 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| cityhash::city_hash_64(t));
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| cityhash::city_hash_64(t));
+        }
     }
 
-    // Benchmark: Blake3 - should be by far the slowest, as it's a cryptographic hash.
+    // Benchmark: Blake3 - cryptographic hash
     if should_run("stateless/blake3") {
         group.bench_function("blake3", |b| {
             b.iter(|| {
@@ -317,16 +352,87 @@ fn bench_stateless(
                 }
             })
         });
-        print_collision_rate(&unique_tokens, |t| {
-            let hash = blake3::hash(t);
-            let bytes = hash.as_bytes();
-            u64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ])
-        });
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| {
+                let hash = blake3::hash(t);
+                let bytes = hash.as_bytes();
+                u64::from_le_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ])
+            });
+        }
     }
 
-    println!();
+    // Benchmark: SHA256 via sha2
+    if should_run("stateless/sha2::Sha256") {
+        group.bench_function("sha2::Sha256", |b| {
+            b.iter(|| {
+                for token in tokens {
+                    let t = black_box(*token);
+                    let mut hasher = Sha256::new();
+                    hasher.update(t);
+                    let _ = black_box(hasher.finalize());
+                }
+            })
+        });
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| {
+                let mut hasher = Sha256::new();
+                hasher.update(t);
+                let result = hasher.finalize();
+                u64::from_le_bytes([
+                    result[0], result[1], result[2], result[3], result[4], result[5], result[6],
+                    result[7],
+                ])
+            });
+        }
+    }
+
+    // Benchmark: SHA256 via ring
+    if should_run("stateless/ring::SHA256") {
+        group.bench_function("ring::SHA256", |b| {
+            b.iter(|| {
+                for token in tokens {
+                    let t = black_box(*token);
+                    let _ = black_box(ring_digest::digest(&ring_digest::SHA256, t));
+                }
+            })
+        });
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| {
+                let digest = ring_digest::digest(&ring_digest::SHA256, t);
+                let bytes = digest.as_ref();
+                u64::from_le_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ])
+            });
+        }
+    }
+
+    // Benchmark: SHA256 via stringzilla
+    if should_run("stateless/stringzilla::Sha256") {
+        group.bench_function("stringzilla::Sha256", |b| {
+            b.iter(|| {
+                for token in tokens {
+                    let t = black_box(*token);
+                    let _ = black_box(sz::Sha256::hash(t));
+                }
+            })
+        });
+        if !unique_tokens.is_empty() {
+            print_collision_rate(&unique_tokens, |t| {
+                let digest = sz::Sha256::hash(t);
+                u64::from_le_bytes([
+                    digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6],
+                    digest[7],
+                ])
+            });
+        }
+    }
+
+    if !unique_tokens.is_empty() {
+        println!();
+    }
 }
 
 /// Benchmarks stateful hashes seeing one slice at a time
@@ -402,6 +508,19 @@ fn bench_stateful(
                     hasher.update(token);
                 }
                 black_box(hasher.finalize());
+            })
+        });
+    }
+
+    // Benchmark: StringZilla SHA256
+    if should_run("stateful/stringzilla::Sha256") {
+        group.bench_function("stringzilla::Sha256", |b| {
+            b.iter(|| {
+                let mut hasher = sz::Sha256::new();
+                for token in tokens {
+                    hasher.update(token);
+                }
+                black_box(hasher.digest());
             })
         });
     }
