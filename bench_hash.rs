@@ -6,21 +6,32 @@ treating the inputs as binary strings without any UTF-8 validity constrains.
 For accurate stats aggregation, on each iteration, the whole file is scanned.
 Be warned, for large files, it may take a while!
 
-The benchmarks compare the performance of different hash functions including:
+The benchmarks are organized into three categories:
 
-- Standard `Hash` implementation
-- StringZilla (`bytesum`, `hash`, and incremental `hash` function variants)
-- aHash (both incremental and single-entry variants)
-- xxHash (xxh3) through the third-party `xxhash-rust` crate
-- gxhash (gxhash64, x86_64 only)
-- FoldHash (a fast hash with good quality)
+**Stateless Hashes** (hash each input independently):
+- StringZilla `hash`
+- Standard `Hash` implementation (SipHash)
+- aHash
+- xxHash (xxh3)
+- gxhash (x86_64 only)
+- FoldHash
 - CRC32 (IEEE) via `crc32fast`
 - MurmurHash32 via `murmurhash32`
 - CityHash64 via `cityhash` (x86_64 only)
-- Blake3 (cryptographic hash)
-- SHA256 via `sha2` (cryptographic hash)
-- SHA256 via `ring` (cryptographic hash)
-- SHA256 via `stringzilla` (cryptographic hash)
+
+**Stateful Hashes** (incremental/streaming):
+- StringZilla `Hasher`
+- Standard `DefaultHasher` (SipHash)
+- aHash `AHasher`
+- FoldHash `FoldHasher`
+- CRC32 via `crc32fast::Hasher`
+
+**Checksum Hashes** (cryptographic and reference bounds):
+- StringZilla `bytesum` (reference lower bound)
+- Blake3 (cryptographic)
+- SHA256 via `sha2` (cryptographic)
+- SHA256 via `ring` (cryptographic)
+- SHA256 via `stringzilla` (cryptographic, stateless and stateful)
 
 ## Usage Examples
 
@@ -190,18 +201,6 @@ fn bench_stateless(
         Vec::new()
     };
 
-    // Benchmark: StringZilla `bytesum` reference
-    if should_run("stateless/stringzilla::bytesum") {
-        group.bench_function("stringzilla::bytesum", |b| {
-            b.iter(|| {
-                for token in tokens {
-                    let t = black_box(*token);
-                    let _ = black_box(sz::bytesum(t));
-                }
-            })
-        });
-    }
-
     // Benchmark: StringZilla
     if should_run("stateless/stringzilla::hash") {
         group.bench_function("stringzilla::hash", |b| {
@@ -342,9 +341,53 @@ fn bench_stateless(
         }
     }
 
+    if !unique_tokens.is_empty() {
+        println!();
+    }
+}
+
+/// Benchmarks checksum hashes including cryptographic hashes and reference bounds
+fn bench_checksum(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    tokens: &[&[u8]],
+) {
+    // Calculate total bytes processed for throughput reporting
+    let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
+    group.throughput(Throughput::Bytes(total_bytes as u64));
+
+    // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable
+    let enable_collision_detection = env::var("STRINGWARS_COLLISIONS")
+        .map(|v| v == "1" || v.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    let unique_tokens: Vec<&[u8]> = if enable_collision_detection {
+        let unique_set: HashSet<&[u8]> = tokens.iter().copied().collect();
+        let unique: Vec<&[u8]> = unique_set.into_iter().collect();
+        println!(
+            "Collision statistics for {} unique tokens (from {} total):",
+            unique.len(),
+            tokens.len()
+        );
+        unique
+    } else {
+        Vec::new()
+    };
+
+    // Benchmark: StringZilla `bytesum` reference lower bound
+    if should_run("checksum/stringzilla::bytesum") {
+        group.bench_function("stringzilla::bytesum", |b| {
+            b.iter(|| {
+                for token in tokens {
+                    let t = black_box(*token);
+                    let _ = black_box(sz::bytesum(t));
+                }
+            })
+        });
+    }
+
     // Benchmark: Blake3 - cryptographic hash
-    if should_run("stateless/blake3") {
-        group.bench_function("blake3", |b| {
+    if should_run("checksum/blake3::hash") {
+        group.bench_function("blake3::hash", |b| {
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(*token);
@@ -364,7 +407,7 @@ fn bench_stateless(
     }
 
     // Benchmark: SHA256 via sha2
-    if should_run("stateless/sha2::Sha256") {
+    if should_run("checksum/sha2::Sha256") {
         group.bench_function("sha2::Sha256", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -389,7 +432,7 @@ fn bench_stateless(
     }
 
     // Benchmark: SHA256 via ring
-    if should_run("stateless/ring::SHA256") {
+    if should_run("checksum/ring::SHA256") {
         group.bench_function("ring::SHA256", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -410,7 +453,7 @@ fn bench_stateless(
     }
 
     // Benchmark: SHA256 via stringzilla
-    if should_run("stateless/stringzilla::Sha256") {
+    if should_run("checksum/stringzilla::Sha256") {
         group.bench_function("stringzilla::Sha256", |b| {
             b.iter(|| {
                 for token in tokens {
@@ -511,19 +554,6 @@ fn bench_stateful(
             })
         });
     }
-
-    // Benchmark: StringZilla SHA256
-    if should_run("stateful/stringzilla::Sha256") {
-        group.bench_function("stringzilla::Sha256", |b| {
-            b.iter(|| {
-                let mut hasher = sz::Sha256::new();
-                for token in tokens {
-                    hasher.update(token);
-                }
-                black_box(hasher.digest());
-            })
-        });
-    }
 }
 
 fn main() {
@@ -538,14 +568,19 @@ fn main() {
 
     let mut criterion = configure_bench();
 
-    // Profile hash functions that see the whole input at once
+    // Profile stateless hash functions that see the whole input at once
+    let mut group = criterion.benchmark_group("stateless");
+    bench_stateless(&mut group, &tokens);
+    group.finish();
+
+    // Profile stateful/incremental hash functions that see only a slice of data at a time
     let mut group = criterion.benchmark_group("stateful");
     bench_stateful(&mut group, &tokens);
     group.finish();
 
-    // Profile incremental hash functions that see only a slice of data at a time
-    let mut group = criterion.benchmark_group("stateless");
-    bench_stateless(&mut group, &tokens);
+    // Profile checksum and cryptographic hash functions
+    let mut group = criterion.benchmark_group("checksum");
+    bench_checksum(&mut group, &tokens);
     group.finish();
 
     criterion.final_summary();
