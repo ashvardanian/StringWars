@@ -58,13 +58,12 @@ Note: `gxhash` and `cityhash` are only compiled on x86_64 targets as they requir
 "#]
 use std::collections::HashSet;
 use std::env;
-use std::error::Error;
-use std::fs;
 use std::hash::{BuildHasher, Hasher};
 use std::hint::black_box;
 
 use bit_set::BitSet;
 use criterion::{Criterion, Throughput};
+use stringtape::BytesCowsAuto;
 
 use ahash::RandomState as AHashState;
 use blake3;
@@ -82,7 +81,7 @@ use cityhash;
 use gxhash;
 
 mod utils;
-use utils::should_run;
+use utils::{load_dataset, should_run};
 
 /// Counts collisions for a given hash function using a bitset sized to the number of unique tokens
 fn count_collisions<F>(unique_tokens: &[&[u8]], hash_fn: F) -> usize
@@ -140,46 +139,13 @@ fn configure_bench() -> Criterion {
         .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
 }
 
-/// Loads the dataset from the file specified by the `STRINGWARS_DATASET` environment variable.
-pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
-    let dataset_path = env::var("STRINGWARS_DATASET")
-        .map_err(|_| "STRINGWARS_DATASET environment variable not set")?;
-    let content = fs::read(&dataset_path)?;
-    Ok(content)
-}
-
-/// Tokenizes the given haystack based on the `STRINGWARS_TOKENS` environment variable.
-/// Supported modes: "lines", "words", and "file".
-pub fn tokenize<'a>(haystack: &'a [u8]) -> Result<Vec<&'a [u8]>, Box<dyn Error>> {
-    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-    let tokens: Vec<&[u8]> = match mode.as_str() {
-        "lines" => haystack
-            .split(|&c| c == b'\n')
-            .filter(|t| !t.is_empty())
-            .collect(),
-        "words" => haystack
-            .split(|&c| c == b'\n' || c == b' ')
-            .filter(|t| !t.is_empty())
-            .collect(),
-        "file" => vec![haystack],
-        other => {
-            return Err(format!(
-                "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
-                other
-            )
-            .into())
-        }
-    };
-    Ok(tokens)
-}
-
 /// Benchmarks stateless hashes seeing the whole input at once
 fn bench_stateless(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    tokens: &[&[u8]],
+    tokens: &BytesCowsAuto,
 ) {
     // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
+    let total_bytes: usize = tokens.iter().map(|t| t.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable
@@ -190,7 +156,7 @@ fn bench_stateless(
 
     let unique_tokens: Vec<&[u8]> = if enable_collision_detection {
         println!("\nComputing unique tokens for collision detection...");
-        let unique_set: HashSet<&[u8]> = tokens.iter().copied().collect();
+        let unique_set: HashSet<&[u8]> = tokens.iter().collect();
         let unique: Vec<&[u8]> = unique_set.into_iter().collect();
         println!(
             "Collision statistics for {} unique tokens (from {} total):",
@@ -207,8 +173,7 @@ fn bench_stateless(
         group.bench_function("stringzilla::hash", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
-                    let _ = black_box(sz::hash(t));
+                    let _ = black_box(sz::hash(black_box(token)));
                 }
             })
         });
@@ -223,7 +188,7 @@ fn bench_stateless(
         group.bench_function("std::DefaultHasher::hash_one", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(std_builder.hash_one(t));
                 }
             })
@@ -239,7 +204,7 @@ fn bench_stateless(
         group.bench_function("aHash::hash_one", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(hash_builder.hash_one(t));
                 }
             })
@@ -254,7 +219,7 @@ fn bench_stateless(
         group.bench_function("xxh3::xxh3_64", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(xxh3_64(t));
                 }
             })
@@ -270,7 +235,7 @@ fn bench_stateless(
         group.bench_function("gxhash::gxhash64", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(gxhash::gxhash64(t, 42));
                 }
             })
@@ -286,7 +251,7 @@ fn bench_stateless(
         group.bench_function("foldhash::hash_one", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(foldhash_builder.hash_one(t));
                 }
             })
@@ -301,7 +266,7 @@ fn bench_stateless(
         group.bench_function("crc32fast::hash", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(crc32fast::hash(t));
                 }
             })
@@ -316,7 +281,7 @@ fn bench_stateless(
         group.bench_function("murmurhash32", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(murmurhash32::murmurhash3(t) as u64);
                 }
             })
@@ -332,7 +297,7 @@ fn bench_stateless(
         group.bench_function("cityhash::city_hash_64", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(cityhash::city_hash_64(t));
                 }
             })
@@ -350,10 +315,10 @@ fn bench_stateless(
 /// Benchmarks checksum hashes including cryptographic hashes and reference bounds
 fn bench_checksum(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    tokens: &[&[u8]],
+    tokens: &BytesCowsAuto,
 ) {
     // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
+    let total_bytes: usize = tokens.iter().map(|t| t.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable
@@ -379,7 +344,7 @@ fn bench_checksum(
         group.bench_function("stringzilla::bytesum", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(sz::bytesum(t));
                 }
             })
@@ -391,7 +356,7 @@ fn bench_checksum(
         group.bench_function("blake3::hash", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(blake3::hash(t));
                 }
             })
@@ -412,7 +377,7 @@ fn bench_checksum(
         group.bench_function("sha2::Sha256", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let mut hasher = Sha256::new();
                     hasher.update(t);
                     let _ = black_box(hasher.finalize());
@@ -437,7 +402,7 @@ fn bench_checksum(
         group.bench_function("ring::SHA256", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(ring_digest::digest(&ring_digest::SHA256, t));
                 }
             })
@@ -458,7 +423,7 @@ fn bench_checksum(
         group.bench_function("stringzilla::Sha256", |b| {
             b.iter(|| {
                 for token in tokens {
-                    let t = black_box(*token);
+                    let t = black_box(token);
                     let _ = black_box(sz::Sha256::hash(t));
                 }
             })
@@ -482,10 +447,10 @@ fn bench_checksum(
 /// Benchmarks stateful hashes seeing one slice at a time
 fn bench_stateful(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    tokens: &[&[u8]],
+    tokens: &BytesCowsAuto,
 ) {
     // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = tokens.iter().map(|u| u.len()).sum();
+    let total_bytes: usize = tokens.iter().map(|t| t.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark: StringZilla `hash`
@@ -561,9 +526,8 @@ fn main() {
     log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables, and panic if the content is missing
-    let dataset = load_dataset().unwrap();
-    let tokens = tokenize(&dataset).unwrap();
-    if tokens.is_empty() {
+    let tape = load_dataset();
+    if tape.is_empty() {
         panic!("No tokens found in the dataset.");
     }
 
@@ -571,17 +535,17 @@ fn main() {
 
     // Profile stateless hash functions that see the whole input at once
     let mut group = criterion.benchmark_group("stateless");
-    bench_stateless(&mut group, &tokens);
+    bench_stateless(&mut group, &tape);
     group.finish();
 
     // Profile stateful/incremental hash functions that see only a slice of data at a time
     let mut group = criterion.benchmark_group("stateful");
-    bench_stateful(&mut group, &tokens);
+    bench_stateful(&mut group, &tape);
     group.finish();
 
     // Profile checksum and cryptographic hash functions
     let mut group = criterion.benchmark_group("checksum");
-    bench_checksum(&mut group, &tokens);
+    bench_checksum(&mut group, &tape);
     group.finish();
 
     criterion.final_summary();

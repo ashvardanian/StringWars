@@ -60,7 +60,7 @@ use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version}
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
 mod utils;
-use utils::{set_fingerprints_bytes_per_hash, should_run, HashesWallTime};
+use utils::{load_dataset, set_fingerprints_bytes_per_hash, should_run, HashesWallTime};
 
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
@@ -173,11 +173,11 @@ fn configure_bench() -> Criterion<HashesWallTime> {
 }
 
 fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
-    let dataset_path = env::var("STRINGWARS_DATASET").unwrap_or_else(|_| {
-        panic!("STRINGWARS_DATASET environment variable must be set for fingerprinting benchmarks")
-    });
-    let content = fs::read_to_string(&dataset_path)
-        .unwrap_or_else(|e| panic!("Failed to read dataset file '{}': {}", dataset_path, e));
+    // Load dataset using unified loader
+    let tape_bytes = load_dataset();
+    let tape = tape_bytes
+        .as_chars()
+        .expect("Dataset must be valid UTF-8 for fingerprinting");
 
     let batch_size = env::var("STRINGWARS_BATCH")
         .unwrap_or_else(|_| "1024".to_string())
@@ -189,19 +189,12 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
             )
         });
 
-    let max_tokens = env::var("STRINGWARS_MAX_TOKENS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok());
-
     let ndim = env::var("STRINGWARS_NDIM")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(256);
 
-    // Tokenize into documents according to mode (zero-copy slices of `content`).
-    let units: Vec<&str> = content.lines().filter(|s| !s.is_empty()).collect();
-
-    if units.is_empty() {
+    if tape.is_empty() {
         panic!("Dataset must contain at least one token for fingerprinting.");
     }
 
@@ -213,29 +206,10 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
         panic!("STRINGWARS_NDIM must be greater than zero for fingerprinting benchmarks.");
     }
 
-    // Log dataset statistics
-    let total_units = units.len();
-    let total_bytes: usize = units.iter().map(|s| s.len()).sum();
-    let total_chars: usize = units.iter().map(|s| s.chars().count()).sum();
-    let avg_bytes_per_unit = total_bytes as f64 / total_units as f64;
-    let avg_chars_per_unit = total_chars as f64 / total_units as f64;
-
-    println!("Dataset statistics:");
-    println!("- Source: {}", dataset_path);
-    println!("- Processing mode: lines");
-    println!("- Total lines: {}", total_units);
-    println!(
-        "- Average line length: {:.1} bytes, {:.1} chars",
-        avg_bytes_per_unit, avg_chars_per_unit
-    );
-    println!(
-        "- Total dataset size: {} bytes, {} chars",
-        total_bytes, total_chars
-    );
+    // Log benchmark-specific configuration
+    println!("Benchmark configuration:");
     println!("- Batch size (for StringZilla): {}", batch_size);
     println!("- Fingerprint dimensions: {}", ndim);
-
-    // Log n-gram configuration
     println!("- N-gram widths: {:?} bytes", NGRAM_WIDTHS);
     println!(
         "- Hashes per width: {} (total NDIM: {})",
@@ -243,23 +217,10 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
         ndim
     );
 
-    // Truncate if max_tokens is specified
-    let mut truncated_units = units.clone();
-    if let Some(max_t) = max_tokens {
-        if max_t < units.len() {
-            truncated_units.truncate(max_t);
-            println!(
-                "- Max tokens limit: {} (truncated from {})",
-                max_t,
-                units.len()
-            );
-        }
-    }
-
-    // Create single BytesTape and populate it with all units (following bench_similarities.rs)
+    // Create single BytesTape and populate it with all units
     let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
     units_tape
-        .extend(truncated_units.iter().map(|s| s.as_bytes()))
+        .extend(tape.iter().map(|s| s.as_bytes()))
         .unwrap_or_else(|e| panic!("Failed to extend BytesTape for fingerprinting: {}", e));
 
     // Create both byte and char views from single tape (zero-copy casting)
@@ -269,13 +230,17 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
         .try_into()
         .unwrap_or_else(|e| panic!("Failed to convert BytesTapeView to CharsTapeView: {}", e));
 
-    // Average bytes per token for throughput reporting
-    let avg_token_bytes: u64 = total_bytes as u64 / truncated_units.len() as u64;
+    // Calculate total bytes for throughput reporting
+    let total_documents = units_tape.len();
+    let total_bytes: usize = tape.iter().map(|s| s.len()).sum();
+    let avg_token_bytes: u64 = total_bytes as u64 / total_documents as u64;
     let per_batch_bytes = (batch_size as u64) * avg_token_bytes;
+
     // Count hash operations as: NDIM hashes per token times average token length (approx)
     let per_batch_hash_ops: u64 = (batch_size as u64)
         .saturating_mul(ndim as u64)
         .saturating_mul(avg_token_bytes as u64);
+
     // Configure formatter to derive GB/s from hashes/s using average bytes-per-hash-op
     if per_batch_hash_ops > 0 {
         let bytes_per_hash_op = (per_batch_bytes as f64) / (per_batch_hash_ops as f64);
@@ -283,7 +248,6 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     }
 
     // Pre-allocated matrices for quality analysis: N_docs × N_dims (algorithm-specific types)
-    let total_documents = truncated_units.len();
     let mut serial_matrix = vec![vec![0u64; ndim]; total_documents]; // u64 for serial MinHash
     let mut pc_matrix = vec![vec![0u64; ndim]; total_documents]; // u64 for probabilistic_collections
     let mut sz_matrix = vec![vec![0u32; ndim]; total_documents]; // u32 for StringZilla fingerprints
@@ -343,7 +307,7 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     });
 
     let mut start_idx = 0usize;
-    let tokens_count = truncated_units.len();
+    let tokens_count = total_documents;
 
     // Pre-allocate result buffers for StringZilla compute_into in unified memory (reused across iterations)
     let mut min_hashes = UnifiedVec::<u32>::with_capacity_in(batch_size * ndim, UnifiedAlloc);

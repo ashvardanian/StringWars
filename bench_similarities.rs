@@ -58,7 +58,7 @@ use stringzilla::szs::{
 };
 
 mod utils;
-use utils::{should_run, CupsWallTime};
+use utils::{load_dataset, should_run, CupsWallTime};
 
 // Pull some metadata logging functionality
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
@@ -210,78 +210,29 @@ fn chars_tape_slice<'a>(
 }
 
 fn bench_similarities(c: &mut Criterion<CupsWallTime>) {
-    let dataset_path =
-        env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
-    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-    let content = fs::read_to_string(&dataset_path).expect("Could not read dataset");
+    // Load dataset using unified loader
+    let tape_bytes = load_dataset();
+    let tape = tape_bytes
+        .as_chars()
+        .expect("Dataset must be valid UTF-8 for similarities");
 
     let batch_size = env::var("STRINGWARS_BATCH")
         .unwrap_or_else(|_| "2048".to_string())
         .parse::<usize>()
         .expect("STRINGWARS_BATCH must be a number");
 
-    let max_pairs = env::var("STRINGWARS_MAX_PAIRS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok());
-
-    let units: Vec<&str> = match mode.as_str() {
-        "words" => content
-            .split_whitespace()
-            .filter(|s| !s.is_empty())
-            .collect(),
-        "lines" => content.lines().filter(|s| !s.is_empty()).collect(),
-        other => panic!(
-            "Unknown STRINGWARS_TOKENS: {}. Use 'lines' or 'words'.",
-            other
-        ),
-    };
-
-    if units.len() < 2 {
+    if tape.len() < 2 {
         panic!("Dataset must contain at least two items for comparisons.");
     }
 
-    // Log dataset statistics
-    let total_units = units.len();
-    let total_bytes: usize = units.iter().map(|s| s.len()).sum();
-    let total_chars: usize = units.iter().map(|s| s.chars().count()).sum();
-    let avg_bytes_per_unit = total_bytes as f64 / total_units as f64;
-    let avg_chars_per_unit = total_chars as f64 / total_units as f64;
-
-    println!("Dataset statistics:");
-    println!("- Source: {}", dataset_path);
-    println!("- Token mode: {}", mode);
-    println!("- Total tokens: {}", total_units);
-    println!(
-        "- Average token length: {:.1} bytes, {:.1} chars",
-        avg_bytes_per_unit, avg_chars_per_unit
-    );
-    println!(
-        "- Total dataset size: {} bytes, {} chars",
-        total_bytes, total_chars
-    );
+    // Log benchmark-specific configuration
+    println!("Benchmark configuration:");
     println!("- Batch size: {}", batch_size);
 
-    // Limit units if max_pairs is specified (since pairs = units.len() - 1)
-    let mut truncated_units = units.clone();
-    if let Some(max_p) = max_pairs {
-        if max_p < units.len() - 1 {
-            truncated_units.truncate(max_p + 1);
-            println!(
-                "- Max pairs limit: {} (truncated to {} tokens)",
-                max_p,
-                truncated_units.len()
-            );
-        }
-    }
-
-    if truncated_units.len() < 2 {
-        panic!("Need at least 2 units to form consecutive pairs.");
-    }
-
-    // Create BytesTape and populate it with all units in batch
+    // Create BytesTape and populate it with all tokens (already limited by STRINGWARS_MAX_TOKENS in load_dataset)
     let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
     units_tape
-        .extend(truncated_units.iter().map(|s| s.as_bytes()))
+        .extend(tape.iter().map(|s| s.as_bytes()))
         .expect("Failed to extend BytesTape");
 
     // Create zero-copy views for consecutive pairs

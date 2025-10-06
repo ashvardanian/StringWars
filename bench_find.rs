@@ -34,8 +34,6 @@ RUSTFLAGS="-C target-cpu=native" \
 ```
 "#]
 use std::env;
-use std::error::Error;
-use std::fs;
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -48,7 +46,7 @@ use regex::bytes::Regex;
 use stringzilla::sz;
 
 mod utils;
-use utils::should_run;
+use utils::{load_dataset, should_run};
 
 fn log_stringzilla_metadata() {
     let v = sz::version();
@@ -62,39 +60,6 @@ fn configure_bench() -> Criterion {
         .sample_size(10) // Each loop scans the whole dataset, but this can't be under 10
         .warm_up_time(Duration::from_secs(3)) // Let the CPU frequencies settle.
         .measurement_time(Duration::from_secs(20)) // Actual measurement time.
-}
-
-/// Loads the dataset from the file specified by the `STRINGWARS_DATASET` environment variable.
-pub fn load_dataset() -> Result<Vec<u8>, Box<dyn Error>> {
-    let dataset_path = env::var("STRINGWARS_DATASET")
-        .map_err(|_| "STRINGWARS_DATASET environment variable not set")?;
-    let content = fs::read(&dataset_path)?;
-    Ok(content)
-}
-
-/// Tokenizes the given haystack based on the `STRINGWARS_TOKENS` environment variable.
-/// Supported modes: "lines", "words", and "file".
-pub fn tokenize<'a>(haystack: &'a [u8]) -> Result<Vec<&'a [u8]>, Box<dyn Error>> {
-    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-    let tokens = match mode.as_str() {
-        "lines" => haystack
-            .split(|&c| c == b'\n')
-            .filter(|token| !token.is_empty())
-            .collect(),
-        "words" => haystack
-            .split(|&c| c == b'\n' || c == b' ')
-            .filter(|token| !token.is_empty())
-            .collect(),
-        "file" => vec![haystack],
-        other => {
-            return Err(format!(
-                "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
-                other
-            )
-            .into())
-        }
-    };
-    Ok(tokens)
 }
 
 /// Benchmarks forward substring search using "StringZilla", "MemMem", and standard strings.
@@ -369,11 +334,14 @@ fn main() {
     log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables, and panic if the content is missing
-    let haystack = load_dataset().unwrap();
-    let needles = tokenize(&haystack).unwrap();
-    if needles.is_empty() {
+    let tape = load_dataset();
+    if tape.is_empty() {
         panic!("No tokens found in the dataset.");
     }
+
+    // Get the parent data directly from the tape (zero-copy)
+    let haystack = tape.parent();
+    let needles = &tape;
 
     let mut criterion = configure_bench();
 

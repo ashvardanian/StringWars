@@ -41,10 +41,10 @@ use rand::{RngCore, SeedableRng};
 use rand_chacha;
 use rand_xoshiro;
 use stringzilla::sz;
+use zeroize::Zeroize;
 
 mod utils;
 use utils::should_run;
-use zeroize::Zeroize;
 
 fn log_stringzilla_metadata() {
     let v = sz::version();

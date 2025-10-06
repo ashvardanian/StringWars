@@ -243,11 +243,13 @@ fn main() {
 
     // Load the dataset defined by the environment variables, and panic if the content is missing
     let tokens_bytes = load_dataset();
-    // Cast BytesCowsAuto to CharsCowsAuto for UTF-8 string benchmarks (StringTape 2.2+)
-    let tokens: CharsCowsAuto = tokens_bytes.into();
-    if tokens.is_empty() {
+    if tokens_bytes.is_empty() {
         panic!("No tokens found in the dataset.");
     }
+    // Cast BytesCowsAuto to CharsCowsAuto for UTF-8 string benchmarks (StringTape 2.2+)
+    let tokens = tokens_bytes
+        .as_chars()
+        .expect("Dataset must be valid UTF-8");
 
     let mut criterion = configure_bench();
 

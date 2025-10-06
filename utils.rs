@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::env;
 use std::fs;
-use stringtape::{BytesCowsAuto, CharsCowsAuto};
+use stringtape::BytesCowsAuto;
 
 /// Forces the allocator to release memory back to the OS.
 /// This is particularly useful after dropping large allocations in benchmarks.
