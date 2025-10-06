@@ -554,3 +554,236 @@ impl Measurement for ComparisonsWallTime {
         &ComparisonsFormatter
     }
 }
+
+// ============================================================================
+// Perf profiling utilities for comprehensive hardware counter collection
+// ============================================================================
+
+/// RAII guard that profiles a code section using perf events on Linux.
+/// On non-Linux platforms, this is a zero-cost abstraction.
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+pub struct PerfSection {
+    name: &'static str,
+    // Core performance
+    cycles: Option<Counter>,
+    instructions: Option<Counter>,
+    // Stall analysis (ARM-specific)
+    stall_frontend: Option<Counter>,
+    stall_backend: Option<Counter>,
+    stall_backend_mem: Option<Counter>,
+    // Memory hierarchy
+    l1d_cache_misses: Option<Counter>,
+    l1d_cache_accesses: Option<Counter>,
+    dtlb_misses: Option<Counter>,
+    l2_cache_misses: Option<Counter>,
+}
+
+#[cfg(target_os = "linux")]
+impl PerfSection {
+    /// Creates a new perf section with comprehensive counter collection.
+    /// Collects: cycles, instructions, stalls (frontend/backend), cache, and TLB metrics.
+    pub fn new(name: &'static str) -> Self {
+        // Core performance counters
+        let cycles = Self::build_counter(Hardware::CPU_CYCLES);
+        let instructions = Self::build_counter(Hardware::INSTRUCTIONS);
+
+        // Stall counters (standard hardware events)
+        let stall_frontend = Self::build_counter(Hardware::STALLED_CYCLES_FRONTEND);
+        let stall_backend = Self::build_counter(Hardware::STALLED_CYCLES_BACKEND);
+
+        // L1 data cache
+        let l1d_cache_misses =
+            Self::build_cache_counter(WhichCache::L1D, CacheOp::READ, CacheResult::MISS);
+        let l1d_cache_accesses =
+            Self::build_cache_counter(WhichCache::L1D, CacheOp::READ, CacheResult::ACCESS);
+
+        // DTLB (data TLB)
+        let dtlb_misses =
+            Self::build_cache_counter(WhichCache::DTLB, CacheOp::READ, CacheResult::MISS);
+
+        // L2/LLC cache
+        let l2_cache_misses =
+            Self::build_cache_counter(WhichCache::LL, CacheOp::READ, CacheResult::MISS);
+
+        Self {
+            name,
+            cycles,
+            instructions,
+            stall_frontend,
+            stall_backend,
+            stall_backend_mem: None, // Not available via standard events
+            l1d_cache_misses,
+            l1d_cache_accesses,
+            dtlb_misses,
+            l2_cache_misses,
+        }
+    }
+
+    /// Creates a minimal perf section that only tracks core performance (cycles + instructions).
+    /// Use this for lower overhead when detailed metrics aren't needed.
+    pub fn minimal(name: &'static str) -> Self {
+        let cycles = Self::build_counter(Hardware::CPU_CYCLES);
+        let instructions = Self::build_counter(Hardware::INSTRUCTIONS);
+
+        Self {
+            name,
+            cycles,
+            instructions,
+            stall_frontend: None,
+            stall_backend: None,
+            stall_backend_mem: None,
+            l1d_cache_misses: None,
+            l1d_cache_accesses: None,
+            dtlb_misses: None,
+            l2_cache_misses: None,
+        }
+    }
+
+    /// Helper to build and enable a hardware counter
+    fn build_counter(kind: Hardware) -> Option<Counter> {
+        Builder::new().kind(kind).build().ok().and_then(|mut c| {
+            if c.enable().is_err() {
+                eprintln!("Warning: Failed to enable counter {:?}", kind);
+            }
+            Some(c)
+        })
+    }
+
+    /// Helper to build and enable a cache counter
+    fn build_cache_counter(cache: WhichCache, op: CacheOp, result: CacheResult) -> Option<Counter> {
+        use perf_event::events::Cache;
+        Builder::new()
+            .kind(Cache {
+                which: cache,
+                operation: op,
+                result,
+            })
+            .build()
+            .ok()
+            .and_then(|mut c| {
+                c.enable().ok()?;
+                Some(c)
+            })
+    }
+
+    /// Disable and read a counter
+    fn read_counter(counter: &mut Option<Counter>) -> Option<u64> {
+        counter.as_mut().and_then(|c| {
+            c.disable().ok()?;
+            c.read().ok()
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PerfSection {
+    fn drop(&mut self) {
+        // Read all counters
+        let cycles = Self::read_counter(&mut self.cycles);
+        let instructions = Self::read_counter(&mut self.instructions);
+        let stall_frontend = Self::read_counter(&mut self.stall_frontend);
+        let stall_backend = Self::read_counter(&mut self.stall_backend);
+        let l1d_cache_misses = Self::read_counter(&mut self.l1d_cache_misses);
+        let l1d_cache_accesses = Self::read_counter(&mut self.l1d_cache_accesses);
+        let dtlb_misses = Self::read_counter(&mut self.dtlb_misses);
+        let l2_cache_misses = Self::read_counter(&mut self.l2_cache_misses);
+
+        // Only print if we have any counters
+        let has_counters = cycles.is_some()
+            || instructions.is_some()
+            || stall_frontend.is_some()
+            || stall_backend.is_some()
+            || l1d_cache_misses.is_some()
+            || dtlb_misses.is_some()
+            || l2_cache_misses.is_some();
+
+        if !has_counters {
+            return;
+        }
+
+        eprintln!("[perf] {}", self.name);
+
+        // Core performance
+        if let (Some(c), Some(i)) = (cycles, instructions) {
+            let ipc = i as f64 / c as f64;
+            eprintln!(
+                "  cycles: {}, instructions: {}, IPC: {:.2}",
+                format_perf_number(c),
+                format_perf_number(i),
+                ipc
+            );
+        } else if let Some(c) = cycles {
+            eprintln!("  cycles: {}", format_perf_number(c));
+        } else if let Some(i) = instructions {
+            eprintln!("  instructions: {}", format_perf_number(i));
+        }
+
+        // Stalls
+        if let (Some(sf), Some(c)) = (stall_frontend, cycles) {
+            let pct = (sf as f64 / c as f64) * 100.0;
+            eprintln!(
+                "  frontend stalls: {} ({:.1}%)",
+                format_perf_number(sf),
+                pct
+            );
+        }
+        if let (Some(sb), Some(c)) = (stall_backend, cycles) {
+            let pct = (sb as f64 / c as f64) * 100.0;
+            eprintln!("  backend stalls: {} ({:.1}%)", format_perf_number(sb), pct);
+        }
+
+        // Memory hierarchy
+        if let Some(misses) = l1d_cache_misses {
+            if let Some(accesses) = l1d_cache_accesses {
+                let rate = (misses as f64 / accesses as f64) * 100.0;
+                eprintln!(
+                    "  L1D misses: {} ({:.1}%)",
+                    format_perf_number(misses),
+                    rate
+                );
+            } else {
+                eprintln!("  L1D misses: {}", format_perf_number(misses));
+            }
+        }
+        if let Some(misses) = l2_cache_misses {
+            eprintln!("  L2 misses: {}", format_perf_number(misses));
+        }
+        if let Some(misses) = dtlb_misses {
+            eprintln!("  DTLB misses: {}", format_perf_number(misses));
+        }
+    }
+}
+
+/// Format large numbers with thousand separators for readability
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+fn format_perf_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.insert(0, ',');
+        }
+        result.insert(0, c);
+    }
+    result
+}
+
+// No-op implementation for non-Linux platforms
+#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
+pub struct PerfSection;
+
+#[cfg(not(target_os = "linux"))]
+impl PerfSection {
+    #[inline(always)]
+    pub fn new(_name: &'static str) -> Self {
+        Self
+    }
+
+    #[inline(always)]
+    pub fn minimal(_name: &'static str) -> Self {
+        Self
+    }
+}
