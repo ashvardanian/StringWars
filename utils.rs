@@ -1,4 +1,129 @@
+use std::borrow::Cow;
 use std::env;
+use std::fs;
+use stringtape::{BytesCowsAuto, CharsCowsAuto};
+
+/// Forces the allocator to release memory back to the OS.
+/// This is particularly useful after dropping large allocations in benchmarks.
+#[cfg(target_os = "linux")]
+#[inline]
+pub fn reclaim_memory() {
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[inline]
+pub fn reclaim_memory() {
+    // No-op on non-Linux platforms
+}
+
+/// Loads binary data from the file specified by the `STRINGWARS_DATASET` environment variable.
+/// Uses StringTape to avoid allocating separate byte vectors for each token.
+/// Returns BytesCowsAuto for memory-efficient byte slice storage.
+/// Can be cast to CharsCowsAuto for UTF-8 string benchmarks (StringTape 2.2+).
+/// Supports `STRINGWARS_MAX_TOKENS` to limit the number of tokens loaded.
+/// Logs dataset statistics to stderr.
+pub fn load_dataset() -> BytesCowsAuto<'static> {
+    let dataset_path =
+        env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
+    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
+    let max_tokens = env::var("STRINGWARS_MAX_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok());
+
+    if let Some(max) = max_tokens {
+        eprintln!("STRINGWARS_MAX_TOKENS: limiting to {} tokens", max);
+    }
+
+    // Read and leak the content to get 'static lifetime
+    let content = fs::read(&dataset_path).expect("Could not read dataset");
+    let content_static: &'static [u8] = Box::leak(content.into_boxed_slice());
+    let content_bytes = Cow::Borrowed(content_static);
+
+    // Build BytesCowsAuto directly from iterator - it will own references to the leaked bytes
+    let tape = match mode.as_str() {
+        "lines" => {
+            let iter = content_static
+                .split(|&b| b == b'\n')
+                .filter(|s| !s.is_empty());
+            if let Some(max) = max_tokens {
+                BytesCowsAuto::from_iter_and_data(iter.take(max), content_bytes)
+            } else {
+                BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+            }
+        }
+        "words" => {
+            let iter = content_static
+                .split(|&b| b == b' ' || b == b'\n')
+                .filter(|s| !s.is_empty());
+            if let Some(max) = max_tokens {
+                BytesCowsAuto::from_iter_and_data(iter.take(max), content_bytes)
+            } else {
+                BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+            }
+        }
+        "file" => {
+            let iter = std::iter::once(content_static);
+            BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+        }
+        other => panic!(
+            "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
+            other
+        ),
+    };
+
+    let tape = tape.expect("Failed to create BytesTape");
+
+    // Log dataset statistics
+    let count = tape.len();
+    let total_bytes: usize = tape.iter().map(|s| s.len()).sum();
+    let mean_len = if count > 0 {
+        total_bytes as f64 / count as f64
+    } else {
+        0.0
+    };
+    let variance: f64 = tape
+        .iter()
+        .map(|s| {
+            let diff = s.len() as f64 - mean_len;
+            diff * diff
+        })
+        .sum::<f64>()
+        / count as f64;
+    let std_dev = variance.sqrt();
+
+    eprintln!(
+        "Dataset: {} tokens, {} bytes ({:.2} GB), mean {:.1} ± {:.1} bytes",
+        format_number(count as u64),
+        format_number(total_bytes as u64),
+        total_bytes as f64 / 1e9,
+        mean_len,
+        std_dev
+    );
+
+    tape
+}
+
+/// Format large numbers with thousand separators for readability
+fn format_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.insert(0, ',');
+        }
+        result.insert(0, c);
+    }
+    result
+}
+
+// Perf profiling utilities
+#[cfg(target_os = "linux")]
+use perf_event::{
+    events::CacheOp, events::CacheResult, events::Hardware, events::WhichCache, Builder, Counter,
+};
 
 #[cfg(any(
     feature = "bench_similarities",
