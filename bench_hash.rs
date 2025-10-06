@@ -68,17 +68,18 @@ use criterion::{Criterion, Throughput};
 
 use ahash::RandomState as AHashState;
 use blake3;
-#[cfg(target_arch = "x86_64")]
-use cityhash;
 use crc32fast;
 use foldhash;
-#[cfg(target_arch = "x86_64")]
-use gxhash;
 use murmurhash32;
 use ring::digest as ring_digest;
 use sha2::{Digest, Sha256};
 use stringzilla::sz;
 use xxhash_rust::xxh3::xxh3_64;
+
+#[cfg(target_arch = "x86_64")]
+use cityhash;
+#[cfg(target_arch = "x86_64")]
+use gxhash;
 
 mod utils;
 use utils::should_run;
