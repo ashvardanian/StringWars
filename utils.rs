@@ -5,6 +5,7 @@ use stringtape::BytesCowsAuto;
 
 /// Forces the allocator to release memory back to the OS.
 /// This is particularly useful after dropping large allocations in benchmarks.
+#[allow(dead_code)]
 #[cfg(target_os = "linux")]
 #[inline]
 pub fn reclaim_memory() {
@@ -13,6 +14,7 @@ pub fn reclaim_memory() {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(not(target_os = "linux"))]
 #[inline]
 pub fn reclaim_memory() {
@@ -583,6 +585,7 @@ pub struct PerfSection {
 impl PerfSection {
     /// Creates a new perf section with comprehensive counter collection.
     /// Collects: cycles, instructions, stalls (frontend/backend), cache, and TLB metrics.
+    #[allow(dead_code)]
     pub fn new(name: &'static str) -> Self {
         // Core performance counters
         let cycles = Self::build_counter(Hardware::CPU_CYCLES);
@@ -622,6 +625,7 @@ impl PerfSection {
 
     /// Creates a minimal perf section that only tracks core performance (cycles + instructions).
     /// Use this for lower overhead when detailed metrics aren't needed.
+    #[allow(dead_code)]
     pub fn minimal(name: &'static str) -> Self {
         let cycles = Self::build_counter(Hardware::CPU_CYCLES);
         let instructions = Self::build_counter(Hardware::INSTRUCTIONS);
@@ -641,6 +645,7 @@ impl PerfSection {
     }
 
     /// Helper to build and enable a hardware counter
+    #[allow(dead_code)]
     fn build_counter(kind: Hardware) -> Option<Counter> {
         Builder::new().kind(kind).build().ok().and_then(|mut c| {
             if c.enable().is_err() {
@@ -651,6 +656,7 @@ impl PerfSection {
     }
 
     /// Helper to build and enable a cache counter
+    #[allow(dead_code)]
     fn build_cache_counter(cache: WhichCache, op: CacheOp, result: CacheResult) -> Option<Counter> {
         use perf_event::events::Cache;
         Builder::new()
