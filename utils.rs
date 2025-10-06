@@ -78,7 +78,7 @@ pub fn load_dataset() -> BytesCowsAuto<'static> {
 
     let tape = tape.expect("Failed to create BytesTape");
 
-    // Log dataset statistics
+    // Streaming statistics with log-scale histogram (O(1) memory)
     let count = tape.len();
     let total_bytes: usize = tape.iter().map(|s| s.len()).sum();
     let mean_len = if count > 0 {
@@ -86,24 +86,66 @@ pub fn load_dataset() -> BytesCowsAuto<'static> {
     } else {
         0.0
     };
-    let variance: f64 = tape
-        .iter()
-        .map(|s| {
-            let diff = s.len() as f64 - mean_len;
-            diff * diff
-        })
-        .sum::<f64>()
-        / count as f64;
-    let std_dev = variance.sqrt();
+
+    // Log-scale buckets: 0, 1, 2-3, 4-7, 8-15, 16-31, ... 32K-64K, 64K+
+    let mut buckets = [0u64; 18];
+    let mut min_len = usize::MAX;
+    let mut max_len = 0;
+    let mut variance_sum = 0.0;
+
+    for token in tape.iter() {
+        let len = token.len();
+        min_len = min_len.min(len);
+        max_len = max_len.max(len);
+
+        // Variance calculation
+        let diff = len as f64 - mean_len;
+        variance_sum += diff * diff;
+
+        // Log-scale bucketing (powers of 2)
+        let bucket = if len == 0 {
+            0
+        } else if len == 1 {
+            1
+        } else {
+            // For len >= 2: bucket = log2(len) + 1
+            // E.g., len=2-3 -> bucket 2, len=4-7 -> bucket 3, etc.
+            ((len.ilog2() + 1) as usize).min(17)
+        };
+        buckets[bucket] += 1;
+    }
+
+    let std_dev = (variance_sum / count as f64).sqrt();
 
     eprintln!(
-        "Dataset: {} tokens, {} bytes ({:.2} GB), mean {:.1} ± {:.1} bytes",
+        "Dataset: {} tokens, {} bytes ({:.2} GB)\n  \
+         Length: min {}, max {}, mean {:.1}, std {:.1}",
         format_number(count as u64),
         format_number(total_bytes as u64),
         total_bytes as f64 / 1e9,
+        min_len,
+        max_len,
         mean_len,
         std_dev
     );
+
+    // Show distribution (only non-empty buckets)
+    eprintln!("  Distribution:");
+    let bucket_ranges = [
+        "0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64-127", "128-255", "256-511", "512-1K",
+        "1K-2K", "2K-4K", "4K-8K", "8K-16K", "16K-32K", "32K-64K", "64K+",
+    ];
+    for (i, &cnt) in buckets.iter().enumerate() {
+        if cnt > 0 {
+            let pct = (cnt as f64 / count as f64) * 100.0;
+            let label = if i < bucket_ranges.len() {
+                bucket_ranges[i]
+            } else {
+                "64K+"
+            };
+            eprintln!("    {:>10} bytes: {:>6.2}%", label, pct);
+        }
+    }
 
     tape
 }
