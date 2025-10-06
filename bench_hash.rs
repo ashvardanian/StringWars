@@ -327,7 +327,7 @@ fn bench_checksum(
         .unwrap_or(false);
 
     let unique_tokens: Vec<&[u8]> = if enable_collision_detection {
-        let unique_set: HashSet<&[u8]> = tokens.iter().copied().collect();
+        let unique_set: HashSet<&[u8]> = tokens.iter().collect();
         let unique: Vec<&[u8]> = unique_set.into_iter().collect();
         println!(
             "Collision statistics for {} unique tokens (from {} total):",
