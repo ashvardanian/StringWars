@@ -63,7 +63,7 @@ use std::hint::black_box;
 
 use bit_set::BitSet;
 use criterion::{Criterion, Throughput};
-use stringtape::BytesCowsAuto;
+use stringtape::{BytesCowsAuto, BytesTape};
 
 use ahash::RandomState as AHashState;
 use blake3;
@@ -168,11 +168,18 @@ fn bench_stateless(
         Vec::new()
     };
 
+    // Use BytesTape to colocate strings and reduce memory access overhead
+    let mut tokens_tape = BytesTape::<u64>::new();
+    tokens_tape
+        .extend(tokens.iter())
+        .expect("Failed to create BytesTape");
+    let tokens = tokens_tape.view();
+
     // Benchmark: StringZilla
     if should_run("stateless/stringzilla::hash") {
         group.bench_function("stringzilla::hash", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let _ = black_box(sz::hash(black_box(token)));
                 }
             })
@@ -187,7 +194,7 @@ fn bench_stateless(
         let std_builder = std::collections::hash_map::RandomState::new();
         group.bench_function("std::DefaultHasher::hash_one", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let t = black_box(token);
                     let _ = black_box(std_builder.hash_one(t));
                 }
@@ -203,7 +210,7 @@ fn bench_stateless(
         let hash_builder = AHashState::with_seed(42);
         group.bench_function("aHash::hash_one", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let t = black_box(token);
                     let _ = black_box(hash_builder.hash_one(t));
                 }
@@ -218,7 +225,7 @@ fn bench_stateless(
     if should_run("stateless/xxh3::xxh3_64") {
         group.bench_function("xxh3::xxh3_64", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let t = black_box(token);
                     let _ = black_box(xxh3_64(t));
                 }
@@ -234,7 +241,7 @@ fn bench_stateless(
     if should_run("stateless/gxhash::gxhash64") {
         group.bench_function("gxhash::gxhash64", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let t = black_box(token);
                     let _ = black_box(gxhash::gxhash64(t, 42));
                 }
@@ -250,7 +257,7 @@ fn bench_stateless(
         let foldhash_builder = foldhash::fast::RandomState::default();
         group.bench_function("foldhash::hash_one", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let t = black_box(token);
                     let _ = black_box(foldhash_builder.hash_one(t));
                 }
@@ -265,7 +272,7 @@ fn bench_stateless(
     if should_run("stateless/crc32fast::hash") {
         group.bench_function("crc32fast::hash", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let t = black_box(token);
                     let _ = black_box(crc32fast::hash(t));
                 }
@@ -280,7 +287,7 @@ fn bench_stateless(
     if should_run("stateless/murmurhash32") {
         group.bench_function("murmurhash32", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let t = black_box(token);
                     let _ = black_box(murmurhash32::murmurhash3(t) as u64);
                 }
@@ -296,7 +303,7 @@ fn bench_stateless(
     if should_run("stateless/cityhash::city_hash_64") {
         group.bench_function("cityhash::city_hash_64", |b| {
             b.iter(|| {
-                for token in tokens {
+                for token in &tokens {
                     let t = black_box(token);
                     let _ = black_box(cityhash::city_hash_64(t));
                 }
@@ -449,8 +456,15 @@ fn bench_stateful(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     tokens: &BytesCowsAuto,
 ) {
+    // Use BytesTape to colocate strings and reduce memory access overhead
+    let mut tokens_tape = BytesTape::<u64>::new();
+    tokens_tape
+        .extend(tokens.iter())
+        .expect("Failed to create BytesTape");
+    let tokens = tokens_tape.view();
+
     // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = tokens.iter().map(|t| t.len()).sum();
+    let total_bytes: usize = (&tokens).into_iter().map(|t| t.len()).sum();
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark: StringZilla `hash`
@@ -458,7 +472,7 @@ fn bench_stateful(
         group.bench_function("stringzilla::Hasher", |b| {
             b.iter(|| {
                 let mut hasher = sz::Hasher::new(0);
-                for token in tokens {
+                for token in &tokens {
                     hasher.write(token);
                 }
                 black_box(hasher.finish());
@@ -472,7 +486,7 @@ fn bench_stateful(
             let std_builder = std::collections::hash_map::RandomState::new();
             b.iter(|| {
                 let mut aggregate = std_builder.build_hasher();
-                for token in tokens {
+                for token in &tokens {
                     aggregate.write(token);
                 }
                 black_box(aggregate.finish());
@@ -486,7 +500,7 @@ fn bench_stateful(
             let state = AHashState::with_seed(42);
             b.iter(|| {
                 let mut aggregate = state.build_hasher();
-                for token in tokens {
+                for token in &tokens {
                     aggregate.write(token);
                 }
                 black_box(aggregate.finish());
@@ -500,7 +514,7 @@ fn bench_stateful(
             let state = foldhash::fast::RandomState::default();
             b.iter(|| {
                 let mut aggregate = state.build_hasher();
-                for token in tokens {
+                for token in &tokens {
                     aggregate.write(token);
                 }
                 black_box(aggregate.finish());
@@ -513,7 +527,7 @@ fn bench_stateful(
         group.bench_function("crc32fast::Hasher", |b| {
             b.iter(|| {
                 let mut hasher = crc32fast::Hasher::new();
-                for token in tokens {
+                for token in &tokens {
                     hasher.update(token);
                 }
                 black_box(hasher.finalize());
