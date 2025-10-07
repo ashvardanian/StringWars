@@ -13,8 +13,8 @@ categories = ["text-processing", "development-tools::profiling"]
 
 [dependencies]
 criterion = "0.7.0"
-stringtape = "2.2.2"
-stringzilla = { version = "4.0.14", default-features = false }
+stringtape = "2.3.0"
+stringzilla = { version = "4.2.0", default-features = false }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }

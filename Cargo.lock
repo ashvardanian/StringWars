@@ -3952,9 +3952,9 @@ checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
 name = "stringtape"
-version = "2.2.2"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "292b7352b1d3e6c00b7fda7159a99a1cc9c94a57ed5a16303d23ad6bc92a0a8b"
+checksum = "c1c20f0354292874b4b9cec5dcc96164ac418c352482900f68fed51e25d7563b"
 dependencies = [
  "allocator-api2 0.3.1",
 ]
@@ -4002,9 +4002,9 @@ dependencies = [
 
 [[package]]
 name = "stringzilla"
-version = "4.1.0"
+version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0a9c6ab5363670c549844df922c63c949e5bcec46ccc7eb554f111e7922326"
+checksum = "23af542a949c000705b3f135574f32b268682eb07a2aa2bdd547e249ab6ea4cf"
 dependencies = [
  "allocator-api2 0.3.1",
  "cc",
