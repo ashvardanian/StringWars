@@ -33,11 +33,11 @@ RUSTFLAGS="-C target-cpu=native" \
     cargo criterion --features bench_find bench_find --jobs $(nproc)
 ```
 "#]
-use std::env;
 use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput};
+use stringtape::BytesCowsAuto;
 
 use aho_corasick::AhoCorasick;
 use bstr::ByteSlice;
@@ -66,7 +66,7 @@ fn configure_bench() -> Criterion {
 fn bench_substring_forward(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     haystack: &[u8],
-    needles: &[&[u8]],
+    needles: &BytesCowsAuto,
 ) {
     g.throughput(Throughput::Bytes(haystack.len() as u64));
 
@@ -75,7 +75,7 @@ fn bench_substring_forward(
     if should_run("substring-forward/stringzilla::find") {
         g.bench_function("stringzilla::find", |b| {
             b.iter(|| {
-                let token = black_box(*tokens.next().unwrap());
+                let token = black_box(tokens.next().unwrap());
                 let mut pos: usize = 0;
                 while let Some(found) = sz::find(&haystack[pos..], token) {
                     pos += found + token.len();
@@ -89,7 +89,7 @@ fn bench_substring_forward(
     if should_run("substring-forward/memmem::find") {
         g.bench_function("memmem::find", |b| {
             b.iter(|| {
-                let token = black_box(*tokens.next().unwrap());
+                let token = black_box(tokens.next().unwrap());
                 let mut pos: usize = 0;
                 while let Some(found) = memmem::find(&haystack[pos..], token) {
                     pos += found + token.len();
@@ -103,7 +103,7 @@ fn bench_substring_forward(
     if should_run("substring-forward/memmem::Finder") {
         g.bench_function("memmem::Finder", |b| {
             b.iter(|| {
-                let token = black_box(*tokens.next().unwrap());
+                let token = black_box(tokens.next().unwrap());
                 let finder = memmem::Finder::new(token);
                 let mut pos: usize = 0;
                 while let Some(found) = finder.find(&haystack[pos..]) {
@@ -118,7 +118,7 @@ fn bench_substring_forward(
     if should_run("substring-forward/std::str::find") {
         g.bench_function("std::str::find", |b| {
             b.iter(|| {
-                let token = black_box(*tokens.next().unwrap());
+                let token = black_box(tokens.next().unwrap());
                 let mut pos = 0;
                 while let Some(found) = haystack[pos..].find(token) {
                     pos += found + token.len();
@@ -132,7 +132,7 @@ fn bench_substring_forward(
 fn bench_substring_backward(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     haystack: &[u8],
-    needles: &[&[u8]],
+    needles: &BytesCowsAuto,
 ) {
     g.throughput(Throughput::Bytes(haystack.len() as u64));
 
@@ -141,7 +141,7 @@ fn bench_substring_backward(
     if should_run("substring-backward/stringzilla::rfind") {
         g.bench_function("stringzilla::rfind", |b| {
             b.iter(|| {
-                let token = black_box(*tokens.next().unwrap());
+                let token = black_box(tokens.next().unwrap());
                 let mut pos: Option<usize> = Some(haystack.len());
                 while let Some(end) = pos {
                     if let Some(found) = sz::rfind(&haystack[..end], token) {
@@ -159,7 +159,7 @@ fn bench_substring_backward(
     if should_run("substring-backward/memmem::rfind") {
         g.bench_function("memmem::rfind", |b| {
             b.iter(|| {
-                let token = black_box(*tokens.next().unwrap());
+                let token = black_box(tokens.next().unwrap());
                 let mut pos: Option<usize> = Some(haystack.len());
                 while let Some(end) = pos {
                     if let Some(found) = memmem::rfind(&haystack[..end], token) {
@@ -177,7 +177,7 @@ fn bench_substring_backward(
     if should_run("substring-backward/memmem::FinderRev") {
         g.bench_function("memmem::FinderRev", |b| {
             b.iter(|| {
-                let token = black_box(*tokens.next().unwrap());
+                let token = black_box(tokens.next().unwrap());
                 let finder = memmem::FinderRev::new(token);
                 let mut pos: Option<usize> = Some(haystack.len());
                 while let Some(end) = pos {
@@ -196,7 +196,7 @@ fn bench_substring_backward(
     if should_run("substring-backward/std::str::rfind") {
         g.bench_function("std::str::rfind", |b| {
             b.iter(|| {
-                let token = black_box(*tokens.next().unwrap());
+                let token = black_box(tokens.next().unwrap());
                 let mut pos: Option<usize> = Some(haystack.len());
                 while let Some(end) = pos {
                     if let Some(found) = haystack[..end].rfind(token) {
@@ -214,7 +214,7 @@ fn bench_substring_backward(
 fn bench_byteset_forward(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     haystack: &[u8],
-    needles: &[&[u8]],
+    needles: &BytesCowsAuto,
 ) {
     g.throughput(Throughput::Bytes(3 * haystack.len() as u64));
 

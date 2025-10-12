@@ -27,6 +27,7 @@ pub fn reclaim_memory() {
 /// Can be cast to CharsCowsAuto for UTF-8 string benchmarks (StringTape 2.2+).
 /// Supports `STRINGWARS_MAX_TOKENS` to limit the number of tokens loaded.
 /// Logs dataset statistics to stderr.
+#[allow(dead_code)]
 pub fn load_dataset() -> BytesCowsAuto<'static> {
     let dataset_path =
         env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
@@ -151,6 +152,7 @@ pub fn load_dataset() -> BytesCowsAuto<'static> {
 }
 
 /// Format large numbers with thousand separators for readability
+#[allow(dead_code)]
 fn format_number(n: u64) -> String {
     let s = n.to_string();
     let mut result = String::new();
@@ -222,6 +224,7 @@ pub fn should_run(name: &str) -> bool {
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // Simple SI scaling helper
+#[allow(dead_code)]
 #[cfg(any(
     feature = "bench_similarities",
     feature = "bench_fingerprints",
@@ -242,6 +245,7 @@ fn scale_si(mut v: f64) -> (f64, &'static str) {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(any(
     feature = "bench_similarities",
     feature = "bench_fingerprints",
@@ -260,6 +264,7 @@ fn format_seconds(value: f64) -> String {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_similarities")]
 pub struct CupsFormatter;
 #[cfg(feature = "bench_similarities")]
@@ -325,6 +330,7 @@ impl ValueFormatter for CupsFormatter {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 pub struct HashesFormatter;
 #[cfg(feature = "bench_fingerprints")]
@@ -421,6 +427,7 @@ impl ValueFormatter for HashesFormatter {
 
 // Measurement wrappers that mirror WallTime but override formatting.
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_similarities")]
 #[derive(Clone, Default)]
 pub struct CupsWallTime;
@@ -455,6 +462,7 @@ impl Measurement for CupsWallTime {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 #[derive(Clone, Default)]
 pub struct HashesWallTime;
@@ -490,14 +498,17 @@ impl Measurement for HashesWallTime {
 }
 
 // Global ratio to let the formatter print both hashes/s and bytes/s
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 static FINGERPRINTS_BYTES_PER_HASH_BITS: AtomicU64 = AtomicU64::new(0);
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 pub fn set_fingerprints_bytes_per_hash(v: f64) {
     FINGERPRINTS_BYTES_PER_HASH_BITS.store(v.to_bits(), Ordering::Relaxed);
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 fn get_bytes_per_hash() -> f64 {
     let bits = FINGERPRINTS_BYTES_PER_HASH_BITS.load(Ordering::Relaxed);
@@ -505,6 +516,7 @@ fn get_bytes_per_hash() -> f64 {
 }
 
 // Comparisons/sec formatter: k/M/G cmp/s
+#[allow(dead_code)]
 #[cfg(feature = "bench_sequence")]
 pub struct ComparisonsFormatter;
 
@@ -570,6 +582,7 @@ impl ValueFormatter for ComparisonsFormatter {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_sequence")]
 #[derive(Clone, Default)]
 pub struct ComparisonsWallTime;

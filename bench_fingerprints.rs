@@ -47,7 +47,6 @@ RUSTFLAGS="-C target-cpu=native" \
 use core::convert::TryInto;
 use std::collections::hash_map::DefaultHasher;
 use std::env;
-use std::fs;
 use std::hash::{Hash, Hasher};
 
 use criterion::{Criterion, Throughput};

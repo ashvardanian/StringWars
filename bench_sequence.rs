@@ -34,12 +34,12 @@ use std::hint::black_box;
 use std::sync::Arc;
 
 use criterion::{Criterion, SamplingMode};
+use stringtape::CharsCowsAuto;
 
 use arrow::array::{ArrayRef, LargeStringArray};
 use arrow::compute::{lexsort_to_indices, SortColumn};
 use polars::prelude::*;
 use rayon::prelude::*;
-use stringtape::CharsCowsAuto;
 use stringzilla::sz;
 
 mod utils;
@@ -246,8 +246,9 @@ fn main() {
     if tokens_bytes.is_empty() {
         panic!("No tokens found in the dataset.");
     }
-    // Cast BytesCowsAuto to CharsCowsAuto for UTF-8 string benchmarks (StringTape 2.2+)
-    let tokens = tokens_bytes
+    // Leak BytesCowsAuto to get 'static lifetime, then cast to CharsCowsAuto for UTF-8 string benchmarks
+    let tokens_bytes_static: &'static _ = Box::leak(Box::new(tokens_bytes));
+    let tokens = tokens_bytes_static
         .as_chars()
         .expect("Dataset must be valid UTF-8");
 

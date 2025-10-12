@@ -357,8 +357,8 @@ cargo install cargo-criterion --locked
 To pull and compile all the dependencies, you can call:
 
 ```bash
-cargo build --all-features                  # to compile everything
-cargo check --all-features --all-targets    # to fail on warnings
+RUSTFLAGS="-C target-cpu=native" cargo build --benches --all-features                  # to compile everything
+RUSTFLAGS="-C target-cpu=native" cargo check --benches --all-features --all-targets    # to fail on warnings
 ```
 
 By default StringWars links `stringzilla` in CPU mode.
