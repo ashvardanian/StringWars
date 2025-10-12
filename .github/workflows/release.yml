@@ -65,3 +65,22 @@ jobs:
           branch: main-dev
           unprotect_reviews: True
           force: True
+
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    needs: versioning
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check for warnings
+        run: cargo check --benches --all-features --all-targets
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
