@@ -468,3 +468,25 @@ wget --no-clobber -O acgt_100k.txt https://huggingface.co/datasets/ashvardanian/
 wget --no-clobber -O acgt_1m.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1m.txt?download=true
 wget --no-clobber -O acgt_10m.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10m.txt?download=true
 ```
+
+## Deep Profiling
+
+In case you are profiling the some of the internal kernels of mentioned libraries, here are a few example commands to get around.
+Such as using `ncu` for NVIDIA GPUs to evaluate the register usage and occupancy of the CUDA kernels used in StringZilla's Levenshtein distance calculation:
+
+```bash
+ncu \
+  --metrics launch__registers_per_thread,launch__occupancy_per_block_size \
+  --target-processes all \
+  --kernel-name "levenshtein_on_each_cuda_thread" \
+  bash -c 'STRINGWARS_DATASET=acgt_100.txt STRINGWARS_BATCH=65536 \
+    STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU" \
+    cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1'
+```
+
+Using `perf` on Linux to analyze the CPU-side performance of SIMD-accelerated substring search:
+
+```bash
+perf record -e cpu-clock -g graph,0x400000 -o perf.data -- cargo criterion --features "bench_similarities" bench_similarities --jobs 1
+perf report -i perf.data
+```

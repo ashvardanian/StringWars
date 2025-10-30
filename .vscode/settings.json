@@ -8,6 +8,7 @@
     "bytesum",
     "cityhash",
     "corasick",
+    "CUDA",
     "CUDF",
     "Dataframe",
     "foldhash",
@@ -26,8 +27,10 @@
     "stringtape",
     "stringwars",
     "stringzilla",
+    "stringzillas",
     "strstr",
     "tfidf",
+    "Vardanian",
     "Wunsch"
   ]
 }
