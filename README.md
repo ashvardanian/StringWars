@@ -245,6 +245,7 @@ Each of those has two flavors - with linear and affine gap penalties, also known
 | `stringzillas::LevenshteinDistancesUtf8` on 16x SPR  |      38'954 MCUPS |       103'500 MCUPS |
 | `stringzillas::LevenshteinDistances` on RTX6000      |  __32'030 MCUPS__ |   __901'990 MCUPS__ |
 | `stringzillas::LevenshteinDistances` on H100         |  __31'913 MCUPS__ |   __925'890 MCUPS__ |
+| `stringzillas::LevenshteinDistances` on B200         |  __32'960 MCUPS__ |   __998'620 MCUPS__ |
 | `stringzillas::LevenshteinDistances` on 384x GNR     | __114'190 MCUPS__ | __3'084'270 MCUPS__ |
 | `stringzillas::LevenshteinDistancesUtf8` on 384x GNR | __103'590 MCUPS__ | __2'938'320 MCUPS__ |
 |                                                      |                   |                     |
@@ -475,13 +476,13 @@ In case you are profiling the some of the internal kernels of mentioned librarie
 Such as using `ncu` for NVIDIA GPUs to evaluate the register usage and occupancy of the CUDA kernels used in StringZilla's Levenshtein distance calculation:
 
 ```bash
-ncu \
-  --metrics launch__registers_per_thread,launch__occupancy_per_block_size \
+/usr/local/cuda/bin/ncu \
+  --metrics launch__registers_per_thread,launch__occupancy_per_block_size,sm__warps_active.avg.pct_of_peak_sustained_active,sm__throughput.avg.pct_of_peak_sustained_elapsed,dram__throughput.avg.pct_of_peak_sustained_elapsed,dram__bytes.sum \
   --target-processes all \
   --kernel-name "levenshtein_on_each_cuda_thread" \
-  bash -c 'STRINGWARS_DATASET=acgt_100.txt STRINGWARS_BATCH=65536 \
-    STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU" \
-    cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1'
+  --launch-skip 5 \
+  --launch-count 1 \
+  bash -c 'STRINGWARS_DATASET=acgt_100.txt STRINGWARS_BATCH=65536 STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU\)" cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1'
 ```
 
 Using `perf` on Linux to analyze the CPU-side performance of SIMD-accelerated substring search:
