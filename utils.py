@@ -1,5 +1,5 @@
 """
-Shared utilities for StringWa.rs Python benchmarking scripts.
+Shared utilities for StringWars Python benchmarking scripts.
 
 Common functions for dataset loading, tokenization, timing, and argument parsing
 used across bench_find.py, bench_hash.py, and other benchmarking scripts.

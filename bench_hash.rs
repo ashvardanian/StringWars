@@ -1,5 +1,5 @@
 #![doc = r#"
-# StringWa.rs: String Hashing Benchmarks
+# StringWars: String Hashing Benchmarks
 
 This file contains benchmarks for various Rust hashing libraries using Criterion,
 treating the inputs as binary strings without any UTF-8 validity constrains.

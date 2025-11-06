@@ -1,5 +1,5 @@
 #![doc = r#"
-# StringWa.rs: Substring & Character-Set Search Benchmarks
+# StringWars: Substring & Character-Set Search Benchmarks
 
 This file benchmarks the forward and backward exact substring search functionality provided by
 the StringZilla library and the memchr crate. The input file is treated as a haystack and all

@@ -1,4 +1,4 @@
-#![doc = r#"# StringWa.rs: String Sequence Operations Benchmarks
+#![doc = r#"# StringWars: String Sequence Operations Benchmarks
 
 This file benchmarks various libraries for processing string-identifiable collections.
 Including sorting arrays of strings:

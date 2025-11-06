@@ -1,5 +1,5 @@
 #![doc = r#"
-# StringWa.rs: Low-level Memory-related Benchmarks
+# StringWars: Low-level Memory-related Benchmarks
 
 This file benchmarks low-level memory operations. The input file is treated as a collection
 of size-representative tokens and for every token the following operations are benchmarked:

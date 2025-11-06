@@ -1,4 +1,4 @@
-#![doc = r#"# StringWa.rs: Text Fingerprinting Benchmarks
+#![doc = r#"# StringWars: Text Fingerprinting Benchmarks
 
 This benchmark compares fingerprinting implementations using multi-width byte n-grams
 across CPU (1x, Nx) and GPU architectures.

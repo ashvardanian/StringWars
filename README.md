@@ -349,6 +349,7 @@ The trickiest part, however, is analyzing the retrieval quality of those fingerp
 So, how many bits per fingerprint are needed to achieve a specific recall rate for a given dataset?
 Or, how does the average Levenshtein distance among the top-k nearest neighbors change with the fingerprint size?
 It must clearly decrease, but how fast, and how does that compare to ground truth?
+For that please, check out the [HashEvals](https://github.com/ashvardanian/HashEvals) repository.
 
 ## Replicating the Results
 

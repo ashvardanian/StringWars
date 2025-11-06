@@ -1,4 +1,4 @@
-#![doc = r#"# StringWa.rs: String Similarity Benchmarks
+#![doc = r#"# StringWars: String Similarity Benchmarks
 
 This file benchmarks different libraries implementing string alignment and edit
 distance calculation, comparing single-threaded, multi-threaded, and GPU-accelerated
