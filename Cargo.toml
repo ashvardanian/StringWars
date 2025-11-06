@@ -25,31 +25,31 @@ stringzilla = { version = "4.2.1", default-features = false }
 default = ["stringzilla/cpus"]
 cuda = ["stringzilla/cuda"]
 bench_find = [
-    "memchr",       # Substring Search
-    "bstr",         # Byteset Search
-    "aho-corasick", # Byteset Search
+    "memchr",       # Substring search
+    "bstr",         # Byteset search
+    "aho-corasick", # Byteset search
 ]
 bench_hash = [
+    "bit-set",      # for collision counting
     "ahash",        # aHash
     "xxhash-rust",  # xxHash
     "blake3",       # Blake3
     "crc32fast",    # CRC32
     "murmurhash32", # MurmurHash32
     "foldhash",     # FoldHash
+    "sha2",         # SHA256
+    "ring",         # SHA256
     "gxhash",       # gxHash (x86_64 only)
     "cityhash",     # CityHash (x86_64 only)
-    "sha2",         # for SHA256
-    "ring",         # for SHA256
-    "bit-set",      # for collision counting
 ]
 bench_sequence = [
     "arrow",  # Sorting
-    "rayon",  # Parallel Sorting
+    "rayon",  # Parallel sorting
     "polars", # DataFrame library with sorting
 ]
 bench_similarities = [
-    "rapidfuzz",  # Levenshtein Distance (also `strsim`)
-    "bio",        # Needleman-Wunsch Score
+    "rapidfuzz",  # Levenshtein distance
+    "bio",        # Needleman-Wunsch score
     "fork_union", # Parallelizing RapidFuzz calls
 ]
 bench_memory = [
@@ -62,6 +62,13 @@ bench_memory = [
 bench_fingerprints = [
     "probabilistic-collections", # MinHash
     "fork_union",                # CPU core counting for device scopes
+]
+bench_encryption = [
+    "ring",        # Mozilla's AES-GCM, ChaCha20-Poly1305
+    "openssl",     # OpenSSL's AES-GCM, ChaCha20-Poly1305
+    "sodiumoxide", # SodiumOxide's ChaCha20-Poly1305
+    "getrandom",   # OS random for key generation
+    "rand",        # Random number generation for keys
 ]
 
 # TODO: String properties:
@@ -119,6 +126,14 @@ optional = true
 
 [dependencies.ring]
 version = "0.17"
+optional = true
+
+[dependencies.openssl]
+version = "0.10"
+optional = true
+
+[dependencies.sodiumoxide]
+version = "0.2"
 optional = true
 
 [dependencies.crc32fast]
@@ -232,3 +247,9 @@ name = "bench_fingerprints"
 path = "bench_fingerprints.rs"
 harness = false
 required-features = ["bench_fingerprints"]
+
+[[bench]]
+name = "bench_encryption"
+path = "bench_encryption.rs"
+harness = false
+required-features = ["bench_encryption"]

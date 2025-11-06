@@ -9,6 +9,7 @@
     "bytesum",
     "cityhash",
     "Corasick",
+    "cryption",
     "CUDA",
     "CUDF",
     "Dataframe",
