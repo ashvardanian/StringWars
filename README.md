@@ -447,7 +447,7 @@ For benchmarks on ASCII data I've used the English Leipzig Corpora Collection.
 It's 124 MB in size, 1'000'000 lines long, and contains 8'388'608 tokens of mean length 5.
 
 ```bash
-wget --no-clobber -O leipzig1M.txt https://introcs.cs.princeton.edu/python/42sort/leipzig1m.txt 
+curl -fL -o leipzig1M.txt https://introcs.cs.princeton.edu/python/42sort/leipzig1m.txt
 STRINGWARS_DATASET=leipzig1M.txt cargo criterion --jobs $(nproc)
 ```
 
@@ -458,7 +458,7 @@ It's 4.7 GB in size (1.7 GB compressed), 1'004'598 lines long, and contains 268'
 To download, unpack, and run the benchmarks, execute the following bash script in your terminal:
 
 ```bash
-wget --no-clobber -O xlsum.csv.gz https://github.com/ashvardanian/xl-sum/releases/download/v1.0.0/xlsum.csv.gz
+curl -fL -o xlsum.csv.gz https://github.com/ashvardanian/xl-sum/releases/download/v1.0.0/xlsum.csv.gz
 gzip -d xlsum.csv.gz
 STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs $(nproc)
 ```
@@ -468,12 +468,12 @@ STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs $(nproc)
 For bioinformatics workloads, I use the following datasets with increasing string lengths:
 
 ```bash
-wget --no-clobber -O acgt_100.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100.txt?download=true
-wget --no-clobber -O acgt_1k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1k.txt?download=true
-wget --no-clobber -O acgt_10k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10k.txt?download=true
-wget --no-clobber -O acgt_100k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100k.txt?download=true
-wget --no-clobber -O acgt_1m.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1m.txt?download=true
-wget --no-clobber -O acgt_10m.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10m.txt?download=true
+curl -fL -o acgt_100.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100.txt?download=true'
+curl -fL -o acgt_1k.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1k.txt?download=true'
+curl -fL -o acgt_10k.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10k.txt?download=true'
+curl -fL -o acgt_100k.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100k.txt?download=true'
+curl -fL -o acgt_1m.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1m.txt?download=true'
+curl -fL -o acgt_10m.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10m.txt?download=true'
 ```
 
 ## Deep Profiling
