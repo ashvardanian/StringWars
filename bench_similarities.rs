@@ -30,15 +30,26 @@ RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_TOKENS=lines \
     cargo criterion --features bench_similarities bench_similarities --jobs 1
 ```
+
+To run on a GPU-capable machine, enable the CUDA feature and consider larger batches:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_BATCH=32768 \
+    STRINGWARS_TOKENS=lines \
+    STRINGWARS_FILTER=1xGPU \
+    cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1
+```
 "#]
 use core::convert::TryInto;
 use std::env;
-use std::fs;
 
 use criterion::{Criterion, Throughput};
 use fork_union::count_logical_cores;
 use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 
+use bio::alignment::{distance as bio_distance, pairwise::Aligner};
 use rapidfuzz::distance::levenshtein;
 use stringzilla::szs::{
     error_costs_256x256_unary, AnyBytesTape, AnyCharsTape, DeviceScope, LevenshteinDistances,
@@ -46,7 +57,7 @@ use stringzilla::szs::{
 };
 
 mod utils;
-use utils::{should_run, CupsWallTime};
+use utils::{load_dataset, should_run, CupsWallTime};
 
 // Pull some metadata logging functionality
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
@@ -198,78 +209,29 @@ fn chars_tape_slice<'a>(
 }
 
 fn bench_similarities(c: &mut Criterion<CupsWallTime>) {
-    let dataset_path =
-        env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
-    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-    let content = fs::read_to_string(&dataset_path).expect("Could not read dataset");
+    // Load dataset using unified loader
+    let tape_bytes = load_dataset();
+    let tape = tape_bytes
+        .as_chars()
+        .expect("Dataset must be valid UTF-8 for similarities");
 
     let batch_size = env::var("STRINGWARS_BATCH")
         .unwrap_or_else(|_| "2048".to_string())
         .parse::<usize>()
         .expect("STRINGWARS_BATCH must be a number");
 
-    let max_pairs = env::var("STRINGWARS_MAX_PAIRS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok());
-
-    let units: Vec<&str> = match mode.as_str() {
-        "words" => content
-            .split_whitespace()
-            .filter(|s| !s.is_empty())
-            .collect(),
-        "lines" => content.lines().filter(|s| !s.is_empty()).collect(),
-        other => panic!(
-            "Unknown STRINGWARS_TOKENS: {}. Use 'lines' or 'words'.",
-            other
-        ),
-    };
-
-    if units.len() < 2 {
+    if tape.len() < 2 {
         panic!("Dataset must contain at least two items for comparisons.");
     }
 
-    // Log dataset statistics
-    let total_units = units.len();
-    let total_bytes: usize = units.iter().map(|s| s.len()).sum();
-    let total_chars: usize = units.iter().map(|s| s.chars().count()).sum();
-    let avg_bytes_per_unit = total_bytes as f64 / total_units as f64;
-    let avg_chars_per_unit = total_chars as f64 / total_units as f64;
-
-    println!("Dataset statistics:");
-    println!("- Source: {}", dataset_path);
-    println!("- Token mode: {}", mode);
-    println!("- Total tokens: {}", total_units);
-    println!(
-        "- Average token length: {:.1} bytes, {:.1} chars",
-        avg_bytes_per_unit, avg_chars_per_unit
-    );
-    println!(
-        "- Total dataset size: {} bytes, {} chars",
-        total_bytes, total_chars
-    );
+    // Log benchmark-specific configuration
+    println!("Benchmark configuration:");
     println!("- Batch size: {}", batch_size);
 
-    // Limit units if max_pairs is specified (since pairs = units.len() - 1)
-    let mut truncated_units = units.clone();
-    if let Some(max_p) = max_pairs {
-        if max_p < units.len() - 1 {
-            truncated_units.truncate(max_p + 1);
-            println!(
-                "- Max pairs limit: {} (truncated to {} tokens)",
-                max_p,
-                truncated_units.len()
-            );
-        }
-    }
-
-    if truncated_units.len() < 2 {
-        panic!("Need at least 2 units to form consecutive pairs.");
-    }
-
-    // Create BytesTape and populate it with all units in batch
+    // Create BytesTape and populate it with all tokens (already limited by STRINGWARS_MAX_TOKENS in load_dataset)
     let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
     units_tape
-        .extend(truncated_units.iter().map(|s| s.as_bytes()))
+        .extend(tape.iter().map(|s| s.as_bytes()))
         .expect("Failed to extend BytesTape");
 
     // Create zero-copy views for consecutive pairs
@@ -399,7 +361,7 @@ fn perform_uniform_benchmarks(
     let per_batch_utf8 = (batch_size as u64) * avg_cells_utf8;
 
     // RapidFuzz baselines (no batching; scan one-by-one)
-    if should_run("rapidfuzz::levenshtein<Bytes>(1xCPU)") {
+    if should_run("uniform/rapidfuzz::levenshtein<Bytes>(1xCPU)") {
         g.throughput(Throughput::Elements(per_pair_bytes));
         g.bench_function("rapidfuzz::levenshtein<Bytes>(1xCPU)", |b| {
             let mut pair_index = 0;
@@ -412,7 +374,7 @@ fn perform_uniform_benchmarks(
         });
     }
 
-    if should_run("rapidfuzz::levenshtein<Chars>(1xCPU)") {
+    if should_run("uniform/rapidfuzz::levenshtein<Chars>(1xCPU)") {
         g.throughput(Throughput::Elements(per_pair_utf8));
         g.bench_function("rapidfuzz::levenshtein<Chars>(1xCPU)", |b| {
             let mut pair_index = 0;
@@ -423,8 +385,22 @@ fn perform_uniform_benchmarks(
                 levenshtein::distance(a_str.chars(), b_str.chars())
             })
         });
+    }
 
-        // StringZilla Binary Levenshtein Distance (uniform costs: 0,1,1,1)
+    if should_run("uniform/bio::levenshtein(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair_bytes));
+        g.bench_function("bio::levenshtein(1xCPU)", |b| {
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                std::hint::black_box(bio_distance::levenshtein(a_bytes, b_bytes))
+            })
+        });
+    }
+
+    if should_run("uniform/stringzillas::LevenshteinDistances(1xCPU)") {
         g.throughput(Throughput::Elements(per_batch_bytes));
         g.bench_function("stringzillas::LevenshteinDistances(1xCPU)", |b| {
             let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
@@ -457,7 +433,7 @@ fn perform_uniform_benchmarks(
     }
 
     if should_run(&format!(
-        "stringzillas::LevenshteinDistances({}xCPU)",
+        "uniform/stringzillas::LevenshteinDistances({}xCPU)",
         num_cores
     )) {
         g.throughput(Throughput::Elements(per_batch_bytes));
@@ -495,7 +471,7 @@ fn perform_uniform_benchmarks(
     }
 
     // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
-    if should_run("stringzillas::LevenshteinDistancesUtf8(1xCPU)") {
+    if should_run("uniform/stringzillas::LevenshteinDistancesUtf8(1xCPU)") {
         g.throughput(Throughput::Elements(per_batch_utf8));
         g.bench_function("stringzillas::LevenshteinDistancesUtf8(1xCPU)", |b| {
             let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
@@ -528,7 +504,7 @@ fn perform_uniform_benchmarks(
     }
 
     if should_run(&format!(
-        "stringzillas::LevenshteinDistancesUtf8({}xCPU)",
+        "uniform/stringzillas::LevenshteinDistancesUtf8({}xCPU)",
         num_cores
     )) {
         g.throughput(Throughput::Elements(per_batch_utf8));
@@ -564,7 +540,7 @@ fn perform_uniform_benchmarks(
 
     if maybe_gpu.is_ok()
         && maybe_lev_gpu.is_some()
-        && should_run("stringzillas::LevenshteinDistances(1xGPU)")
+        && should_run("uniform/stringzillas::LevenshteinDistances(1xGPU)")
     {
         let gpu = maybe_gpu.as_ref().unwrap();
         let engine = maybe_lev_gpu.as_ref().unwrap();
@@ -633,40 +609,70 @@ fn perform_linear_benchmarks(
         .ok()
         .and_then(|gpu| SmithWatermanScores::new(gpu, &matrix, -2, -2).ok());
 
+    let mut max_len = 0usize;
+    for idx in 0..pairs_count {
+        let a_len = tape_a_view[idx].len();
+        let b_len = tape_b_view[idx].len();
+        if a_len > max_len {
+            max_len = a_len;
+        }
+        if b_len > max_len {
+            max_len = b_len;
+        }
+    }
+    let max_len = std::cmp::max(1, max_len);
+
     let per_batch = (batch_size as u64) * avg_cells_bytes;
+    let per_pair = avg_cells_bytes;
+
+    if should_run("linear/bio::pairwise::global(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair));
+        g.bench_function("bio::pairwise::global(1xCPU)", |b| {
+            let mut aligner =
+                Aligner::with_capacity(
+                    max_len,
+                    max_len,
+                    -2,
+                    -2,
+                    |a: u8, b: u8| if a == b { 2 } else { -1 },
+                );
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                let score = aligner.global(a_bytes, b_bytes).score;
+                std::hint::black_box(score);
+            })
+        });
+    }
+
+    if should_run("linear/bio::pairwise::local(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair));
+        g.bench_function("bio::pairwise::local(1xCPU)", |b| {
+            let mut aligner =
+                Aligner::with_capacity(
+                    max_len,
+                    max_len,
+                    -2,
+                    -2,
+                    |a: u8, b: u8| if a == b { 2 } else { -1 },
+                );
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                let score = aligner.local(a_bytes, b_bytes).score;
+                std::hint::black_box(score);
+            })
+        });
+    }
 
     // Needleman-Wunsch (Global alignment)
-    g.throughput(Throughput::Elements(per_batch));
-    g.bench_function("stringzillas::NeedlemanWunschScores(1xCPU)", |b| {
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-        results.resize(batch_size, 0);
-        let mut start_idx = 0;
-        b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
-                &tape_a_view,
-                &tape_b_view,
-                &mut start_idx,
-                batch_size,
-                pairs_count,
-            );
-            nw_single
-                .compute_into(
-                    &cpu_single,
-                    AnyBytesTape::View64(batch_a_view),
-                    AnyBytesTape::View64(batch_b_view),
-                    &mut results[..actual_batch_size],
-                )
-                .unwrap_or_else(|e| {
-                    panic!("Failed to compute NeedlemanWunschScores (linear gap) on CPU (single-threaded): {}", e);
-                });
-            std::hint::black_box(&results);
-        })
-    });
-
-    g.throughput(Throughput::Elements(per_batch));
-    g.bench_function(
-        &format!("stringzillas::NeedlemanWunschScores({}xCPU)", num_cores),
-        |b| {
+    if should_run("stringzillas::NeedlemanWunschScores(1xCPU)") {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function("stringzillas::NeedlemanWunschScores(1xCPU)", |b| {
             let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
             let mut start_idx = 0;
@@ -678,25 +684,63 @@ fn perform_linear_benchmarks(
                     batch_size,
                     pairs_count,
                 );
-                nw_parallel
+                nw_single
                     .compute_into(
-                        &cpu_parallel,
+                        &cpu_single,
                         AnyBytesTape::View64(batch_a_view),
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
                     .unwrap_or_else(|e| {
-                        panic!(
-                            "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
-                            e
-                        );
+                        panic!("Failed to compute NeedlemanWunschScores (linear gap) on CPU (single-threaded): {}", e);
                     });
                 std::hint::black_box(&results);
             })
-        },
-    );
+        });
+    }
 
-    if maybe_gpu.is_ok() && maybe_nw_gpu.is_some() {
+    if should_run(&format!(
+        "stringzillas::NeedlemanWunschScores({}xCPU)",
+        num_cores
+    )) {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function(
+            &format!("stringzillas::NeedlemanWunschScores({}xCPU)", num_cores),
+            |b| {
+                let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+                results.resize(batch_size, 0);
+                let mut start_idx = 0;
+                b.iter(|| {
+                    let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
+                        &tape_a_view,
+                        &tape_b_view,
+                        &mut start_idx,
+                        batch_size,
+                        pairs_count,
+                    );
+                    nw_parallel
+                        .compute_into(
+                            &cpu_parallel,
+                            AnyBytesTape::View64(batch_a_view),
+                            AnyBytesTape::View64(batch_b_view),
+                            &mut results[..actual_batch_size],
+                        )
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
+                                e
+                            );
+                        });
+                    std::hint::black_box(&results);
+                })
+            },
+        );
+    }
+
+    if maybe_gpu.is_ok()
+        && maybe_nw_gpu.is_some()
+        && should_run("stringzillas::NeedlemanWunschScores(1xGPU)")
+    {
         let gpu = maybe_gpu.as_ref().unwrap();
         let engine = maybe_nw_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch));
@@ -728,40 +772,9 @@ fn perform_linear_benchmarks(
     }
 
     // Smith-Waterman (Local alignment)
-    g.throughput(Throughput::Elements(per_batch));
-    g.bench_function("stringzillas::SmithWatermanScores(1xCPU)", |b| {
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-        results.resize(batch_size, 0);
-        let mut start_idx = 0;
-        b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
-                &tape_a_view,
-                &tape_b_view,
-                &mut start_idx,
-                batch_size,
-                pairs_count,
-            );
-            sw_single
-                .compute_into(
-                    &cpu_single,
-                    AnyBytesTape::View64(batch_a_view),
-                    AnyBytesTape::View64(batch_b_view),
-                    &mut results[..actual_batch_size],
-                )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
-                        e
-                    );
-                });
-            std::hint::black_box(&results);
-        })
-    });
-
-    g.throughput(Throughput::Elements(per_batch));
-    g.bench_function(
-        &format!("stringzillas::SmithWatermanScores({}xCPU)", num_cores),
-        |b| {
+    if should_run("stringzillas::SmithWatermanScores(1xCPU)") {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function("stringzillas::SmithWatermanScores(1xCPU)", |b| {
             let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
             let mut start_idx = 0;
@@ -773,25 +786,66 @@ fn perform_linear_benchmarks(
                     batch_size,
                     pairs_count,
                 );
-                sw_parallel
+                sw_single
                     .compute_into(
-                        &cpu_parallel,
+                        &cpu_single,
                         AnyBytesTape::View64(batch_a_view),
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
                     .unwrap_or_else(|e| {
                         panic!(
-                            "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
+                            "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
                             e
                         );
                     });
                 std::hint::black_box(&results);
             })
-        },
-    );
+        });
+    }
 
-    if maybe_gpu.is_ok() && maybe_sw_gpu.is_some() {
+    if should_run(&format!(
+        "stringzillas::SmithWatermanScores({}xCPU)",
+        num_cores
+    )) {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function(
+            &format!("stringzillas::SmithWatermanScores({}xCPU)", num_cores),
+            |b| {
+                let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+                results.resize(batch_size, 0);
+                let mut start_idx = 0;
+                b.iter(|| {
+                    let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
+                        &tape_a_view,
+                        &tape_b_view,
+                        &mut start_idx,
+                        batch_size,
+                        pairs_count,
+                    );
+                    sw_parallel
+                        .compute_into(
+                            &cpu_parallel,
+                            AnyBytesTape::View64(batch_a_view),
+                            AnyBytesTape::View64(batch_b_view),
+                            &mut results[..actual_batch_size],
+                        )
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
+                                e
+                            );
+                        });
+                    std::hint::black_box(&results);
+                })
+            },
+        );
+    }
+
+    if maybe_gpu.is_ok()
+        && maybe_sw_gpu.is_some()
+        && should_run("stringzillas::SmithWatermanScores(1xGPU)")
+    {
         let gpu = maybe_gpu.as_ref().unwrap();
         let engine = maybe_sw_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch));
@@ -859,40 +913,70 @@ fn perform_affine_benchmarks(
         .ok()
         .and_then(|gpu| SmithWatermanScores::new(gpu, &matrix, -5, -1).ok());
 
+    let mut max_len = 0usize;
+    for idx in 0..pairs_count {
+        let a_len = tape_a_view[idx].len();
+        let b_len = tape_b_view[idx].len();
+        if a_len > max_len {
+            max_len = a_len;
+        }
+        if b_len > max_len {
+            max_len = b_len;
+        }
+    }
+    let max_len = std::cmp::max(1, max_len);
+
     let per_batch = (batch_size as u64) * avg_cells_bytes;
+    let per_pair = avg_cells_bytes;
+
+    if should_run("affine/bio::pairwise::global(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair));
+        g.bench_function("bio::pairwise::global(1xCPU)", |b| {
+            let mut aligner =
+                Aligner::with_capacity(
+                    max_len,
+                    max_len,
+                    -5,
+                    -1,
+                    |a: u8, b: u8| if a == b { 2 } else { -1 },
+                );
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                let score = aligner.global(a_bytes, b_bytes).score;
+                std::hint::black_box(score);
+            })
+        });
+    }
+
+    if should_run("affine/bio::pairwise::local(1xCPU)") {
+        g.throughput(Throughput::Elements(per_pair));
+        g.bench_function("bio::pairwise::local(1xCPU)", |b| {
+            let mut aligner =
+                Aligner::with_capacity(
+                    max_len,
+                    max_len,
+                    -5,
+                    -1,
+                    |a: u8, b: u8| if a == b { 2 } else { -1 },
+                );
+            let mut pair_index = 0;
+            b.iter(|| {
+                let a_bytes = &tape_a_view[pair_index % pairs_count];
+                let b_bytes = &tape_b_view[pair_index % pairs_count];
+                pair_index = (pair_index + 1) % pairs_count;
+                let score = aligner.local(a_bytes, b_bytes).score;
+                std::hint::black_box(score);
+            })
+        });
+    }
 
     // Needleman-Wunsch (Global alignment)
-    g.throughput(Throughput::Elements(per_batch));
-    g.bench_function("stringzillas::NeedlemanWunschScores(1xCPU)", |b| {
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-        results.resize(batch_size, 0);
-        let mut start_idx = 0;
-        b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
-                &tape_a_view,
-                &tape_b_view,
-                &mut start_idx,
-                batch_size,
-                pairs_count,
-            );
-            nw_single
-                .compute_into(
-                    &cpu_single,
-                    AnyBytesTape::View64(batch_a_view),
-                    AnyBytesTape::View64(batch_b_view),
-                    &mut results[..actual_batch_size],
-                )
-                .unwrap_or_else(|e| {
-                    panic!("Failed to compute NeedlemanWunschScores (linear gap) on CPU (single-threaded): {}", e);
-                });
-            std::hint::black_box(&results);
-        })
-    });
-
-    g.throughput(Throughput::Elements(per_batch));
-    g.bench_function(
-        &format!("stringzillas::NeedlemanWunschScores({}xCPU)", num_cores),
-        |b| {
+    if should_run("stringzillas::NeedlemanWunschScores(1xCPU)") {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function("stringzillas::NeedlemanWunschScores(1xCPU)", |b| {
             let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
             let mut start_idx = 0;
@@ -904,25 +988,63 @@ fn perform_affine_benchmarks(
                     batch_size,
                     pairs_count,
                 );
-                nw_parallel
+                nw_single
                     .compute_into(
-                        &cpu_parallel,
+                        &cpu_single,
                         AnyBytesTape::View64(batch_a_view),
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
                     .unwrap_or_else(|e| {
-                        panic!(
-                            "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
-                            e
-                        );
+                        panic!("Failed to compute NeedlemanWunschScores (linear gap) on CPU (single-threaded): {}", e);
                     });
                 std::hint::black_box(&results);
             })
-        },
-    );
+        });
+    }
 
-    if maybe_gpu.is_ok() && maybe_nw_gpu.is_some() {
+    if should_run(&format!(
+        "stringzillas::NeedlemanWunschScores({}xCPU)",
+        num_cores
+    )) {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function(
+            &format!("stringzillas::NeedlemanWunschScores({}xCPU)", num_cores),
+            |b| {
+                let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+                results.resize(batch_size, 0);
+                let mut start_idx = 0;
+                b.iter(|| {
+                    let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
+                        &tape_a_view,
+                        &tape_b_view,
+                        &mut start_idx,
+                        batch_size,
+                        pairs_count,
+                    );
+                    nw_parallel
+                        .compute_into(
+                            &cpu_parallel,
+                            AnyBytesTape::View64(batch_a_view),
+                            AnyBytesTape::View64(batch_b_view),
+                            &mut results[..actual_batch_size],
+                        )
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
+                                e
+                            );
+                        });
+                    std::hint::black_box(&results);
+                })
+            },
+        );
+    }
+
+    if maybe_gpu.is_ok()
+        && maybe_nw_gpu.is_some()
+        && should_run("stringzillas::NeedlemanWunschScores(1xGPU)")
+    {
         let gpu = maybe_gpu.as_ref().unwrap();
         let engine = maybe_nw_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch));
@@ -954,40 +1076,9 @@ fn perform_affine_benchmarks(
     }
 
     // Smith-Waterman (Local alignment)
-    g.throughput(Throughput::Elements(per_batch));
-    g.bench_function("stringzillas::SmithWatermanScores(1xCPU)", |b| {
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-        results.resize(batch_size, 0);
-        let mut start_idx = 0;
-        b.iter(|| {
-            let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
-                &tape_a_view,
-                &tape_b_view,
-                &mut start_idx,
-                batch_size,
-                pairs_count,
-            );
-            sw_single
-                .compute_into(
-                    &cpu_single,
-                    AnyBytesTape::View64(batch_a_view),
-                    AnyBytesTape::View64(batch_b_view),
-                    &mut results[..actual_batch_size],
-                )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
-                        e
-                    );
-                });
-            std::hint::black_box(&results);
-        })
-    });
-
-    g.throughput(Throughput::Elements(per_batch));
-    g.bench_function(
-        &format!("stringzillas::SmithWatermanScores({}xCPU)", num_cores),
-        |b| {
+    if should_run("stringzillas::SmithWatermanScores(1xCPU)") {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function("stringzillas::SmithWatermanScores(1xCPU)", |b| {
             let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
             results.resize(batch_size, 0);
             let mut start_idx = 0;
@@ -999,25 +1090,66 @@ fn perform_affine_benchmarks(
                     batch_size,
                     pairs_count,
                 );
-                sw_parallel
+                sw_single
                     .compute_into(
-                        &cpu_parallel,
+                        &cpu_single,
                         AnyBytesTape::View64(batch_a_view),
                         AnyBytesTape::View64(batch_b_view),
                         &mut results[..actual_batch_size],
                     )
                     .unwrap_or_else(|e| {
                         panic!(
-                            "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
+                            "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
                             e
                         );
                     });
                 std::hint::black_box(&results);
             })
-        },
-    );
+        });
+    }
 
-    if maybe_gpu.is_ok() && maybe_sw_gpu.is_some() {
+    if should_run(&format!(
+        "stringzillas::SmithWatermanScores({}xCPU)",
+        num_cores
+    )) {
+        g.throughput(Throughput::Elements(per_batch));
+        g.bench_function(
+            &format!("stringzillas::SmithWatermanScores({}xCPU)", num_cores),
+            |b| {
+                let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+                results.resize(batch_size, 0);
+                let mut start_idx = 0;
+                b.iter(|| {
+                    let (batch_a_view, batch_b_view, actual_batch_size) = bytes_tape_slice(
+                        &tape_a_view,
+                        &tape_b_view,
+                        &mut start_idx,
+                        batch_size,
+                        pairs_count,
+                    );
+                    sw_parallel
+                        .compute_into(
+                            &cpu_parallel,
+                            AnyBytesTape::View64(batch_a_view),
+                            AnyBytesTape::View64(batch_b_view),
+                            &mut results[..actual_batch_size],
+                        )
+                        .unwrap_or_else(|e| {
+                            panic!(
+                                "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
+                                e
+                            );
+                        });
+                    std::hint::black_box(&results);
+                })
+            },
+        );
+    }
+
+    if maybe_gpu.is_ok()
+        && maybe_sw_gpu.is_some()
+        && should_run("stringzillas::SmithWatermanScores(1xGPU)")
+    {
         let gpu = maybe_gpu.as_ref().unwrap();
         let engine = maybe_sw_gpu.as_ref().unwrap();
         g.throughput(Throughput::Elements(per_batch));

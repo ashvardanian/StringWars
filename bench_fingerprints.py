@@ -18,9 +18,9 @@ Environment variables:
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
 Examples:
-  python bench_fingerprints.py --dataset README.md --tokens lines
-  python bench_fingerprints.py --dataset xlsum.csv --tokens words -k "datasketch"
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_fingerprints.py
+  uv run --with stringzillas-cpus bench_fingerprints.py --dataset README.md --tokens lines
+  uv run --with stringzillas-cpus bench_fingerprints.py --dataset xlsum.csv --tokens words -k "datasketch"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run --with stringzillas-cpus bench_fingerprints.py
 """
 
 import os

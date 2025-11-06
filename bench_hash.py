@@ -12,30 +12,32 @@
 Python hash function benchmarks comparing various implementations.
 
 Benchmarks hash function performance using consistent methodology with the Rust
-bench_hash.rs implementation, focusing on both stateless and stateful hashing patterns.
-
-Hash functions compared:
-- Built-in Python: hash(), hashlib (MD5, SHA1, SHA256, Blake2b, Blake2s)
-- StringZilla: sz.hash(), sz.bytesum() for performance comparison
-- xxHash: xxh3_64, xxh64, xxh32 variants
-- Blake3: Modern cryptographic hash for reference
+bench_hash.rs implementation, focusing on three categories of hashing patterns.
 
 Benchmark categories:
-- Stateless: Hash each token independently
-- Stateful: Incremental hashing across all tokens
-- Crypto: Cryptographic hash functions (separate timing)
+- Stateless: Hash each token independently (non-cryptographic)
+- Stateful: Incremental hashing across all tokens (non-cryptographic)
+- Checksum: Cryptographic hashes and reference bounds
+
+Hash functions compared:
+- Built-in Python: hash()
+- StringZilla: sz.hash(), sz.bytesum(), sz.Sha256
+- xxHash: xxh3_64, xxh64, xxh32 variants
+- Blake3: Modern cryptographic hash
+- hashlib: SHA256 for comparison with StringZilla
 
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
 Examples:
-  python bench_hash.py --dataset README.md --tokens lines
-  python bench_hash.py --dataset xlsum.csv --tokens words -k "xxhash"
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_hash.py
+  uv run bench_hash.py --dataset README.md --tokens lines
+  uv run bench_hash.py --dataset xlsum.csv --tokens words -k "xxhash"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run bench_hash.py
 """
 
 import argparse
+import hashlib
 import re
 import sys
 from typing import List, Optional, Callable, Any
@@ -141,13 +143,6 @@ def run_stateless_benchmarks(
     if should_run("cityhash.CityHash128", filter_pattern):
         bench_hash_function("cityhash.CityHash128", tokens, lambda x: cityhash.CityHash128(x), time_limit_seconds)
 
-    # Reference bounds
-    if should_run("blake3.digest", filter_pattern):
-        bench_hash_function("blake3.digest", tokens, lambda x: blake3.blake3(x).digest(), time_limit_seconds)
-
-    if should_run("stringzilla.bytesum", filter_pattern):
-        bench_hash_function("stringzilla.bytesum", tokens, lambda x: sz.bytesum(x), time_limit_seconds)
-
 
 def bench_stateful_hash(
     name: str,
@@ -206,6 +201,31 @@ def run_stateful_benchmarks(
         bench_stateful_hash("google_crc32c.Checksum", tokens, lambda: google_crc32c.Checksum(), time_limit_seconds)
 
 
+def run_checksum_benchmarks(
+    tokens: List[bytes],
+    filter_pattern: Optional[re.Pattern] = None,
+    time_limit_seconds: float = 10.0,
+):
+    """Run checksum/cryptographic hash benchmarks."""
+    print("\n=== Checksum Hash Benchmarks ===")
+
+    # StringZilla bytesum - reference lower bound
+    if should_run("stringzilla.bytesum", filter_pattern):
+        bench_hash_function("stringzilla.bytesum", tokens, lambda x: sz.bytesum(x), time_limit_seconds)
+
+    # Blake3 - cryptographic hash
+    if should_run("blake3.digest", filter_pattern):
+        bench_hash_function("blake3.digest", tokens, lambda x: blake3.blake3(x).digest(), time_limit_seconds)
+
+    # SHA256 via hashlib (Python standard library)
+    if should_run("hashlib.sha256", filter_pattern):
+        bench_hash_function("hashlib.sha256", tokens, lambda x: hashlib.sha256(x).digest(), time_limit_seconds)
+
+    # SHA256 via StringZilla
+    if should_run("stringzilla.Sha256", filter_pattern):
+        bench_hash_function("stringzilla.Sha256", tokens, lambda x: sz.Sha256().update(x).digest(), time_limit_seconds)
+
+
 _main_epilog = """
 Examples:
 
@@ -260,6 +280,7 @@ def main():
     # Run benchmarks
     run_stateless_benchmarks(tokens, filter_pattern, args.time_limit)
     run_stateful_benchmarks(tokens, filter_pattern, args.time_limit)
+    run_checksum_benchmarks(tokens, filter_pattern, args.time_limit)
 
     return 0
 

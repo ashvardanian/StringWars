@@ -1,6 +1,8 @@
-# StringWa.rs: Text Processing on CPUs & GPUs, in Python & Rust 🦀
+# StringWars
 
-![StringWa.rs Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
+## Text Processing on CPUs & GPUs, in Python 🐍 & Rust 🦀
+
+![StringWars Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
 
 There are many __great__ libraries for string processing!
 Mostly, of course, written in Assembly, C, and C++, but some in Rust as well. 😅
@@ -20,7 +22,7 @@ Notably, I also favor modern hardware with support for a wider range SIMD instru
 
 > [!IMPORTANT]  
 > The numbers in the tables below are provided for reference only and may vary depending on the CPU, compiler, dataset, and tokenization method.
-> Most of them were obtained on Intel Sapphire Rapids CPUs and Nvidia H100 GPUs, using Rust with `-C target-cpu=native` optimization flag.
+> Most of them were obtained on Intel Sapphire Rapids __(SNR)__ and Granite Rapids __(GNR)__ CPUs and Nvidia Hopper-based __H100__ and Blackwell-based __RTX 6000__ Pro GPUs, using Rust with `-C target-cpu=native` optimization flag.
 > To replicate the results, please refer to the [Replicating the Results](#replicating-the-results) section below.
 
 ## Hash
@@ -38,43 +40,46 @@ Many of them have similar pitfalls:
 StringZilla addresses those issues and seems to provide competitive performance.
 On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
 
-| Library               | Bits  | Ports ¹ |    Short Words |      Long Lines |
-| --------------------- | :---: | :-----: | -------------: | --------------: |
-| Rust 🦀                |       |         |                |                 |
-| `std::hash`           |  64   |    ❌    |     0.43 GiB/s |      3.74 GiB/s |
-| `crc32fast::hash`     |  32   |    ✅    |     0.49 GiB/s |      8.45 GiB/s |
-| `xxh3::xxh3_64`       |  64   |    ✅    |     1.08 GiB/s |      9.48 GiB/s |
-| `aHash::hash_one`     |  64   |    ❌    |     1.23 GiB/s |      8.61 GiB/s |
-| `gxhash::gxhash64`    |  64   |    ❌    | __2.68 GiB/s__ |      9.19 GiB/s |
-| `stringzilla::hash`   |  64   |    ✅    |     1.84 GiB/s | __11.23 GiB/s__ |
-|                       |       |         |                |                 |
-| Python 🐍              |       |         |                |                 |
-| `hash`                | 32/64 |    ❌    |     0.13 GiB/s |      4.27 GiB/s |
-| `xxhash.xxh3_64`      |  64   |    ✅    |     0.04 GiB/s |      6.38 GiB/s |
-| `google_crc32c.value` |  32   |    ✅    |     0.04 GiB/s |      5.96 GiB/s |
-| `mmh3.hash32`         |  32   |    ✅    |     0.05 GiB/s |      2.65 GiB/s |
-| `mmh3.hash64`         |  64   |    ✅    |     0.03 GiB/s |      4.45 GiB/s |
-| `cityhash.CityHash64` |  64   |    ✅    |     0.06 GiB/s |      4.87 GiB/s |
-| `stringzilla.hash`    |  64   |    ✅    | __0.14 GiB/s__ |  __9.19 GiB/s__ |
+| Library               | Bits  | Ports ¹ | Arm ² |    Short Words |      Long Lines |
+| --------------------- | :---: | :-----: | :---: | -------------: | --------------: |
+| Rust 🦀                |       |         |       |                |                 |
+| `std::hash`           |  64   |    ❌    |   ✅   |     0.43 GiB/s |      3.74 GiB/s |
+| `crc32fast::hash`     |  32   |    ✅    |   ✅   |     0.49 GiB/s |      8.45 GiB/s |
+| `xxh3::xxh3_64`       |  64   |    ✅    |   ✅   |     1.08 GiB/s |      9.48 GiB/s |
+| `aHash::hash_one`     |  64   |    ❌    |   ✅   |     1.23 GiB/s |      8.61 GiB/s |
+| `foldhash::hash_one`  |  64   |    ❌    |   ✅   |     1.02 GiB/s |      8.24 GiB/s |
+| `gxhash::gxhash64`    |  64   |    ❌    |   ❌   |     2.68 GiB/s |      9.19 GiB/s |
+| `stringzilla::hash`   |  64   |    ✅    |   ✅   | __1.84 GiB/s__ | __11.38 GiB/s__ |
+|                       |       |         |       |                |
+| Python 🐍              |       |         |       |                |
+| `hash`                | 32/64 |    ❌    |   ✅   |     0.13 GiB/s |      4.27 GiB/s |
+| `xxhash.xxh3_64`      |  64   |    ✅    |   ✅   |     0.04 GiB/s |      6.38 GiB/s |
+| `google_crc32c.value` |  32   |    ✅    |   ✅   |     0.04 GiB/s |      5.96 GiB/s |
+| `mmh3.hash32`         |  32   |    ✅    |   ✅   |     0.05 GiB/s |      2.65 GiB/s |
+| `mmh3.hash64`         |  64   |    ✅    |   ✅   |     0.03 GiB/s |      4.45 GiB/s |
+| `cityhash.CityHash64` |  64   |    ✅    |   ❌   |     0.06 GiB/s |      4.87 GiB/s |
+| `stringzilla.hash`    |  64   |    ✅    |   ✅   | __0.14 GiB/s__ |  __9.19 GiB/s__ |
 
 
 > ¹ Portability means availability in multiple other programming languages, like C, C++, Python, Java, Go, JavaScript, etc.
+> ² Most hash functions work on both x86 and Arm, as well as many other CPU architectures, but gxHash, and many MurMurHash and CityHash implementations don't.
 
 In larger systems, however, we often need the ability to incrementally hash the data.
 This is especially important in distributed systems, where the data is too large to fit into memory at once.
 
-| Library                    | Bits  | Ports ¹ |    Short Words |     Long Lines |
-| -------------------------- | :---: | :-----: | -------------: | -------------: |
-| Rust 🦀                     |       |         |                |                |
-| `std::hash::DefaultHasher` |  64   |    ❌    |     0.51 GiB/s |     3.92 GiB/s |
-| `aHash::AHasher`           |  64   |    ❌    | __1.30 GiB/s__ | __8.56 GiB/s__ |
-| `crc32fast::Hasher`        |  32   |    ✅    |     0.37 GiB/s |     8.39 GiB/s |
-| `stringzilla::Hasher`      |  64   |    ✅    |     0.89 GiB/s |     6.39 GiB/s |
-|                            |       |         |                |                |
-| Python 🐍                   |       |         |                |                |
-| `xxhash.xxh3_64`           |  64   |    ✅    |     0.09 GiB/s |      7.09 GB/s |
-| `google_crc32c.Checksum`   |  32   |    ✅    |     0.04 GiB/s |     5.96 GiB/s |
-| `stringzilla.Hasher`       |  64   |    ✅    | __0.35 GiB/s__ |  __6.04 GB/s__ |
+| Library                    | Bits  | Ports ¹ |    Short Words |      Long Lines |
+| -------------------------- | :---: | :-----: | -------------: | --------------: |
+| Rust 🦀                     |       |         |                |                 |
+| `std::hash::DefaultHasher` |  64   |    ❌    |     0.51 GiB/s |      3.92 GiB/s |
+| `aHash::AHasher`           |  64   |    ❌    | __1.30 GiB/s__ |      8.56 GiB/s |
+| `foldhash::FoldHasher`     |  64   |    ❌    |     1.27 GiB/s |      8.18 GiB/s |
+| `crc32fast::Hasher`        |  32   |    ✅    |     0.37 GiB/s |      8.39 GiB/s |
+| `stringzilla::Hasher`      |  64   |    ✅    |     0.89 GiB/s | __11.03 GiB/s__ |
+|                            |       |         |                |                 |
+| Python 🐍                   |       |         |                |                 |
+| `xxhash.xxh3_64`           |  64   |    ✅    |     0.09 GiB/s |       7.09 GB/s |
+| `google_crc32c.Checksum`   |  32   |    ✅    |     0.04 GiB/s |      5.96 GiB/s |
+| `stringzilla.Hasher`       |  64   |    ✅    | __0.35 GiB/s__ |   __6.04 GB/s__ |
 
 For reference, one may want to put those numbers next to check-sum calculation speeds on one end of complexity and cryptographic hashing speeds on the other end.
 
@@ -126,7 +131,7 @@ Still, those are provided by StringZilla mostly for parsing tasks and feature pa
 
 ## Byte-Set Search
 
-StringWa.rs takes a few representative examples of various character sets that appear in real parsing or string validation tasks:
+StringWars takes a few representative examples of various character sets that appear in real parsing or string validation tasks:
 
 - tabulation characters, like `\n\r\v\f`;
 - HTML and XML markup characters, like `</>&'\"=[]`;
@@ -163,19 +168,19 @@ Those are directly compatible with arbitrary string-comparable collection types 
 | ------------------------------------------- | ------------------------: | ----------------------: |
 | Rust 🦀                                      |                           |                         |
 | `std::sort_unstable_by_key`                 |        54.35 M compares/s |      57.70 M compares/s |
-| `rayon::par_sort_unstable_by_key` on 1x CPU |        47.08 M compares/s |      50.35 M compares/s |
+| `rayon::par_sort_unstable_by_key` on 1x SPR |        47.08 M compares/s |      50.35 M compares/s |
 | `polars::Series::sort`                      |       200.34 M compares/s |      65.44 M compares/s |
 | `polars::Series::arg_sort`                  |        25.01 M compares/s |      14.05 M compares/s |
 | `arrow::lexsort_to_indices`                 |       122.20 M compares/s |  __84.73 M compares/s__ |
 | `stringzilla::argsort_permutation`          |   __213.73 M compares/s__ |      74.64 M compares/s |
 |                                             |                           |                         |
 | Python 🐍                                    |                           |                         |
-| `list.sort` on 1x CPU                       |        47.06 M compares/s |      22.36 M compares/s |
-| `pandas.Series.sort_values` on 1x CPU       |         9.39 M compares/s |      11.93 M compares/s |
-| `pyarrow.compute.sort_indices` on 1x CPU    |        62.17 M compares/s |       5.53 M compares/s |
-| `polars.Series.sort` on 1x CPU              |       223.38 M compares/s | __181.60 M compares/s__ |
-| `cudf.Series.sort_values` on 1x GPU         | __9'463.59 M compares/s__ |      66.44 M compares/s |
-| `stringzilla.Strs.sorted` on 1x CPU         |       171.13 M compares/s |      77.88 M compares/s |
+| `list.sort` on 1x SPR                       |        47.06 M compares/s |      22.36 M compares/s |
+| `pandas.Series.sort_values` on 1x SPR       |         9.39 M compares/s |      11.93 M compares/s |
+| `pyarrow.compute.sort_indices` on 1x SPR    |        62.17 M compares/s |       5.53 M compares/s |
+| `polars.Series.sort` on 1x SPR              |       223.38 M compares/s | __181.60 M compares/s__ |
+| `cudf.Series.sort_values` on H100           | __9'463.59 M compares/s__ |      66.44 M compares/s |
+| `stringzilla.Strs.sorted` on 1x SPR         |       171.13 M compares/s |      77.88 M compares/s |
 
 ## Random Generation & Lookup Tables
 
@@ -219,64 +224,100 @@ Performing in-place lookups in a precomputed table of 256 bytes:
 
 Edit Distance calculation is a common component of Search Engines, Data Cleaning, and Natural Language Processing, as well as in Bioinformatics.
 It's a computationally expensive operation, generally implemented using dynamic programming, with a quadratic time complexity upper bound.
+For biological sequences, the Needleman-Wunsch and Smith-Waterman algorithms are more appropriate, as they allow overriding the default substitution costs.
+Each of those has two flavors - with linear and affine gap penalties, also known as the "Gotoh" variation.
+
+- byte-level and unicode [Levenshtein](#levenshtein) distance;
+- [Needleman-Wunsch](#needleman-wunsch), [Needleman-Wunsch-Gotoh](#needleman-wunsch-gotoh);
+- [Smith-Waterman](#smith-waterman), [Smith-Waterman-Gotoh](#smith-waterman-gotoh).
+
+### Levenshtein
+
+| Library                                              | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
+| ---------------------------------------------------- | ----------------: | ------------------: |
+| Rust 🦀                                               |                   |
+| `bio::levenshtein` on 1x SPR                         |         428 MCUPS |           823 MCUPS |
+| `rapidfuzz::levenshtein<Bytes>` on 1x SPR            |       4'633 MCUPS |        14'316 MCUPS |
+| `rapidfuzz::levenshtein<Chars>` on 1x SPR            |       3'877 MCUPS |        13'179 MCUPS |
+| `stringzillas::LevenshteinDistances` on 1x SPR       |       3'315 MCUPS |        13'084 MCUPS |
+| `stringzillas::LevenshteinDistancesUtf8` on 1x SPR   |       3'283 MCUPS |        11'690 MCUPS |
+| `stringzillas::LevenshteinDistances` on 16x SPR      |      29'430 MCUPS |       105'400 MCUPS |
+| `stringzillas::LevenshteinDistancesUtf8` on 16x SPR  |      38'954 MCUPS |       103'500 MCUPS |
+| `stringzillas::LevenshteinDistances` on RTX6000      |  __32'030 MCUPS__ |   __901'990 MCUPS__ |
+| `stringzillas::LevenshteinDistances` on H100         |  __31'913 MCUPS__ |   __925'890 MCUPS__ |
+| `stringzillas::LevenshteinDistances` on B200         |  __32'960 MCUPS__ |   __998'620 MCUPS__ |
+| `stringzillas::LevenshteinDistances` on 384x GNR     | __114'190 MCUPS__ | __3'084'270 MCUPS__ |
+| `stringzillas::LevenshteinDistancesUtf8` on 384x GNR | __103'590 MCUPS__ | __2'938'320 MCUPS__ |
+|                                                      |                   |                     |
+| Python 🐍                                             |                   |                     |
+| `nltk.edit_distance`                                 |           2 MCUPS |             2 MCUPS |
+| `jellyfish.levenshtein_distance`                     |          81 MCUPS |           228 MCUPS |
+| `rapidfuzz.Levenshtein.distance`                     |         108 MCUPS |         9'272 MCUPS |
+| `editdistance.eval`                                  |          89 MCUPS |           660 MCUPS |
+| `edlib.align`                                        |          82 MCUPS |         7'262 MCUPS |
+| `polyleven.levenshtein`                              |          89 MCUPS |         3'887 MCUPS |
+| `stringzillas.LevenshteinDistances` on 1x SPR        |          53 MCUPS |         3'407 MCUPS |
+| `stringzillas.LevenshteinDistancesUTF8` on 1x SPR    |          57 MCUPS |         3'693 MCUPS |
+| `cudf.edit_distance` batch on H100                   |      24'754 MCUPS |         6'976 MCUPS |
+| `stringzillas.LevenshteinDistances` batch on 1x SPR  |       2'343 MCUPS |        12'141 MCUPS |
+| `stringzillas.LevenshteinDistances` batch on 16x SPR |       3'762 MCUPS |       119'261 MCUPS |
+| `stringzillas.LevenshteinDistances` batch on H100    |  __18'081 MCUPS__ |   __320'109 MCUPS__ |
+
+### Needleman-Wunsch
 
 | Library                                               | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
 | ----------------------------------------------------- | ----------------: | ------------------: |
-| Rust 🦀                                                |                   |
-| `rapidfuzz::levenshtein<Bytes>`                       |       4'633 MCUPS |        14'316 MCUPS |
-| `rapidfuzz::levenshtein<Chars>`                       |       3'877 MCUPS |        13'179 MCUPS |
-| `stringzillas::LevenshteinDistances` on 1x CPU        |       3'315 MCUPS |        13'084 MCUPS |
-| `stringzillas::LevenshteinDistancesUtf8` on 1x CPU    |       3'283 MCUPS |        11'690 MCUPS |
-| `stringzillas::LevenshteinDistances` on 16x CPUs      |      29'430 MCUPS |       105'400 MCUPS |
-| `stringzillas::LevenshteinDistancesUtf8` on 16x CPUs  |      38'954 MCUPS |       103'500 MCUPS |
-| `stringzillas::LevenshteinDistances` on 1x GPU        |  __31'913 MCUPS__ |   __624'730 MCUPS__ |
+| Rust 🦀                                                |                   |                     |
+| `bio::pairwise::global` on 1x SPR                     |          51 MCUPS |            57 MCUPS |
+| `stringzillas::NeedlemanWunschScores` on 1x SPR       |         278 MCUPS |           612 MCUPS |
+| `stringzillas::NeedlemanWunschScores` on 16x SPR      |       4'057 MCUPS |         8'492 MCUPS |
+| `stringzillas::NeedlemanWunschScores` on 384x GNR     |  __64'290 MCUPS__ |   __331'340 MCUPS__ |
+| `stringzillas::NeedlemanWunschScores` on H100         |         131 MCUPS |    __12'113 MCUPS__ |
 |                                                       |                   |                     |
 | Python 🐍                                              |                   |                     |
-| `nltk.edit_distance`                                  |           2 MCUPS |             2 MCUPS |
-| `jellyfish.levenshtein_distance`                      |          81 MCUPS |           228 MCUPS |
-| `rapidfuzz.Levenshtein.distance`                      |         108 MCUPS |         9'272 MCUPS |
-| `editdistance.eval`                                   |          89 MCUPS |           660 MCUPS |
-| `edlib.align`                                         |          82 MCUPS |         7'262 MCUPS |
-| `polyleven.levenshtein`                               |          89 MCUPS |         3'887 MCUPS |
-| `stringzillas.LevenshteinDistances` on 1x CPU         |          53 MCUPS |         3'407 MCUPS |
-| `stringzillas.LevenshteinDistancesUTF8` on 1x CPU     |          57 MCUPS |         3'693 MCUPS |
-| `cudf.edit_distance` batch on 1x GPU                  |      24'754 MCUPS |         6'976 MCUPS |
-| `stringzillas.LevenshteinDistances` batch on 1x CPU   |       2'343 MCUPS |        12'141 MCUPS |
-| `stringzillas.LevenshteinDistances` batch on 16x CPUs |       3'762 MCUPS |       119'261 MCUPS |
-| `stringzillas.LevenshteinDistances` batch on 1x GPU   |  __18'081 MCUPS__ |   __320'109 MCUPS__ |
+| `biopython.PairwiseAligner.score` on 1x SPR           |          95 MCUPS |           557 MCUPS |
+| `stringzillas.NeedlemanWunschScores` on 1x SPR        |          30 MCUPS |           481 MCUPS |
+| `stringzillas.NeedlemanWunschScores` batch on 1x SPR  |         246 MCUPS |           570 MCUPS |
+| `stringzillas.NeedlemanWunschScores` batch on 16x SPR |       3'103 MCUPS |         9'208 MCUPS |
+| `stringzillas.NeedlemanWunschScores` batch on H100    |         127 MCUPS |        12'246 MCUPS |
 
+### Smith-Waterman
 
-For biological sequences, the Needleman-Wunsch and Smith-Waterman algorithms are more appropriate, as they allow overriding the default substitution costs.
-Another common adaptation is to used Gotoh's affine gap penalties, which better model the evolutionary events in DNA and Protein sequences.
+| Library                                             | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
+| --------------------------------------------------- | ----------------: | ------------------: |
+| Rust 🦀                                              |                   |                     |
+| `bio::pairwise::local` on 1x SPR                    |          49 MCUPS |            50 MCUPS |
+| `stringzillas::SmithWatermanScores` on 1x SPR       |         263 MCUPS |           552 MCUPS |
+| `stringzillas::SmithWatermanScores` on 16x SPR      |       3'883 MCUPS |         8'011 MCUPS |
+| `stringzillas::SmithWatermanScores` on 384x GNR     |  __58'880 MCUPS__ |   __285'480 MCUPS__ |
+| `stringzillas::SmithWatermanScores` on H100         |         143 MCUPS |    __12'921 MCUPS__ |
+|                                                     |                   |                     |
+| Python 🐍                                            |                   |                     |
+| `biopython.PairwiseAligner.score` on 1x SPR         |          95 MCUPS |           557 MCUPS |
+| `stringzillas.SmithWatermanScores` on 1x SPR        |          28 MCUPS |           440 MCUPS |
+| `stringzillas.SmithWatermanScores` batch on 1x SPR  |         255 MCUPS |           582 MCUPS |
+| `stringzillas.SmithWatermanScores` batch on 16x SPR |   __3'535 MCUPS__ |         8'235 MCUPS |
+| `stringzillas.SmithWatermanScores` batch on H100    |         130 MCUPS |    __12'702 MCUPS__ |
 
-| Library                                                | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| ------------------------------------------------------ | ----------------: | ------------------: |
-| Rust 🦀 with linear gaps                                |                   |
-| `stringzillas::NeedlemanWunschScores` on 1x CPU        |         278 MCUPS |           612 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 16x CPUs      |       4'057 MCUPS |         8'492 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 1x GPU        |         131 MCUPS |    __12'113 MCUPS__ |
-| `stringzillas::SmithWatermanScores` on 1x CPU          |         263 MCUPS |           552 MCUPS |
-| `stringzillas::SmithWatermanScores` on 16x CPUs        |       3'883 MCUPS |         8'011 MCUPS |
-| `stringzillas::SmithWatermanScores` on 1x GPU          |         143 MCUPS |    __12'921 MCUPS__ |
-|                                                        |                   |                     |
-| Python 🐍 with linear gaps                              |                   |                     |
-| `biopython.PairwiseAligner.score` on 1x CPU            |          95 MCUPS |           557 MCUPS |
-| `stringzillas.NeedlemanWunschScores` on 1x CPU         |          30 MCUPS |           481 MCUPS |
-| `stringzillas.NeedlemanWunschScores` batch on 1x CPU   |         246 MCUPS |           570 MCUPS |
-| `stringzillas.NeedlemanWunschScores` batch on 16x CPUs |       3'103 MCUPS |         9'208 MCUPS |
-| `stringzillas.NeedlemanWunschScores` batch on 1x GPU   |         127 MCUPS |        12'246 MCUPS |
-| `stringzillas.SmithWatermanScores` on 1x CPU           |          28 MCUPS |           440 MCUPS |
-| `stringzillas.SmithWatermanScores` batch on 1x CPU     |         255 MCUPS |           582 MCUPS |
-| `stringzillas.SmithWatermanScores` batch on 16x CPUs   |   __3'535 MCUPS__ |         8'235 MCUPS |
-| `stringzillas.SmithWatermanScores` batch on 1x GPU     |         130 MCUPS |    __12'702 MCUPS__ |
-|                                                        |                   |                     |
-| Rust 🦀 with affine gaps                                |                   |                     |
-| `stringzillas::NeedlemanWunschScores` on 1x CPU        |          83 MCUPS |           354 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 16x CPUs      |       1'267 MCUPS |         4'694 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 1x GPU        |         128 MCUPS |    __13'799 MCUPS__ |
-| `stringzillas::SmithWatermanScores` on 1x CPU          |          79 MCUPS |           284 MCUPS |
-| `stringzillas::SmithWatermanScores` on 16x CPUs        |   __1'026 MCUPS__ |         3'776 MCUPS |
-| `stringzillas::SmithWatermanScores` on 1x GPU          |         127 MCUPS |    __13'205 MCUPS__ |
+### Needleman-Wunsch-Gotoh
+
+| Library                                           | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
+| ------------------------------------------------- | ----------------: | ------------------: |
+| Rust 🦀                                            |                   |                     |
+| `stringzillas::NeedlemanWunschScores` on 1x SPR   |          83 MCUPS |           354 MCUPS |
+| `stringzillas::NeedlemanWunschScores` on 16x SPR  |       1'267 MCUPS |         4'694 MCUPS |
+| `stringzillas::NeedlemanWunschScores` on 384x GNR |  __42'050 MCUPS__ |   __155'920 MCUPS__ |
+| `stringzillas::NeedlemanWunschScores` on H100     |         128 MCUPS |    __13'799 MCUPS__ |
+
+### Smith-Waterman-Gotoh
+
+| Library                                         | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
+| ----------------------------------------------- | ----------------: | ------------------: |
+| Rust 🦀                                          |                   |                     |
+| `stringzillas::SmithWatermanScores` on 1x SPR   |          79 MCUPS |           284 MCUPS |
+| `stringzillas::SmithWatermanScores` on 16x SPR  |       1'026 MCUPS |         3'776 MCUPS |
+| `stringzillas::SmithWatermanScores` on 384x GNR |  __38'430 MCUPS__ |   __129'140 MCUPS__ |
+| `stringzillas::SmithWatermanScores` on H100     |         127 MCUPS |    __13'205 MCUPS__ |
 
 ## Byte-level Fingerprinting & Sketching Benchmarks
 
@@ -288,17 +329,19 @@ Adjusting all implementation to the same tokenization scheme, one my experience 
 
 | Library                                    | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
 | ------------------------------------------ | ----------------: | ------------------: |
-| serial `<ByteGrams>` 🦀                     |        0.44 MiB/s |          0.47 MiB/s |
+| serial `<ByteGrams>` on 1x SPR 🦀           |        0.44 MiB/s |          0.47 MiB/s |
 |                                            | 92.81% collisions |   94.58% collisions |
 |                                            |    0.8528 entropy |      0.7979 entropy |
 |                                            |                   |                     |
-| `pc::MinHash<ByteGrams>`🦀                  |        2.41 MiB/s |          3.16 MiB/s |
+| `pc::MinHash<ByteGrams>` on 1x SPR 🦀       |        2.41 MiB/s |          3.16 MiB/s |
 |                                            | 91.80% collisions |   93.17% collisions |
 |                                            |    0.9343 entropy |      0.8779 entropy |
 |                                            |                   |                     |
-| `stringzillas::Fingerprints` on 1x CPU 🦀   |        0.56 MiB/s |          0.51 MiB/s |
-| `stringzillas::Fingerprints` on 16x CPUs 🦀 |        6.62 MiB/s |          8.03 MiB/s |
-| `stringzillas::Fingerprints` on 1x GPU 🦀   |  __102.07 MiB/s__ |    __392.37 MiB/s__ |
+| `stringzillas::Fingerprints` on 1x SPR 🦀   |        0.56 MiB/s |          0.51 MiB/s |
+| `stringzillas::Fingerprints` on 16x SPR 🦀  |        6.62 MiB/s |          8.03 MiB/s |
+| `stringzillas::Fingerprints` on 384x GNR 🦀 |  __231.13 MiB/s__ |    __302.30 MiB/s__ |
+| `stringzillas::Fingerprints` on RTX6000 🦀  |     __138 MiB/s__ |        162.99 MiB/s |
+| `stringzillas::Fingerprints` on H100 🦀     |      102.07 MiB/s |    __392.37 MiB/s__ |
 |                                            | 86.80% collisions |   93.21% collisions |
 |                                            |    0.9992 entropy |      0.9967 entropy |
 
@@ -320,8 +363,19 @@ cargo install cargo-criterion --locked
 To pull and compile all the dependencies, you can call:
 
 ```bash
-cargo fetch --all-features
-cargo build --all-features
+RUSTFLAGS="-C target-cpu=native" cargo build --benches --all-features                  # to compile everything
+RUSTFLAGS="-C target-cpu=native" cargo check --benches --all-features --all-targets    # to fail on warnings
+```
+
+By default StringWars links `stringzilla` in CPU mode.
+If the machine has an NVIDIA GPU with CUDA installed, enable the CUDA kernels explicitly when running benches, for example:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" \
+    STRINGWARS_DATASET=README.md \
+    STRINGWARS_TOKENS=lines \
+    STRINGWARS_FILTER=GPU \
+    cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1
 ```
 
 Wars always take long, and so do these benchmarks.
@@ -406,4 +460,39 @@ To download, unpack, and run the benchmarks, execute the following bash script i
 wget --no-clobber -O xlsum.csv.gz https://github.com/ashvardanian/xl-sum/releases/download/v1.0.0/xlsum.csv.gz
 gzip -d xlsum.csv.gz
 STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs $(nproc)
+```
+
+### DNA Corpus
+
+For bioinformatics workloads, I use the following datasets with increasing string lengths:
+
+```bash
+wget --no-clobber -O acgt_100.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100.txt?download=true
+wget --no-clobber -O acgt_1k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1k.txt?download=true
+wget --no-clobber -O acgt_10k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10k.txt?download=true
+wget --no-clobber -O acgt_100k.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100k.txt?download=true
+wget --no-clobber -O acgt_1m.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1m.txt?download=true
+wget --no-clobber -O acgt_10m.txt https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10m.txt?download=true
+```
+
+## Deep Profiling
+
+In case you are profiling the some of the internal kernels of mentioned libraries, here are a few example commands to get around.
+Such as using `ncu` for NVIDIA GPUs to evaluate the register usage and occupancy of the CUDA kernels used in StringZilla's Levenshtein distance calculation:
+
+```bash
+/usr/local/cuda/bin/ncu \
+  --metrics launch__registers_per_thread,launch__occupancy_per_block_size,sm__warps_active.avg.pct_of_peak_sustained_active,sm__throughput.avg.pct_of_peak_sustained_elapsed,dram__throughput.avg.pct_of_peak_sustained_elapsed,dram__bytes.sum \
+  --target-processes all \
+  --kernel-name "levenshtein_on_each_cuda_thread" \
+  --launch-skip 5 \
+  --launch-count 1 \
+  bash -c 'STRINGWARS_DATASET=acgt_100.txt STRINGWARS_BATCH=65536 STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU\)" cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1'
+```
+
+Using `perf` on Linux to analyze the CPU-side performance of SIMD-accelerated substring search:
+
+```bash
+perf record -e cpu-clock -g graph,0x400000 -o perf.data -- cargo criterion --features "bench_similarities" bench_similarities --jobs 1
+perf report -i perf.data
 ```

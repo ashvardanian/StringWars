@@ -1,13 +1,220 @@
-use criterion::measurement::{Measurement, ValueFormatter};
-use criterion::Throughput;
+use std::borrow::Cow;
 use std::env;
+use std::fs;
+use stringtape::BytesCowsAuto;
+
+/// Forces the allocator to release memory back to the OS.
+/// This is particularly useful after dropping large allocations in benchmarks.
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+#[inline]
+pub fn reclaim_memory() {
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
+#[inline]
+pub fn reclaim_memory() {
+    // No-op on non-Linux platforms
+}
+
+/// Loads binary data from the file specified by the `STRINGWARS_DATASET` environment variable.
+/// Uses StringTape to avoid allocating separate byte vectors for each token.
+/// Returns BytesCowsAuto for memory-efficient byte slice storage.
+/// Can be cast to CharsCowsAuto for UTF-8 string benchmarks (StringTape 2.2+).
+/// Supports `STRINGWARS_MAX_TOKENS` to limit the number of tokens loaded.
+/// Logs dataset statistics to stderr.
+#[allow(dead_code)]
+pub fn load_dataset() -> BytesCowsAuto<'static> {
+    let dataset_path =
+        env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
+    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
+    let max_tokens = env::var("STRINGWARS_MAX_TOKENS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok());
+
+    if let Some(max) = max_tokens {
+        eprintln!("STRINGWARS_MAX_TOKENS: limiting to {} tokens", max);
+    }
+
+    // Read and leak the content to get 'static lifetime
+    let content = fs::read(&dataset_path).expect("Could not read dataset");
+    let content_static: &'static [u8] = Box::leak(content.into_boxed_slice());
+    let content_bytes = Cow::Borrowed(content_static);
+
+    // Build BytesCowsAuto directly from iterator - it will own references to the leaked bytes
+    let tape = match mode.as_str() {
+        "lines" => {
+            let iter = content_static
+                .split(|&b| b == b'\n')
+                .filter(|s| !s.is_empty());
+            if let Some(max) = max_tokens {
+                BytesCowsAuto::from_iter_and_data(iter.take(max), content_bytes)
+            } else {
+                BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+            }
+        }
+        "words" => {
+            let iter = content_static
+                .split(|&b| b == b' ' || b == b'\n')
+                .filter(|s| !s.is_empty());
+            if let Some(max) = max_tokens {
+                BytesCowsAuto::from_iter_and_data(iter.take(max), content_bytes)
+            } else {
+                BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+            }
+        }
+        "file" => {
+            let iter = std::iter::once(content_static);
+            BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+        }
+        other => panic!(
+            "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
+            other
+        ),
+    };
+
+    let tape = tape.expect("Failed to create BytesTape");
+
+    // Streaming statistics with log-scale histogram (O(1) memory)
+    let count = tape.len();
+    let total_bytes: usize = tape.iter().map(|s| s.len()).sum();
+    let mean_len = if count > 0 {
+        total_bytes as f64 / count as f64
+    } else {
+        0.0
+    };
+
+    // Log-scale buckets: 0, 1, 2-3, 4-7, 8-15, 16-31, ... 32K-64K, 64K+
+    let mut buckets = [0u64; 18];
+    let mut min_len = usize::MAX;
+    let mut max_len = 0;
+    let mut variance_sum = 0.0;
+
+    for token in tape.iter() {
+        let len = token.len();
+        min_len = min_len.min(len);
+        max_len = max_len.max(len);
+
+        // Variance calculation
+        let diff = len as f64 - mean_len;
+        variance_sum += diff * diff;
+
+        // Log-scale bucketing (powers of 2)
+        let bucket = if len == 0 {
+            0
+        } else if len == 1 {
+            1
+        } else {
+            // For len >= 2: bucket = log2(len) + 1
+            // E.g., len=2-3 -> bucket 2, len=4-7 -> bucket 3, etc.
+            ((len.ilog2() + 1) as usize).min(17)
+        };
+        buckets[bucket] += 1;
+    }
+
+    let std_dev = (variance_sum / count as f64).sqrt();
+
+    eprintln!(
+        "Dataset: {} tokens, {} bytes ({:.2} GB)\n  \
+         Length: min {}, max {}, mean {:.1}, std {:.1}",
+        format_number(count as u64),
+        format_number(total_bytes as u64),
+        total_bytes as f64 / 1e9,
+        min_len,
+        max_len,
+        mean_len,
+        std_dev
+    );
+
+    // Show distribution (only non-empty buckets)
+    eprintln!("  Distribution:");
+    let bucket_ranges = [
+        "0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64-127", "128-255", "256-511", "512-1K",
+        "1K-2K", "2K-4K", "4K-8K", "8K-16K", "16K-32K", "32K-64K", "64K+",
+    ];
+    for (i, &cnt) in buckets.iter().enumerate() {
+        if cnt > 0 {
+            let pct = (cnt as f64 / count as f64) * 100.0;
+            let label = if i < bucket_ranges.len() {
+                bucket_ranges[i]
+            } else {
+                "64K+"
+            };
+            eprintln!("    {:>10} bytes: {:>6.2}%", label, pct);
+        }
+    }
+
+    tape
+}
+
+/// Format large numbers with thousand separators for readability
+#[allow(dead_code)]
+fn format_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.insert(0, ',');
+        }
+        result.insert(0, c);
+    }
+    result
+}
+
+// Perf profiling utilities
+#[cfg(target_os = "linux")]
+use perf_event::{
+    events::CacheOp, events::CacheResult, events::Hardware, events::WhichCache, Builder, Counter,
+};
+
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
+use criterion::measurement::{Measurement, ValueFormatter};
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
+use criterion::Throughput;
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
 use std::time::Instant;
 
 /// Filter helper function to check if a benchmark should run based on STRINGWARS_FILTER env var
 #[allow(dead_code)]
 pub fn should_run(name: &str) -> bool {
+    use std::sync::Once;
+    static FILTER_INIT: Once = Once::new();
+
     if let Ok(filter) = env::var("STRINGWARS_FILTER") {
-        name.contains(&filter)
+        FILTER_INIT.call_once(|| {
+            eprintln!("STRINGWARS_FILTER active: '{}'", filter);
+        });
+
+        if let Ok(re) = regex::Regex::new(&filter) {
+            let matches = re.is_match(name);
+            if !matches {
+                eprintln!("  Skipping: {}", name);
+            }
+            matches
+        } else {
+            // Fallback to substring match if regex is invalid
+            eprintln!(
+                "Warning: Invalid regex pattern '{}', falling back to substring match",
+                filter
+            );
+            name.contains(&filter)
+        }
     } else {
         true
     }
@@ -17,6 +224,12 @@ pub fn should_run(name: &str) -> bool {
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // Simple SI scaling helper
+#[allow(dead_code)]
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
 fn scale_si(mut v: f64) -> (f64, &'static str) {
     if v >= 1_000_000_000.0 {
         v /= 1_000_000_000.0;
@@ -32,6 +245,12 @@ fn scale_si(mut v: f64) -> (f64, &'static str) {
     }
 }
 
+#[allow(dead_code)]
+#[cfg(any(
+    feature = "bench_similarities",
+    feature = "bench_fingerprints",
+    feature = "bench_sequence"
+))]
 fn format_seconds(value: f64) -> String {
     // value is seconds
     if value < 1e-6 {
@@ -45,6 +264,7 @@ fn format_seconds(value: f64) -> String {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_similarities")]
 pub struct CupsFormatter;
 #[cfg(feature = "bench_similarities")]
@@ -110,6 +330,7 @@ impl ValueFormatter for CupsFormatter {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 pub struct HashesFormatter;
 #[cfg(feature = "bench_fingerprints")]
@@ -206,6 +427,7 @@ impl ValueFormatter for HashesFormatter {
 
 // Measurement wrappers that mirror WallTime but override formatting.
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_similarities")]
 #[derive(Clone, Default)]
 pub struct CupsWallTime;
@@ -240,6 +462,7 @@ impl Measurement for CupsWallTime {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 #[derive(Clone, Default)]
 pub struct HashesWallTime;
@@ -275,14 +498,17 @@ impl Measurement for HashesWallTime {
 }
 
 // Global ratio to let the formatter print both hashes/s and bytes/s
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 static FINGERPRINTS_BYTES_PER_HASH_BITS: AtomicU64 = AtomicU64::new(0);
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 pub fn set_fingerprints_bytes_per_hash(v: f64) {
     FINGERPRINTS_BYTES_PER_HASH_BITS.store(v.to_bits(), Ordering::Relaxed);
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_fingerprints")]
 fn get_bytes_per_hash() -> f64 {
     let bits = FINGERPRINTS_BYTES_PER_HASH_BITS.load(Ordering::Relaxed);
@@ -290,6 +516,7 @@ fn get_bytes_per_hash() -> f64 {
 }
 
 // Comparisons/sec formatter: k/M/G cmp/s
+#[allow(dead_code)]
 #[cfg(feature = "bench_sequence")]
 pub struct ComparisonsFormatter;
 
@@ -355,6 +582,7 @@ impl ValueFormatter for ComparisonsFormatter {
     }
 }
 
+#[allow(dead_code)]
 #[cfg(feature = "bench_sequence")]
 #[derive(Clone, Default)]
 pub struct ComparisonsWallTime;
@@ -381,5 +609,242 @@ impl Measurement for ComparisonsWallTime {
     }
     fn formatter(&self) -> &dyn ValueFormatter {
         &ComparisonsFormatter
+    }
+}
+
+// ============================================================================
+// Perf profiling utilities for comprehensive hardware counter collection
+// ============================================================================
+
+/// RAII guard that profiles a code section using perf events on Linux.
+/// On non-Linux platforms, this is a zero-cost abstraction.
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+pub struct PerfSection {
+    name: &'static str,
+    // Core performance
+    cycles: Option<Counter>,
+    instructions: Option<Counter>,
+    // Stall analysis (ARM-specific)
+    stall_frontend: Option<Counter>,
+    stall_backend: Option<Counter>,
+    stall_backend_mem: Option<Counter>,
+    // Memory hierarchy
+    l1d_cache_misses: Option<Counter>,
+    l1d_cache_accesses: Option<Counter>,
+    dtlb_misses: Option<Counter>,
+    l2_cache_misses: Option<Counter>,
+}
+
+#[cfg(target_os = "linux")]
+impl PerfSection {
+    /// Creates a new perf section with comprehensive counter collection.
+    /// Collects: cycles, instructions, stalls (frontend/backend), cache, and TLB metrics.
+    #[allow(dead_code)]
+    pub fn new(name: &'static str) -> Self {
+        // Core performance counters
+        let cycles = Self::build_counter(Hardware::CPU_CYCLES);
+        let instructions = Self::build_counter(Hardware::INSTRUCTIONS);
+
+        // Stall counters (standard hardware events)
+        let stall_frontend = Self::build_counter(Hardware::STALLED_CYCLES_FRONTEND);
+        let stall_backend = Self::build_counter(Hardware::STALLED_CYCLES_BACKEND);
+
+        // L1 data cache
+        let l1d_cache_misses =
+            Self::build_cache_counter(WhichCache::L1D, CacheOp::READ, CacheResult::MISS);
+        let l1d_cache_accesses =
+            Self::build_cache_counter(WhichCache::L1D, CacheOp::READ, CacheResult::ACCESS);
+
+        // DTLB (data TLB)
+        let dtlb_misses =
+            Self::build_cache_counter(WhichCache::DTLB, CacheOp::READ, CacheResult::MISS);
+
+        // L2/LLC cache
+        let l2_cache_misses =
+            Self::build_cache_counter(WhichCache::LL, CacheOp::READ, CacheResult::MISS);
+
+        Self {
+            name,
+            cycles,
+            instructions,
+            stall_frontend,
+            stall_backend,
+            stall_backend_mem: None, // Not available via standard events
+            l1d_cache_misses,
+            l1d_cache_accesses,
+            dtlb_misses,
+            l2_cache_misses,
+        }
+    }
+
+    /// Creates a minimal perf section that only tracks core performance (cycles + instructions).
+    /// Use this for lower overhead when detailed metrics aren't needed.
+    #[allow(dead_code)]
+    pub fn minimal(name: &'static str) -> Self {
+        let cycles = Self::build_counter(Hardware::CPU_CYCLES);
+        let instructions = Self::build_counter(Hardware::INSTRUCTIONS);
+
+        Self {
+            name,
+            cycles,
+            instructions,
+            stall_frontend: None,
+            stall_backend: None,
+            stall_backend_mem: None,
+            l1d_cache_misses: None,
+            l1d_cache_accesses: None,
+            dtlb_misses: None,
+            l2_cache_misses: None,
+        }
+    }
+
+    /// Helper to build and enable a hardware counter
+    #[allow(dead_code)]
+    fn build_counter(kind: Hardware) -> Option<Counter> {
+        Builder::new().kind(kind).build().ok().and_then(|mut c| {
+            if c.enable().is_err() {
+                eprintln!("Warning: Failed to enable counter {:?}", kind);
+            }
+            Some(c)
+        })
+    }
+
+    /// Helper to build and enable a cache counter
+    #[allow(dead_code)]
+    fn build_cache_counter(cache: WhichCache, op: CacheOp, result: CacheResult) -> Option<Counter> {
+        use perf_event::events::Cache;
+        Builder::new()
+            .kind(Cache {
+                which: cache,
+                operation: op,
+                result,
+            })
+            .build()
+            .ok()
+            .and_then(|mut c| {
+                c.enable().ok()?;
+                Some(c)
+            })
+    }
+
+    /// Disable and read a counter
+    fn read_counter(counter: &mut Option<Counter>) -> Option<u64> {
+        counter.as_mut().and_then(|c| {
+            c.disable().ok()?;
+            c.read().ok()
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PerfSection {
+    fn drop(&mut self) {
+        // Read all counters
+        let cycles = Self::read_counter(&mut self.cycles);
+        let instructions = Self::read_counter(&mut self.instructions);
+        let stall_frontend = Self::read_counter(&mut self.stall_frontend);
+        let stall_backend = Self::read_counter(&mut self.stall_backend);
+        let l1d_cache_misses = Self::read_counter(&mut self.l1d_cache_misses);
+        let l1d_cache_accesses = Self::read_counter(&mut self.l1d_cache_accesses);
+        let dtlb_misses = Self::read_counter(&mut self.dtlb_misses);
+        let l2_cache_misses = Self::read_counter(&mut self.l2_cache_misses);
+
+        // Only print if we have any counters
+        let has_counters = cycles.is_some()
+            || instructions.is_some()
+            || stall_frontend.is_some()
+            || stall_backend.is_some()
+            || l1d_cache_misses.is_some()
+            || dtlb_misses.is_some()
+            || l2_cache_misses.is_some();
+
+        if !has_counters {
+            return;
+        }
+
+        eprintln!("[perf] {}", self.name);
+
+        // Core performance
+        if let (Some(c), Some(i)) = (cycles, instructions) {
+            let ipc = i as f64 / c as f64;
+            eprintln!(
+                "  cycles: {}, instructions: {}, IPC: {:.2}",
+                format_perf_number(c),
+                format_perf_number(i),
+                ipc
+            );
+        } else if let Some(c) = cycles {
+            eprintln!("  cycles: {}", format_perf_number(c));
+        } else if let Some(i) = instructions {
+            eprintln!("  instructions: {}", format_perf_number(i));
+        }
+
+        // Stalls
+        if let (Some(sf), Some(c)) = (stall_frontend, cycles) {
+            let pct = (sf as f64 / c as f64) * 100.0;
+            eprintln!(
+                "  frontend stalls: {} ({:.1}%)",
+                format_perf_number(sf),
+                pct
+            );
+        }
+        if let (Some(sb), Some(c)) = (stall_backend, cycles) {
+            let pct = (sb as f64 / c as f64) * 100.0;
+            eprintln!("  backend stalls: {} ({:.1}%)", format_perf_number(sb), pct);
+        }
+
+        // Memory hierarchy
+        if let Some(misses) = l1d_cache_misses {
+            if let Some(accesses) = l1d_cache_accesses {
+                let rate = (misses as f64 / accesses as f64) * 100.0;
+                eprintln!(
+                    "  L1D misses: {} ({:.1}%)",
+                    format_perf_number(misses),
+                    rate
+                );
+            } else {
+                eprintln!("  L1D misses: {}", format_perf_number(misses));
+            }
+        }
+        if let Some(misses) = l2_cache_misses {
+            eprintln!("  L2 misses: {}", format_perf_number(misses));
+        }
+        if let Some(misses) = dtlb_misses {
+            eprintln!("  DTLB misses: {}", format_perf_number(misses));
+        }
+    }
+}
+
+/// Format large numbers with thousand separators for readability
+#[allow(dead_code)]
+#[cfg(target_os = "linux")]
+fn format_perf_number(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.insert(0, ',');
+        }
+        result.insert(0, c);
+    }
+    result
+}
+
+// No-op implementation for non-Linux platforms
+#[allow(dead_code)]
+#[cfg(not(target_os = "linux"))]
+pub struct PerfSection;
+
+#[cfg(not(target_os = "linux"))]
+impl PerfSection {
+    #[inline(always)]
+    pub fn new(_name: &'static str) -> Self {
+        Self
+    }
+
+    #[inline(always)]
+    pub fn minimal(_name: &'static str) -> Self {
+        Self
     }
 }

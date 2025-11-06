@@ -1,11 +1,17 @@
 [project]
 name = "stringwars"
-version = "1.1.2"
-description = "Python benchmarking harness to complement StringWa.rs benches"
+version = "1.4.2"
+description = "Comparing performance-oriented string-processing libraries for substring search, multi-pattern matching, hashing, edit-distances, sketching, and sorting across CPUs and GPUs in Python 🐍"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "StringWa.rs maintainers" }]
+authors = [
+  { name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com" },
+]
 license = { text = "Apache 2.0" }
+
+[project.urls]
+Homepage = "https://ashvardanian.com/posts/stringwars-on-gpus"
+Repository = "https://github.com/ashvardanian/StringWars"
 
 # Keep the base install minimal; opt into extras per-bench
 dependencies = []

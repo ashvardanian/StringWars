@@ -17,9 +17,9 @@ Environment variables:
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
 Examples:
-  python bench_sequence.py --dataset README.md --tokens lines
-  python bench_sequence.py --dataset xlsum.csv --tokens words -k "list.sort"
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines python bench_sequence.py
+  uv run bench_sequence.py --dataset README.md --tokens lines
+  uv run bench_sequence.py --dataset xlsum.csv --tokens words -k "list.sort"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run bench_sequence.py
 """
 import os
 
