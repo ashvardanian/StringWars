@@ -15,6 +15,7 @@ So, to accelerate the development of the [`StringZilla`](https://github.com/ashv
 - [`aHash`](https://github.com/tkaitchuck/aHash) and [`crc32fast`](https://github.com/srijs/rust-crc32fast) for hashing.
 - [`aho_corasick`](https://github.com/BurntSushi/aho-corasick) and [`regex`](https://github.com/rust-lang/regex) for multi-search.
 - [`arrow`](https://github.com/apache/arrow-rs) and [`polars`](https://github.com/pola-rs/polars) for collections.
+- [`ring`](https://github.com/briansmith/ring) borrowing Asm from BoringSSL and OpenSSL.
 
 Of course, the functionality of the projects is different, as are the APIs and the usage patterns.
 So, I focus on the workloads for which StringZilla was designed and compare the throughput of the core operations.
@@ -350,6 +351,27 @@ So, how many bits per fingerprint are needed to achieve a specific recall rate f
 Or, how does the average Levenshtein distance among the top-k nearest neighbors change with the fingerprint size?
 It must clearly decrease, but how fast, and how does that compare to ground truth?
 For that please, check out the [HashEvals](https://github.com/ashvardanian/HashEvals) repository.
+
+## Encryption and Decryption Benchmarks
+
+Encryption:
+
+| Library               | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
+| --------------------- | ----------------: | ------------------: |
+| Rust 🦀                |                   |                     |
+| `libsodium::chacha20` |        0.20 GiB/s |          0.71 GiB/s |
+| `ring::chacha20`      |        0.39 GiB/s |          1.19 GiB/s |
+| `ring::aes256`        |        0.61 GiB/s |          2.89 GiB/s |
+
+
+Decryption:
+
+| Library               | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
+| --------------------- | ----------------: | ------------------: |
+| Rust 🦀                |                   |                     |
+| `libsodium::chacha20` |        0.20 GiB/s |          0.69 GiB/s |
+| `ring::chacha20`      |        0.42 GiB/s |          1.08 GiB/s |
+| `ring::aes256`        |        0.85 GiB/s |          2.48 GiB/s |
 
 ## Replicating the Results
 
