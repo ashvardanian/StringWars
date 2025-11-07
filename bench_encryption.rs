@@ -3,43 +3,43 @@
 
 This file contains benchmarks for various Rust encryption libraries using Criterion,
 comparing AEAD (Authenticated Encryption with Associated Data) ciphers commonly used
-in the Noise Protocol Framework and TLS 1.2/1.3.
+in TLS 1.2/1.3 and the Noise Protocol Framework.
 
 The benchmarks focus on:
 - **AES-256-GCM**: Hardware-accelerated AEAD cipher
 - **ChaCha20-Poly1305**: Software-optimized AEAD cipher
 
-For accurate stats aggregation, on each iteration, the whole file is scanned.
-Be warned, for large files, it may take a while!
-
 The benchmarks are organized into three categories:
 
 **Key Generation/Setup**:
-- ring key generation
+- Ring key generation
 - OpenSSL cipher initialization
 
 **Encryption** (encrypting dataset tokens):
-- ChaCha20-Poly1305 via ring
-- AES-256-GCM via ring
+- ChaCha20-Poly1305 via Ring
+- AES-256-GCM via Ring
 - ChaCha20-Poly1305 IETF via OpenSSL
 - AES-256-GCM via OpenSSL
 - ChaCha20-Poly1305 IETF via libsodium
 - XChaCha20-Poly1305 IETF via libsodium (extended nonce)
 
 **Decryption** (decrypting previously encrypted data):
-- ChaCha20-Poly1305 via ring
-- AES-256-GCM via ring
+- ChaCha20-Poly1305 via Ring
+- AES-256-GCM via Ring
 - ChaCha20-Poly1305 IETF via OpenSSL
 - AES-256-GCM via OpenSSL
 - ChaCha20-Poly1305 IETF via libsodium
 - XChaCha20-Poly1305 IETF via libsodium (extended nonce)
 
-## Noise Protocol Framework & TLS Context
+## System Dependencies
 
-These ciphers are commonly used in:
-- **Noise Protocol Framework**: ChaCha20-Poly1305 (most common), AES-256-GCM
-- **TLS 1.2/1.3**: AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305
-- Often paired with SHA-256 for hashing/HMAC operations
+Before running these benchmarks, ensure the following system packages are installed:
+
+```sh
+sudo apt install -y build-essential pkg-config libssl-dev libsodium-dev # for Ubuntu/Debian
+sudo dnf install -y gcc pkg-config openssl-devel libsodium-devel # for RHEL/Fedora
+brew install pkg-config openssl libsodium # for macOS
+```
 
 ## Usage Examples
 
@@ -70,8 +70,6 @@ RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_FILTER="(cryption/openssl|cryption/ring)" \
     cargo criterion --features bench_encryption bench_encryption
 ```
-
-Note: AES-GCM benefits significantly from hardware acceleration (AES-NI on x86_64, AES extensions on ARM).
 "#]
 use std::hint::black_box;
 

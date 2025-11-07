@@ -17,7 +17,7 @@ The benchmarks are organized into three categories:
 - FoldHash
 - CRC32 (IEEE) via `crc32fast`
 - MurmurHash32 via `murmurhash32`
-- CityHash64 via `cityhash` (x86_64 only)
+- CityHash64 via `cityhash` (x86_64 & Clang only)
 
 **Stateful Hashes** (incremental/streaming):
 - StringZilla `Hasher`
@@ -32,6 +32,16 @@ The benchmarks are organized into three categories:
 - SHA256 via `sha2` (cryptographic)
 - SHA256 via `ring` (cryptographic)
 - SHA256 via `stringzilla` (cryptographic, stateless and stateful)
+
+## System Dependencies
+
+Before running these benchmarks, ensure the following system packages are installed:
+
+```sh
+sudo apt install -y build-essential llvm-18-dev libclang-18-dev clang-18 # for Ubuntu/Debian
+sudo dnf install -y gcc llvm-devel clang-devel # for RHEL/Fedora
+brew install llvm clang # for macOS
+```
 
 ## Usage Examples
 
