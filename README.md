@@ -485,6 +485,30 @@ gzip -d xlsum.csv.gz
 STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs $(nproc)
 ```
 
+### Multilingual Wikipedia Corpus
+
+The Cohere Wikipedia dataset provides pre-processed JSONL files for different languages.
+This may be the optimal dataset for relative comparison of UTF-8 decoding and matching enginges in each individual environment.
+Not all Wikipedia languages are available, but the following have been selected specifically:
+
+- __Chinese (zh)__: 3-byte CJK characters, rare 1-byte punctuation
+- __Korean (ko)__: 3-byte Hangul syllables, frequent 1-byte punctuation
+- __Arabic (ar)__: 2-byte Arabic script, with regular 1-byte punctuation
+- __French (fr)__: Mixed 1-2 byte Latin with high diacritic density
+- __English (en)__: Mostly 1-byte ASCII baseline
+
+To download and decompress one file from each language:
+
+```bash
+curl -fL -o wiki_zh.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/zh/000.jsonl.gz && gunzip wiki_zh.jsonl.gz
+curl -fL -o wiki_ko.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/ko/000.jsonl.gz && gunzip wiki_ko.jsonl.gz
+curl -fL -o wiki_ar.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/ar/000.jsonl.gz && gunzip wiki_ar.jsonl.gz
+curl -fL -o wiki_fr.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/fr/000.jsonl.gz && gunzip wiki_fr.jsonl.gz
+curl -fL -o wiki_en.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/en/000.jsonl.gz && gunzip wiki_en.jsonl.gz
+```
+
+Each JSONL file contains one JSON object per line with fields: `id`, `title`, `text` (paragraph content), `url`, `wiki_id`, and `paragraph_id`.
+
 ### DNA Corpus
 
 For bioinformatics workloads, I use the following datasets with increasing string lengths:

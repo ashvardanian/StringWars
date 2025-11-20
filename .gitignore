@@ -6,3 +6,8 @@
 /acgt_*.txt
 /xlsum.csv
 /leipzig1M.txt
+/wiki_zh.jsonl
+/wiki_ko.jsonl
+/wiki_ar.jsonl
+/wiki_fr.jsonl
+/wiki_en.jsonl
