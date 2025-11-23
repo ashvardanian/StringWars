@@ -29,6 +29,7 @@ bench_find = [
     "bstr",         # Byteset search
     "aho-corasick", # Byteset search
     "icu",          # Unicode properties for character matching
+    "simdutf",      # SIMD UTF-8 validation and transcoding
 ]
 bench_hash = [
     "bit-set",      # for collision counting
@@ -102,6 +103,10 @@ version = "2.1.1"
 optional = true
 default-features = false
 features = ["compiled_data"]
+
+[dependencies.simdutf]
+version = "0.6"
+optional = true
 
 [dependencies.regex]
 version = "1.12.2"

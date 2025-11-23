@@ -154,6 +154,23 @@ Current numbers should look like this:
 | `re.finditer`                   |     0.04 GiB/s |     0.19 GiB/s |
 | `stringzilla.Str.find_first_of` | __0.11 GiB/s__ | __8.79 GiB/s__ |
 
+## UTF-8 Processing
+
+On AMD Zen5 Turin CPUs on different datasets, StringZilla provides the following throughput for splitting around whitespace and newline characters on 5 vastly different languages.
+Chinese and Korean texts, for example, are both made of mostly 3-byte letters, but Korean uses a lot of whitespace characters for syllable separation, while Chinese doesn't use any.
+French and English both use a lot of single-byte whitespace characters, but French uses many accented letters that are 2-byte long in UTF-8.
+
+| Library                                   |     English |     Chinese |      Arabic |      French |      Korean |
+| ----------------------------------------- | ----------: | ----------: | ----------: | ----------: | ----------: |
+| Split around 25 whitespace characters:    |             |             |             |             |             |
+| `stringzilla::utf8_whitespace_splits`     |  0.82 GiB/s |  2.40 GiB/s |  2.40 GiB/s |  0.92 GiB/s |  1.88 GiB/s |
+| `stdlib::split(char::is_whitespace)`      |  0.77 GiB/s |  1.87 GiB/s |  1.04 GiB/s |  0.72 GiB/s |  0.98 GiB/s |
+| `icu::WhiteSpace`                         |  0.11 GiB/s |  0.16 GiB/s |  0.15 GiB/s |  0.12 GiB/s |  0.15 GiB/s |
+|                                           |             |             |             |             |             |
+| Split around 9 newline combinations:      |             |             |             |             |             |
+| `stringzilla::utf8_newline_splits`        | 15.45 GiB/s | 16.65 GiB/s | 18.34 GiB/s | 14.52 GiB/s | 16.71 GiB/s |
+| `stdlib::split(char::is_unicode_newline)` |  1.90 GiB/s |  1.93 GiB/s |  1.82 GiB/s |  1.78 GiB/s |  1.81 GiB/s |
+
 ## Sequence Operations
 
 Rust has several Dataframe libraries, DBMS and Search engines that heavily rely on string sorting and intersections.
