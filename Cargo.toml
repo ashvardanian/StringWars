@@ -14,7 +14,7 @@ categories = ["text-processing", "development-tools::profiling"]
 [dependencies]
 criterion = "0.7.0"
 stringtape = "2.4.0"
-stringzilla = { version = "4.2.1", default-features = false }
+stringzilla = { git = "https://github.com/ashvardanian/StringZilla.git", branch = "main-dev", default-features = false }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
