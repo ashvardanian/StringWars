@@ -408,8 +408,6 @@ fn bench_case_insensitive_find(
     haystack: &[u8],
     needles: &BytesCowsAuto,
 ) {
-    g.throughput(Throughput::Bytes(haystack.len() as u64));
-
     let haystack_str = std::str::from_utf8(haystack).unwrap();
 
     // Take a subset of needles for searching (first 100 non-empty tokens with len >= 3)
@@ -424,6 +422,11 @@ fn bench_case_insensitive_find(
         eprintln!("Warning: No suitable needles for case-insensitive find benchmarks");
         return;
     }
+
+    // Each iteration searches the haystack once per needle
+    g.throughput(Throughput::Bytes(
+        (haystack.len() * search_needles.len()) as u64,
+    ));
 
     // Benchmark for regex case-insensitive search.
     if should_run("case-insensitive-find/regex::is_match(case_insensitive)") {
