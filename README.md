@@ -493,19 +493,9 @@ uv run --no-project python bench_fingerprints.py --help 🔜
 
 ## Datasets
 
-### ASCII Corpus
-
-For benchmarks on ASCII data I've used the English Leipzig Corpora Collection.
-It's 124 MB in size, 1'000'000 lines long, and contains 8'388'608 tokens of mean length 5.
-
-```bash
-curl -fL -o leipzig1M.txt https://introcs.cs.princeton.edu/python/42sort/leipzig1m.txt
-STRINGWARS_DATASET=leipzig1M.txt cargo criterion --jobs $(nproc)
-```
-
 ### UTF8 Corpus
 
-For richer mixed UTF data, I've used the XL Sum dataset for multilingual extractive summarization.
+For mixed UTF data, I've used the XL Sum dataset for multilingual extractive summarization.
 It's 4.7 GB in size (1.7 GB compressed), 1'004'598 lines long, and contains 268'435'456 tokens of mean length 8.
 To download, unpack, and run the benchmarks, execute the following bash script in your terminal:
 
@@ -538,6 +528,104 @@ curl -fL -o wiki_en.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22
 ```
 
 Each JSONL file contains one JSON object per line with fields: `id`, `title`, `text` (paragraph content), `url`, `wiki_id`, and `paragraph_id`.
+
+### CC-100 Corpus
+
+The [CC-100](https://data.statmt.org/cc-100/) corpus provides large monolingual text files (1-80 GB) for 100+ languages, extracted from Common Crawl.
+Files are XZ-compressed plain text with documents separated by double-newlines.
+
+| Workload                    | Relevant Scripts                  | Best Test Languages                                  |
+| --------------------------- | --------------------------------- | ---------------------------------------------------- |
+| __Case Folding__            | Latin, Cyrillic, Greek, Armenian  | Turkish (İ/i), German (ß→SS), Greek (ς→Σ), Russian   |
+| __Normalization__           | Indic, Arabic, Vietnamese, Korean | Vietnamese, Hindi, Korean, Arabic                    |
+| __Whitespace Tokenization__ | Most scripts except CJK/Thai      | English, Russian, Arabic vs. Chinese, Japanese, Thai |
+| __Grapheme Clusters__       | Indic, Thai, Khmer, Myanmar       | Thai, Tamil, Myanmar, Khmer                          |
+| __RTL Handling__            | Arabic, Hebrew                    | Arabic, Hebrew, Persian                              |
+
+__Bicameral scripts__ with various case folding rules:
+
+```bash
+curl -fL https://data.statmt.org/cc-100/en.txt.xz | xz -d > cc100_en.txt      # 82 GB - English
+curl -fL https://data.statmt.org/cc-100/de.txt.xz | xz -d > cc100_de.txt      # 18 GB - German (ß→SS)
+curl -fL https://data.statmt.org/cc-100/tr.txt.xz | xz -d > cc100_tr.txt      # 5.4 GB - Turkish (İ/i)
+curl -fL https://data.statmt.org/cc-100/ru.txt.xz | xz -d > cc100_ru.txt      # 46 GB - Russian
+curl -fL https://data.statmt.org/cc-100/uk.txt.xz | xz -d > cc100_uk.txt      # 14 GB - Ukrainian
+curl -fL https://data.statmt.org/cc-100/el.txt.xz | xz -d > cc100_el.txt      # 7.4 GB - Greek (final σ)
+curl -fL https://data.statmt.org/cc-100/hy.txt.xz | xz -d > cc100_hy.txt      # 776 MB - Armenian
+curl -fL https://data.statmt.org/cc-100/ka.txt.xz | xz -d > cc100_ka.txt      # 1.1 GB - Georgian
+curl -fL https://data.statmt.org/cc-100/pl.txt.xz | xz -d > cc100_pl.txt      # 12 GB - Polish
+curl -fL https://data.statmt.org/cc-100/cs.txt.xz | xz -d > cc100_cs.txt      # 4.4 GB - Czech
+curl -fL https://data.statmt.org/cc-100/nl.txt.xz | xz -d > cc100_nl.txt      # 7.9 GB - Dutch
+curl -fL https://data.statmt.org/cc-100/fr.txt.xz | xz -d > cc100_fr.txt      # 14 GB - French
+curl -fL https://data.statmt.org/cc-100/es.txt.xz | xz -d > cc100_es.txt      # 14 GB - Spanish
+curl -fL https://data.statmt.org/cc-100/pt.txt.xz | xz -d > cc100_pt.txt      # 13 GB - Portuguese
+curl -fL https://data.statmt.org/cc-100/it.txt.xz | xz -d > cc100_it.txt      # 7.8 GB - Italian
+```
+
+__Unicameral scripts__ without case folding, but with other normalization/segmentation challenges:
+
+```bash
+curl -fL https://data.statmt.org/cc-100/ar.txt.xz | xz -d > cc100_ar.txt      # 5.4 GB - Arabic (RTL)
+curl -fL https://data.statmt.org/cc-100/he.txt.xz | xz -d > cc100_he.txt      # 6.1 GB - Hebrew (RTL)
+curl -fL https://data.statmt.org/cc-100/fa.txt.xz | xz -d > cc100_fa.txt      # 20 GB - Persian (RTL)
+curl -fL https://data.statmt.org/cc-100/hi.txt.xz | xz -d > cc100_hi.txt      # 2.5 GB - Hindi (Devanagari)
+curl -fL https://data.statmt.org/cc-100/bn.txt.xz | xz -d > cc100_bn.txt      # 860 MB - Bengali
+curl -fL https://data.statmt.org/cc-100/ta.txt.xz | xz -d > cc100_ta.txt      # 1.3 GB - Tamil
+curl -fL https://data.statmt.org/cc-100/te.txt.xz | xz -d > cc100_te.txt      # 536 MB - Telugu
+curl -fL https://data.statmt.org/cc-100/th.txt.xz | xz -d > cc100_th.txt      # 8.7 GB - Thai (no spaces)
+curl -fL https://data.statmt.org/cc-100/vi.txt.xz | xz -d > cc100_vi.txt      # 28 GB - Vietnamese
+curl -fL https://data.statmt.org/cc-100/zh-Hans.txt.xz | xz -d > cc100_zh.txt # 14 GB - Chinese
+curl -fL https://data.statmt.org/cc-100/ja.txt.xz | xz -d > cc100_ja.txt      # 15 GB - Japanese
+curl -fL https://data.statmt.org/cc-100/ko.txt.xz | xz -d > cc100_ko.txt      # 14 GB - Korean (Jamo)
+curl -fL https://data.statmt.org/cc-100/my.txt.xz | xz -d > cc100_my.txt      # 46 MB - Myanmar
+curl -fL https://data.statmt.org/cc-100/km.txt.xz | xz -d > cc100_km.txt      # 153 MB - Khmer
+curl -fL https://data.statmt.org/cc-100/am.txt.xz | xz -d > cc100_am.txt      # 133 MB - Amharic (Ethiopic)
+curl -fL https://data.statmt.org/cc-100/si.txt.xz | xz -d > cc100_si.txt      # 452 MB - Sinhala
+```
+
+### Leipzig Corpora Collection
+
+The [Leipzig Corpora Collection](https://wortschatz.uni-leipzig.de/en/download/) provides pre-segmented sentences in 200+ languages.
+Each tar.gz contains `*-sentences.txt` (tab-separated `id\tsentence`), `*-words.txt` (frequencies), and co-occurrence files.
+Standard sizes: 10K, 30K, 100K, 300K, 1M sentences. Check for newer years at the download page.
+
+__Bicameral scripts__ with various case folding rules:
+
+```bash
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/eng_wikipedia_2016_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/eng_wikipedia_2016_1M-sentences.txt' | cut -f2 > leipzig1M_en.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/deu_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/deu_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_de.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tur_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/tur_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_tr.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/rus_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/rus_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ru.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ukr_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ukr_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_uk.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ell_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ell_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_el.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/hye_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/hye_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_hy.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/kat_wikipedia_2021_300K.tar.gz | tar --wildcards -xzf - --to-stdout '*/kat_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_ka.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/pol_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/pol_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pl.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ces_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ces_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_cs.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/nld_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/nld_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_nl.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/fra_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/fra_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_fr.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/spa_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/spa_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_es.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/por_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/por_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pt.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ita_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ita_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_it.txt
+```
+
+__Unicameral scripts__ without case folding, but with other normalization/segmentation challenges:
+
+```bash
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ara_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ara_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ar.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/heb_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/heb_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_he.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/fas_wikipedia_2014_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/fas_wikipedia_2014_1M-sentences.txt' | cut -f2 > leipzig1M_fa.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/hin_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/hin_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_hi.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ben_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ben_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_bn.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tam_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/tam_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ta.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tel_wikipedia_2021_300K.tar.gz | tar --wildcards -xzf - --to-stdout '*/tel_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_te.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tha_wikipedia_2021_10K.tar.gz | tar --wildcards -xzf - --to-stdout '*/tha_wikipedia_2021_10K-sentences.txt' | cut -f2 > leipzig10K_th.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/vie_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/vie_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_vi.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/zho_wikipedia_2018_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/zho_wikipedia_2018_1M-sentences.txt' | cut -f2 > leipzig1M_zh.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/jpn_wikipedia_2018_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/jpn_wikipedia_2018_1M-sentences.txt' | cut -f2 > leipzig1M_ja.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/kor_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/kor_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ko.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/amh_wikipedia_2021_30K.tar.gz | tar --wildcards -xzf - --to-stdout '*/amh_wikipedia_2021_30K-sentences.txt' | cut -f2 > leipzig30K_am.txt
+```
 
 ### DNA Corpus
 

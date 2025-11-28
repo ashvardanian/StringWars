@@ -3,11 +3,8 @@
 /__pycache__
 
 # Datasets
-/acgt_*.txt
 /xlsum.csv
-/leipzig1M.txt
-/wiki_zh.jsonl
-/wiki_ko.jsonl
-/wiki_ar.jsonl
-/wiki_fr.jsonl
-/wiki_en.jsonl
+/leipzig*.txt
+/cc100_*.txt
+/wiki_*.jsonl
+/acgt_*.txt
