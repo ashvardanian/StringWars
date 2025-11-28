@@ -57,7 +57,7 @@ use stringzilla::szs::{
 };
 
 mod utils;
-use utils::{load_dataset, should_run, CupsWallTime};
+use utils::{install_panic_hook, load_dataset, should_run, CupsWallTime, ResultExt};
 
 // Pull some metadata logging functionality
 use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
@@ -210,7 +210,7 @@ fn chars_tape_slice<'a>(
 
 fn bench_similarities(c: &mut Criterion<CupsWallTime>) {
     // Load dataset using unified loader
-    let tape_bytes = load_dataset();
+    let tape_bytes = load_dataset().unwrap_nice();
     let tape = tape_bytes
         .as_chars()
         .expect("Dataset must be valid UTF-8 for similarities");
@@ -1182,6 +1182,7 @@ fn perform_affine_benchmarks(
 }
 
 fn main() {
+    install_panic_hook();
     log_stringzilla_metadata();
     let mut criterion = configure_bench();
     bench_similarities(&mut criterion);

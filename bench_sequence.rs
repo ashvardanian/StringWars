@@ -43,7 +43,9 @@ use rayon::prelude::*;
 use stringzilla::sz;
 
 mod utils;
-use utils::{load_dataset, reclaim_memory, should_run, ComparisonsWallTime};
+use utils::{
+    install_panic_hook, load_dataset, reclaim_memory, should_run, ComparisonsWallTime, ResultExt,
+};
 
 fn log_stringzilla_metadata() {
     let v = sz::version();
@@ -239,13 +241,11 @@ fn bench_argsort(
 }
 
 fn main() {
+    install_panic_hook();
     log_stringzilla_metadata();
 
-    // Load the dataset defined by the environment variables, and panic if the content is missing
-    let tokens_bytes = load_dataset();
-    if tokens_bytes.is_empty() {
-        panic!("No tokens found in the dataset.");
-    }
+    // Load the dataset defined by the environment variables
+    let tokens_bytes = load_dataset().unwrap_nice();
     // Leak BytesCowsAuto to get 'static lifetime, then cast to CharsCowsAuto for UTF-8 string benchmarks
     let tokens_bytes_static: &'static _ = Box::leak(Box::new(tokens_bytes));
     let tokens = tokens_bytes_static

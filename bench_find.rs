@@ -46,7 +46,7 @@ use regex::bytes::Regex;
 use stringzilla::sz;
 
 mod utils;
-use utils::{load_dataset, should_run};
+use utils::{install_panic_hook, load_dataset, should_run, ResultExt};
 
 fn log_stringzilla_metadata() {
     let v = sz::version();
@@ -331,13 +331,11 @@ fn bench_byteset_forward(
 }
 
 fn main() {
+    install_panic_hook();
     log_stringzilla_metadata();
 
-    // Load the dataset defined by the environment variables, and panic if the content is missing
-    let tape = load_dataset();
-    if tape.is_empty() {
-        panic!("No tokens found in the dataset.");
-    }
+    // Load the dataset defined by the environment variables
+    let tape = load_dataset().unwrap_nice();
 
     // Get the parent data directly from the tape (zero-copy)
     let haystack = tape.parent();

@@ -59,7 +59,10 @@ use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version}
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
 mod utils;
-use utils::{load_dataset, set_fingerprints_bytes_per_hash, should_run, HashesWallTime};
+use utils::{
+    install_panic_hook, load_dataset, set_fingerprints_bytes_per_hash, should_run, HashesWallTime,
+    ResultExt,
+};
 
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
@@ -173,7 +176,7 @@ fn configure_bench() -> Criterion<HashesWallTime> {
 
 fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     // Load dataset using unified loader
-    let tape_bytes = load_dataset();
+    let tape_bytes = load_dataset().unwrap_nice();
     let tape = tape_bytes
         .as_chars()
         .expect("Dataset must be valid UTF-8 for fingerprinting");
@@ -192,10 +195,6 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(256);
-
-    if tape.is_empty() {
-        panic!("Dataset must contain at least one token for fingerprinting.");
-    }
 
     if batch_size == 0 {
         panic!("STRINGWARS_BATCH must be greater than zero for fingerprinting benchmarks.");
@@ -609,6 +608,7 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
 }
 
 fn main() {
+    install_panic_hook();
     log_stringzilla_metadata();
     println!("Text Fingerprinting Benchmarks");
     println!("- szs::Fingerprints: CPU/GPU fingerprints with multi-width byte n-grams");

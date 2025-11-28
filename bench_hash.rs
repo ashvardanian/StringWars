@@ -91,7 +91,7 @@ use cityhash;
 use gxhash;
 
 mod utils;
-use utils::{load_dataset, should_run};
+use utils::{install_panic_hook, load_dataset, should_run, ResultExt};
 
 /// Counts collisions for a given hash function using a bitset sized to the number of unique tokens
 fn count_collisions<F>(unique_tokens: &[&[u8]], hash_fn: F) -> usize
@@ -547,13 +547,11 @@ fn bench_stateful(
 }
 
 fn main() {
+    install_panic_hook();
     log_stringzilla_metadata();
 
-    // Load the dataset defined by the environment variables, and panic if the content is missing
-    let tape = load_dataset();
-    if tape.is_empty() {
-        panic!("No tokens found in the dataset.");
-    }
+    // Load the dataset defined by the environment variables
+    let tape = load_dataset().unwrap_nice();
 
     let mut criterion = configure_bench();
 
