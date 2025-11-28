@@ -30,10 +30,10 @@ bench_find = [
     "aho-corasick", # Byteset search
 ]
 bench_unicode = [
-    "icu",          # Unicode properties (WhiteSpace, etc.)
-    "simdutf",      # SIMD UTF-8 validation and transcoding
-    "unicase",      # Case-insensitive string wrapper
-    "focaccia",     # Unicode case folding
+    "icu",      # Unicode properties (WhiteSpace, etc.)
+    "simdutf",  # SIMD UTF-8 validation and transcoding
+    "unicase",  # Case-insensitive string wrapper
+    "focaccia", # Unicode case folding
 ]
 bench_hash = [
     "bit-set",      # for collision counting

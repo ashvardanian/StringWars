@@ -520,11 +520,14 @@ Not all Wikipedia languages are available, but the following have been selected 
 To download and decompress one file from each language:
 
 ```bash
+curl -fL -o wiki_en.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/en/000.jsonl.gz && gunzip wiki_en.jsonl.gz
 curl -fL -o wiki_zh.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/zh/000.jsonl.gz && gunzip wiki_zh.jsonl.gz
 curl -fL -o wiki_ko.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/ko/000.jsonl.gz && gunzip wiki_ko.jsonl.gz
 curl -fL -o wiki_ar.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/ar/000.jsonl.gz && gunzip wiki_ar.jsonl.gz
 curl -fL -o wiki_fr.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/fr/000.jsonl.gz && gunzip wiki_fr.jsonl.gz
-curl -fL -o wiki_en.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/en/000.jsonl.gz && gunzip wiki_en.jsonl.gz
+curl -fL -o wiki_de.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/de/000.jsonl.gz && gunzip wiki_de.jsonl.gz
+curl -fL -o wiki_es.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/es/000.jsonl.gz && gunzip wiki_es.jsonl.gz
+curl -fL -o wiki_it.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/it/000.jsonl.gz && gunzip wiki_it.jsonl.gz
 ```
 
 Each JSONL file contains one JSON object per line with fields: `id`, `title`, `text` (paragraph content), `url`, `wiki_id`, and `paragraph_id`.
@@ -592,39 +595,39 @@ Standard sizes: 10K, 30K, 100K, 300K, 1M sentences. Check for newer years at the
 __Bicameral scripts__ with various case folding rules:
 
 ```bash
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/eng_wikipedia_2016_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/eng_wikipedia_2016_1M-sentences.txt' | cut -f2 > leipzig1M_en.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/deu_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/deu_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_de.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/tur_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/tur_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_tr.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/rus_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/rus_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ru.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/ukr_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ukr_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_uk.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/ell_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ell_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_el.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/hye_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/hye_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_hy.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/kat_wikipedia_2021_300K.tar.gz | tar --wildcards -xzf - --to-stdout '*/kat_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_ka.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/pol_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/pol_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pl.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/ces_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ces_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_cs.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/nld_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/nld_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_nl.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/fra_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/fra_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_fr.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/spa_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/spa_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_es.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/por_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/por_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pt.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/ita_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ita_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_it.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/eng_wikipedia_2016_1M.tar.gz | tar -xzf - -O 'eng_wikipedia_2016_1M/eng_wikipedia_2016_1M-sentences.txt' | cut -f2 > leipzig1M_en.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/deu_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'deu_wikipedia_2021_1M/deu_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_de.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tur_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'tur_wikipedia_2021_1M/tur_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_tr.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/rus_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'rus_wikipedia_2021_1M/rus_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ru.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ukr_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ukr_wikipedia_2021_1M/ukr_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_uk.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ell_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ell_wikipedia_2021_1M/ell_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_el.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/hye_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'hye_wikipedia_2021_1M/hye_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_hy.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/kat_wikipedia_2021_300K.tar.gz | tar -xzf - -O 'kat_wikipedia_2021_300K/kat_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_ka.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/pol_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'pol_wikipedia_2021_1M/pol_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pl.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ces_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ces_wikipedia_2021_1M/ces_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_cs.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/nld_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'nld_wikipedia_2021_1M/nld_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_nl.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/fra_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'fra_wikipedia_2021_1M/fra_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_fr.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/spa_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'spa_wikipedia_2021_1M/spa_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_es.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/por_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'por_wikipedia_2021_1M/por_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pt.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ita_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ita_wikipedia_2021_1M/ita_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_it.txt
 ```
 
 __Unicameral scripts__ without case folding, but with other normalization/segmentation challenges:
 
 ```bash
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/ara_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ara_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ar.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/heb_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/heb_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_he.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/fas_wikipedia_2014_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/fas_wikipedia_2014_1M-sentences.txt' | cut -f2 > leipzig1M_fa.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/hin_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/hin_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_hi.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/ben_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/ben_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_bn.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/tam_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/tam_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ta.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/tel_wikipedia_2021_300K.tar.gz | tar --wildcards -xzf - --to-stdout '*/tel_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_te.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/tha_wikipedia_2021_10K.tar.gz | tar --wildcards -xzf - --to-stdout '*/tha_wikipedia_2021_10K-sentences.txt' | cut -f2 > leipzig10K_th.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/vie_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/vie_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_vi.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/zho_wikipedia_2018_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/zho_wikipedia_2018_1M-sentences.txt' | cut -f2 > leipzig1M_zh.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/jpn_wikipedia_2018_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/jpn_wikipedia_2018_1M-sentences.txt' | cut -f2 > leipzig1M_ja.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/kor_wikipedia_2021_1M.tar.gz | tar --wildcards -xzf - --to-stdout '*/kor_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ko.txt
-curl -fL https://downloads.wortschatz-leipzig.de/corpora/amh_wikipedia_2021_30K.tar.gz | tar --wildcards -xzf - --to-stdout '*/amh_wikipedia_2021_30K-sentences.txt' | cut -f2 > leipzig30K_am.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ara_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ara_wikipedia_2021_1M/ara_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ar.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/heb_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'heb_wikipedia_2021_1M/heb_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_he.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/fas_wikipedia_2014_1M.tar.gz | tar -xzf - -O 'fas_wikipedia_2014_1M/fas_wikipedia_2014_1M-sentences.txt' | cut -f2 > leipzig1M_fa.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/hin_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'hin_wikipedia_2021_1M/hin_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_hi.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ben_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ben_wikipedia_2021_1M/ben_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_bn.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tam_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'tam_wikipedia_2021_1M/tam_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ta.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tel_wikipedia_2021_300K.tar.gz | tar -xzf - -O 'tel_wikipedia_2021_300K/tel_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_te.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tha_wikipedia_2021_10K.tar.gz | tar -xzf - -O 'tha_wikipedia_2021_10K/tha_wikipedia_2021_10K-sentences.txt' | cut -f2 > leipzig10K_th.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/vie_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'vie_wikipedia_2021_1M/vie_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_vi.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/zho_wikipedia_2018_1M.tar.gz | tar -xzf - -O 'zho_wikipedia_2018_1M/zho_wikipedia_2018_1M-sentences.txt' | cut -f2 > leipzig1M_zh.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/jpn_wikipedia_2018_1M.tar.gz | tar -xzf - -O 'jpn_wikipedia_2018_1M/jpn_wikipedia_2018_1M-sentences.txt' | cut -f2 > leipzig1M_ja.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/kor_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'kor_wikipedia_2021_1M/kor_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ko.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/amh_wikipedia_2021_30K.tar.gz | tar -xzf - -O 'amh_wikipedia_2021_30K/amh_wikipedia_2021_30K-sentences.txt' | cut -f2 > leipzig30K_am.txt
 ```
 
 ### DNA Corpus
