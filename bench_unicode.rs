@@ -64,10 +64,6 @@ fn configure_bench() -> Criterion {
         .measurement_time(Duration::from_secs(20)) // Actual measurement time.
 }
 
-// ============================================================================
-// Tokenization Benchmarks (moved from bench_find.rs)
-// ============================================================================
-
 /// Benchmarks Unicode whitespace splitting using ICU, stdlib, and StringZilla.
 fn bench_tokenize_whitespace(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
@@ -160,10 +156,6 @@ fn bench_tokenize_newlines(
         });
     }
 }
-
-// ============================================================================
-// UTF-8 Processing Benchmarks (moved from bench_find.rs)
-// ============================================================================
 
 /// Benchmarks UTF-8 character counting using StringZilla, simdutf, and stdlib.
 fn bench_utf8_length(
@@ -269,14 +261,11 @@ fn bench_utf8_iterate(
     }
 }
 
-// ============================================================================
-// Case Folding Benchmarks (new)
-// ============================================================================
-
 /// Benchmarks case folding transformation throughput.
-/// Note: True Unicode case folding (as per Unicode Standard) may expand characters
-/// (e.g., German ß -> ss). stdlib's to_lowercase() provides locale-independent lowercasing,
-/// while to_uppercase() provides uppercasing. Both are benchmarked here.
+///
+/// Unicode case folding may expand characters (e.g., German ß -> ss).
+/// - `stringzilla::utf8_case_fold()`: Full Unicode case folding per Unicode Standard
+/// - `stdlib::to_lowercase()`: Full Unicode lowercasing (locale-independent, allocates)
 fn bench_case_fold(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     haystack: &[u8],
@@ -286,7 +275,21 @@ fn bench_case_fold(
 
     let haystack_str = std::str::from_utf8(haystack).unwrap();
 
-    // Benchmark for stdlib to_lowercase (Unicode-aware).
+    // Pre-allocate buffer for StringZilla case folding (3x for worst-case expansion)
+    let mut fold_buffer = vec![0u8; haystack.len() * 3];
+
+    // Benchmark for StringZilla case folding (full Unicode).
+    if should_run("case-fold/stringzilla::utf8_case_fold()") {
+        g.bench_function("stringzilla::utf8_case_fold()", |b| {
+            b.iter(|| {
+                let input = black_box(haystack);
+                let len = sz::utf8_case_fold(input, &mut fold_buffer);
+                black_box(len);
+            })
+        });
+    }
+
+    // Benchmark for stdlib to_lowercase (full Unicode, allocates).
     if should_run("case-fold/stdlib::to_lowercase()") {
         g.bench_function("stdlib::to_lowercase()", |b| {
             b.iter(|| {
@@ -296,33 +299,7 @@ fn bench_case_fold(
             })
         });
     }
-
-    // Benchmark for stdlib to_uppercase (Unicode-aware).
-    if should_run("case-fold/stdlib::to_uppercase()") {
-        g.bench_function("stdlib::to_uppercase()", |b| {
-            b.iter(|| {
-                let input = black_box(haystack_str);
-                let uppered = input.to_uppercase();
-                black_box(uppered);
-            })
-        });
-    }
-
-    // Benchmark for ASCII-only case folding (much faster, limited to ASCII).
-    if should_run("case-fold/stdlib::to_ascii_lowercase()") {
-        g.bench_function("stdlib::to_ascii_lowercase()", |b| {
-            b.iter(|| {
-                let input = black_box(haystack);
-                let lowered = input.to_ascii_lowercase();
-                black_box(lowered);
-            })
-        });
-    }
 }
-
-// ============================================================================
-// Case-Insensitive Comparison Benchmarks (new)
-// ============================================================================
 
 /// Benchmarks case-insensitive string equality comparison.
 fn bench_case_insensitive_compare(
@@ -345,6 +322,21 @@ fn bench_case_insensitive_compare(
     // Total bytes compared (both sides of each pair)
     let total_bytes: usize = pairs.iter().map(|(a, b)| a.len() + b.len()).sum();
     g.throughput(Throughput::Bytes(total_bytes as u64));
+
+    // Benchmark for StringZilla case-insensitive comparison.
+    if should_run("case-insensitive-compare/stringzilla::utf8_case_insensitive_order()") {
+        g.bench_function("stringzilla::utf8_case_insensitive_order()", |b| {
+            b.iter(|| {
+                let mut matches = 0usize;
+                for (left, right) in &pairs {
+                    if sz::utf8_case_insensitive_order(left, right) == std::cmp::Ordering::Equal {
+                        matches += 1;
+                    }
+                }
+                black_box(matches);
+            })
+        });
+    }
 
     // Benchmark for unicase equality.
     if should_run("case-insensitive-compare/unicase::eq()") {
@@ -398,10 +390,6 @@ fn bench_case_insensitive_compare(
     }
 }
 
-// ============================================================================
-// Case-Insensitive Find Benchmarks (new)
-// ============================================================================
-
 /// Benchmarks case-insensitive substring search.
 fn bench_case_insensitive_find(
     g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
@@ -428,8 +416,26 @@ fn bench_case_insensitive_find(
         (haystack.len() * search_needles.len()) as u64,
     ));
 
-    // Benchmark for regex case-insensitive search.
-    if should_run("case-insensitive-find/regex::is_match(case_insensitive)") {
+    // Benchmark for StringZilla case-insensitive find (count all matches).
+    if should_run("case-insensitive-find/stringzilla::utf8_case_insensitive_find()") {
+        g.bench_function("stringzilla::utf8_case_insensitive_find()", |b| {
+            b.iter(|| {
+                let hay = black_box(haystack);
+                let mut total_matches = 0usize;
+                for needle in &search_needles {
+                    let mut remaining = hay;
+                    while let Some((offset, _)) = sz::utf8_case_insensitive_find(remaining, needle) {
+                        total_matches += 1;
+                        remaining = &remaining[offset + 1..];
+                    }
+                }
+                black_box(total_matches);
+            })
+        });
+    }
+
+    // Benchmark for regex case-insensitive search (count all matches).
+    if should_run("case-insensitive-find/regex::find_iter(case_insensitive)") {
         // Pre-compile regexes for fair comparison
         let regexes: Vec<_> = search_needles
             .iter()
@@ -442,37 +448,37 @@ fn bench_case_insensitive_find(
             })
             .collect();
 
-        g.bench_function("regex::is_match(case_insensitive)", |b| {
+        g.bench_function("regex::find_iter(case_insensitive)", |b| {
             b.iter(|| {
                 let hay = black_box(haystack);
-                let mut found = 0usize;
+                let mut total_matches = 0usize;
                 for re in &regexes {
-                    if re.is_match(hay) {
-                        found += 1;
-                    }
+                    total_matches += re.find_iter(hay).count();
                 }
-                black_box(found);
+                black_box(total_matches);
             })
         });
     }
 
-    // Benchmark for stdlib lowercase + contains (baseline).
-    if should_run("case-insensitive-find/stdlib::to_lowercase().contains()") {
+    // Benchmark for stdlib lowercase + find (count all matches).
+    if should_run("case-insensitive-find/stdlib::to_lowercase().find()") {
         // Pre-lowercase haystack once
         let haystack_lower = haystack_str.to_lowercase();
         // Pre-lowercase needles
         let needles_lower: Vec<String> = search_needles.iter().map(|s| s.to_lowercase()).collect();
 
-        g.bench_function("stdlib::to_lowercase().contains()", |b| {
+        g.bench_function("stdlib::to_lowercase().find()", |b| {
             b.iter(|| {
-                let hay = black_box(&haystack_lower);
-                let mut found = 0usize;
+                let hay = black_box(haystack_lower.as_str());
+                let mut total_matches = 0usize;
                 for needle in &needles_lower {
-                    if hay.contains(needle.as_str()) {
-                        found += 1;
+                    let mut start = 0;
+                    while let Some(pos) = hay[start..].find(needle.as_str()) {
+                        total_matches += 1;
+                        start += pos + 1;
                     }
                 }
-                black_box(found);
+                black_box(total_matches);
             })
         });
     }

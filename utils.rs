@@ -807,10 +807,6 @@ impl Measurement for ComparisonsWallTime {
     }
 }
 
-// ============================================================================
-// Perf profiling utilities for comprehensive hardware counter collection
-// ============================================================================
-
 /// RAII guard that profiles a code section using perf events on Linux.
 /// On non-Linux platforms, this is a zero-cost abstraction.
 #[allow(dead_code)]
