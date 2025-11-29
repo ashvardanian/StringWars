@@ -396,27 +396,49 @@ fn bench_case_insensitive_find(
     haystack: &[u8],
     needles: &BytesCowsAuto,
 ) {
+    use rand::prelude::IndexedRandom;
+    use rand::SeedableRng;
+
+    // Limit haystack size to 10MB for case-insensitive search (it's O(n*m) with Unicode folding)
+    const MAX_HAYSTACK_SIZE: usize = 10 * 1024 * 1024;
+    let haystack = if haystack.len() > MAX_HAYSTACK_SIZE {
+        // Find a valid UTF-8 boundary near the limit
+        let mut end = MAX_HAYSTACK_SIZE;
+        while end > 0 && (haystack[end] & 0xC0) == 0x80 {
+            end -= 1;
+        }
+        &haystack[..end]
+    } else {
+        haystack
+    };
+
     let haystack_str = std::str::from_utf8(haystack).unwrap();
 
-    // Take a subset of needles for searching (first 100 non-empty tokens with len >= 3)
-    let search_needles: Vec<&str> = needles
+    // Collect candidate needles (valid UTF-8, length >= 3)
+    let candidates: Vec<&str> = needles
         .iter()
         .filter_map(|n| std::str::from_utf8(n).ok())
         .filter(|s| s.len() >= 3)
-        .take(100)
         .collect();
 
-    if search_needles.is_empty() {
+    if candidates.is_empty() {
         eprintln!("Warning: No suitable needles for case-insensitive find benchmarks");
         return;
     }
 
-    // Each iteration searches the haystack once per needle
+    // Random-sample 100 needles with fixed seed for reproducibility
+    let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+    let search_needles: Vec<&str> = candidates
+        .choose_multiple(&mut rng, 100.min(candidates.len()))
+        .copied()
+        .collect();
+
+    // Throughput: each iteration searches for first match of each needle
     g.throughput(Throughput::Bytes(
         (haystack.len() * search_needles.len()) as u64,
     ));
 
-    // Benchmark for StringZilla case-insensitive find (count all matches).
+    // Benchmark for StringZilla case-insensitive find (all matches).
     if should_run("case-insensitive-find/stringzilla::utf8_case_insensitive_find()") {
         g.bench_function("stringzilla::utf8_case_insensitive_find()", |b| {
             b.iter(|| {
@@ -424,9 +446,11 @@ fn bench_case_insensitive_find(
                 let mut total_matches = 0usize;
                 for needle in &search_needles {
                     let mut remaining = hay;
-                    while let Some((offset, _)) = sz::utf8_case_insensitive_find(remaining, needle) {
+                    while let Some((offset, len)) =
+                        sz::utf8_case_insensitive_find(remaining, needle)
+                    {
                         total_matches += 1;
-                        remaining = &remaining[offset + 1..];
+                        remaining = &remaining[offset + len.max(1)..];
                     }
                 }
                 black_box(total_matches);
@@ -434,7 +458,7 @@ fn bench_case_insensitive_find(
         });
     }
 
-    // Benchmark for regex case-insensitive search (count all matches).
+    // Benchmark for regex case-insensitive search (all matches).
     if should_run("case-insensitive-find/regex::find_iter(case_insensitive)") {
         // Pre-compile regexes for fair comparison
         let regexes: Vec<_> = search_needles
@@ -450,7 +474,7 @@ fn bench_case_insensitive_find(
 
         g.bench_function("regex::find_iter(case_insensitive)", |b| {
             b.iter(|| {
-                let hay = black_box(haystack);
+                let hay: &[u8] = black_box(haystack);
                 let mut total_matches = 0usize;
                 for re in &regexes {
                     total_matches += re.find_iter(hay).count();
@@ -460,22 +484,22 @@ fn bench_case_insensitive_find(
         });
     }
 
-    // Benchmark for stdlib lowercase + find (count all matches).
+    // Benchmark for stdlib: lowercase haystack + needle for each search, find all matches.
+    // This is the fair comparison - includes full allocation and case folding cost per search.
     if should_run("case-insensitive-find/stdlib::to_lowercase().find()") {
-        // Pre-lowercase haystack once
-        let haystack_lower = haystack_str.to_lowercase();
-        // Pre-lowercase needles
-        let needles_lower: Vec<String> = search_needles.iter().map(|s| s.to_lowercase()).collect();
-
         g.bench_function("stdlib::to_lowercase().find()", |b| {
             b.iter(|| {
-                let hay = black_box(haystack_lower.as_str());
+                let haystack_str = black_box(haystack_str);
                 let mut total_matches = 0usize;
-                for needle in &needles_lower {
-                    let mut start = 0;
-                    while let Some(pos) = hay[start..].find(needle.as_str()) {
+                for needle in &search_needles {
+                    let hay = haystack_str.to_lowercase();
+                    let needle_lower = needle.to_lowercase();
+                    // Work on the lowercased string slice to avoid UTF-8 boundary issues
+                    let mut remaining: &str = &hay;
+                    while let Some(pos) = remaining.find(&needle_lower) {
                         total_matches += 1;
-                        start += pos + 1;
+                        // Advance past the match (at least 1 byte to avoid infinite loop)
+                        remaining = &remaining[pos + needle_lower.len().max(1)..];
                     }
                 }
                 black_box(total_matches);
