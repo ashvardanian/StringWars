@@ -403,6 +403,7 @@ curl -fL https://downloads.wortschatz-leipzig.de/corpora/fra_wikipedia_2021_1M.t
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/spa_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'spa_wikipedia_2021_1M/spa_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_es.txt
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/por_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'por_wikipedia_2021_1M/por_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pt.txt
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/ita_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ita_wikipedia_2021_1M/ita_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_it.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/lit_wikipedia_2021_300K.tar.gz | tar -xzf - -O 'lit_wikipedia_2021_300K/lit_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_lt.txt
 ```
 
 __Unicameral scripts__ without case folding, but with other normalization/segmentation challenges:
