@@ -1,6 +1,6 @@
 # /// script
 # dependencies = [
-#   "stringzilla",
+#   "stringzilla>=4.4.0",
 #   "regex",
 #   "PyICU",
 # ]
@@ -31,17 +31,12 @@ import sys
 from importlib.metadata import version as pkg_version
 from typing import List, Tuple, Optional
 
+import icu
 import regex
 import stringzilla as sz
 
 from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, should_run
 
-# Try to import PyICU, gracefully degrade if not available
-try:
-    import icu
-    PYICU_AVAILABLE = True
-except ImportError:
-    PYICU_AVAILABLE = False
 
 
 def log_system_info():
@@ -49,10 +44,7 @@ def log_system_info():
     print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
     print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
     print(f"- regex: {pkg_version('regex')}")
-    if PYICU_AVAILABLE:
-        print(f"- PyICU: {pkg_version('PyICU')} (ICU {icu.ICU_VERSION})")
-    else:
-        print("- PyICU: not available")
+    print(f"- PyICU: {pkg_version('PyICU')} (ICU {icu.ICU_VERSION})")
     print()
 
 
@@ -120,17 +112,11 @@ def compare_regex_fullcase(s1: str, s2: str) -> bool:
     return pattern.fullmatch(s2) is not None
 
 
-def make_compare_icu() -> callable:
-    """Create ICU case-folded comparison function."""
-    if not PYICU_AVAILABLE:
-        return None
-
-    def compare_icu(s1: str, s2: str) -> bool:
-        folded1 = icu.UnicodeString(s1).foldCase()
-        folded2 = icu.UnicodeString(s2).foldCase()
-        return folded1 == folded2
-
-    return compare_icu
+def compare_icu(s1: str, s2: str) -> bool:
+    """Compare using ICU case folding."""
+    folded1 = icu.UnicodeString(s1).foldCase()
+    folded2 = icu.UnicodeString(s2).foldCase()
+    return folded1 == folded2
 
 
 def compare_stringzilla(s1: str, s2: str) -> bool:
@@ -207,27 +193,19 @@ def find_regex_fullcase(haystack: str, needle: str) -> int:
     return len(pattern.findall(haystack))
 
 
-def make_find_icu() -> callable:
-    """Create ICU case-insensitive search function."""
-    if not PYICU_AVAILABLE:
-        return None
-
-    def find_icu(haystack: str, needle: str) -> int:
-        """Count occurrences using ICU StringSearch."""
-        if not needle:
-            return 0
-        # Use ICU's StringSearch for case-insensitive matching
-        collator = icu.Collator.createInstance(icu.Locale.getRoot())
-        collator.setStrength(icu.Collator.SECONDARY)  # Case-insensitive
-        searcher = icu.StringSearch(needle, haystack, collator)
-        count = 0
+def find_icu(haystack: str, needle: str) -> int:
+    """Count occurrences using ICU StringSearch."""
+    if not needle:
+        return 0
+    collator = icu.Collator.createInstance(icu.Locale.getRoot())
+    collator.setStrength(icu.Collator.SECONDARY)  # Case-insensitive
+    searcher = icu.StringSearch(needle, haystack, collator)
+    count = 0
+    pos = searcher.nextMatch()
+    while pos != -1:
+        count += 1
         pos = searcher.nextMatch()
-        while pos != -1:
-            count += 1
-            pos = searcher.nextMatch()
-        return count
-
-    return find_icu
+    return count
 
 
 def find_stringzilla(haystack: str, needle: str) -> int:
@@ -237,11 +215,11 @@ def find_stringzilla(haystack: str, needle: str) -> int:
     count = 0
     start = 0
     while True:
-        pos = sz.utf8_case_insensitive_find(haystack, needle, start)
+        pos = sz.utf8_case_insensitive_find(haystack[start:], needle)
         if pos == -1:
             break
         count += 1
-        start = pos + 1
+        start += pos + 1
     return count
 
 
@@ -295,15 +273,9 @@ def fold_stringzilla(s: str) -> bytes:
     return sz.utf8_case_fold(s)
 
 
-def make_fold_icu() -> callable:
-    """Create ICU case folding function."""
-    if not PYICU_AVAILABLE:
-        return None
-
-    def fold_icu(s: str) -> str:
-        return str(icu.UnicodeString(s).foldCase())
-
-    return fold_icu
+def fold_icu(s: str) -> str:
+    """Fold using ICU case folding."""
+    return str(icu.UnicodeString(s).foldCase())
 
 
 _main_epilog = """
@@ -363,40 +335,35 @@ def main():
     print(f"Pairs: {total_pairs:,}, Search needles: {len(search_needles)}")
     log_system_info()
 
-    # Prepare ICU functions if available
-    compare_icu = make_compare_icu()
-    find_icu = make_find_icu()
-    fold_icu = make_fold_icu()
-
     # === Case-Insensitive Comparison ===
     print("=== Case-Insensitive Comparison ===")
-    if should_run("sz.utf8_case_insensitive_order", filter_pattern):
+    if should_run("case-insensitive-compare/sz", filter_pattern):
         bench_case_compare("sz.utf8_case_insensitive_order", pairs, compare_stringzilla, args.time_limit)
-    if should_run("str.casefold().eq()", filter_pattern):
+    if should_run("case-insensitive-compare/str", filter_pattern):
         bench_case_compare("str.casefold().eq()", pairs, compare_casefold, args.time_limit)
-    if should_run("regex.fullmatch(FULLCASE)", filter_pattern):
+    if should_run("case-insensitive-compare/regex", filter_pattern):
         bench_case_compare("regex.fullmatch(FULLCASE)", pairs, compare_regex_fullcase, args.time_limit)
-    if PYICU_AVAILABLE and compare_icu and should_run("icu.CaseMap.foldCase().eq()", filter_pattern):
+    if should_run("case-insensitive-compare/icu", filter_pattern):
         bench_case_compare("icu.CaseMap.foldCase().eq()", pairs, compare_icu, args.time_limit)
 
     # === Case-Insensitive Substring Search ===
     print("\n=== Case-Insensitive Substring Search ===")
-    if should_run("sz.utf8_case_insensitive_find", filter_pattern):
+    if should_run("case-insensitive-find/sz", filter_pattern):
         bench_case_find("sz.utf8_case_insensitive_find", pythonic_str, search_needles, find_stringzilla, args.time_limit)
-    if should_run("str.casefold().find()", filter_pattern):
+    if should_run("case-insensitive-find/str", filter_pattern):
         bench_case_find("str.casefold().find()", pythonic_str, search_needles, find_casefold, args.time_limit)
-    if should_run("regex.search(FULLCASE)", filter_pattern):
+    if should_run("case-insensitive-find/regex", filter_pattern):
         bench_case_find("regex.search(FULLCASE)", pythonic_str, search_needles, find_regex_fullcase, args.time_limit)
-    if PYICU_AVAILABLE and find_icu and should_run("icu.StringSearch", filter_pattern):
+    if should_run("case-insensitive-find/icu", filter_pattern):
         bench_case_find("icu.StringSearch", pythonic_str, search_needles, find_icu, args.time_limit)
 
     # === Case Folding Transformation ===
     print("\n=== Case Folding Transformation ===")
-    if should_run("sz.utf8_case_fold()", filter_pattern):
+    if should_run("case-fold/sz", filter_pattern):
         bench_case_fold("sz.utf8_case_fold()", tokens, fold_stringzilla, args.time_limit)
-    if should_run("str.casefold()", filter_pattern):
+    if should_run("case-fold/str", filter_pattern):
         bench_case_fold("str.casefold()", tokens, fold_casefold, args.time_limit)
-    if PYICU_AVAILABLE and fold_icu and should_run("icu.CaseMap.foldCase()", filter_pattern):
+    if should_run("case-fold/icu", filter_pattern):
         bench_case_fold("icu.CaseMap.foldCase()", tokens, fold_icu, args.time_limit)
 
     return 0
