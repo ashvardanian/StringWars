@@ -9,38 +9,38 @@ That's true not only for strings but for any data type, and StringZilla has been
 
 ## Random Byte Generation
 
-| Library                        |    Short Words |      Long Lines |
-| ------------------------------ | -------------: | --------------: |
-| Rust                           |                |                 |
-| `getrandom::fill`              |     0.18 GiB/s |      0.45 GiB/s |
-| `rand_chacha::ChaCha20Rng`     |     0.62 GiB/s |      1.85 GiB/s |
-| `rand_xoshiro::Xoshiro128Plus` |     0.83 GiB/s |      3.85 GiB/s |
-| `zeroize::zeroize`             |     0.66 GiB/s |      4.73 GiB/s |
-| `stringzilla::fill_random`     | __2.47 GiB/s__ | __10.57 GiB/s__ |
-|                                |                |                 |
-| Python                         |                |                 |
-| `numpy.PCG64`                  |     0.01 GiB/s |      1.28 GiB/s |
-| `numpy.Philox`                 |     0.01 GiB/s |      1.59 GiB/s |
-| `pycryptodome.AES-CTR`         |     0.01 GiB/s |     13.16 GiB/s |
-| `stringzilla.random`           | __0.11 GiB/s__ | __20.37 GiB/s__ |
+| Library                        |   Short Words |     Long Lines |
+| ------------------------------ | ------------: | -------------: |
+| Rust                           |               |                |
+| `getrandom::fill`              |     0.18 GB/s |      0.45 GB/s |
+| `rand_chacha::ChaCha20Rng`     |     0.62 GB/s |      1.85 GB/s |
+| `rand_xoshiro::Xoshiro128Plus` |     0.83 GB/s |      3.85 GB/s |
+| `zeroize::zeroize`             |     0.66 GB/s |      4.73 GB/s |
+| `stringzilla::fill_random`     | **2.47 GB/s** | **10.57 GB/s** |
+|                                |               |                |
+| Python                         |               |                |
+| `numpy.PCG64`                  |     0.01 GB/s |      1.28 GB/s |
+| `numpy.Philox`                 |     0.01 GB/s |      1.59 GB/s |
+| `pycryptodome.AES-CTR`         |     0.01 GB/s |     13.16 GB/s |
+| `stringzilla.random`           | **0.11 GB/s** | **20.37 GB/s** |
 
 ## Lookup Tables
 
 Performing in-place lookups in a precomputed table of 256 bytes:
 
-| Library                         |    Short Words |     Long Lines |
-| ------------------------------- | -------------: | -------------: |
-| Rust                            |                |                |
-| serial code                     | __0.61 GiB/s__ |     1.49 GiB/s |
-| `stringzilla::lookup_inplace`   |     0.54 GiB/s | __9.90 GiB/s__ |
-|                                 |                |                |
-| Python                          |                |                |
-| `bytes.translate`               |     0.05 GiB/s |     1.92 GiB/s |
-| `numpy.take`                    |     0.01 GiB/s |     0.85 GiB/s |
-| `opencv.LUT`                    |     0.01 GiB/s |     1.95 GiB/s |
-| `opencv.LUT` inplace            |     0.01 GiB/s |     2.16 GiB/s |
-| `stringzilla.translate`         |     0.07 GiB/s |     7.92 GiB/s |
-| `stringzilla.translate` inplace | __0.06 GiB/s__ | __8.14 GiB/s__ |
+| Library                         |   Short Words |    Long Lines |
+| ------------------------------- | ------------: | ------------: |
+| Rust                            |               |               |
+| serial code                     | **0.61 GB/s** |     1.49 GB/s |
+| `stringzilla::lookup_inplace`   |     0.54 GB/s | **9.90 GB/s** |
+|                                 |               |               |
+| Python                          |               |               |
+| `bytes.translate`               |     0.05 GB/s |     1.92 GB/s |
+| `numpy.take`                    |     0.01 GB/s |     0.85 GB/s |
+| `opencv.LUT`                    |     0.01 GB/s |     1.95 GB/s |
+| `opencv.LUT` inplace            |     0.01 GB/s |     2.16 GB/s |
+| `stringzilla.translate`         |     0.07 GB/s |     7.92 GB/s |
+| `stringzilla.translate` inplace | **0.06 GB/s** | **8.14 GB/s** |
 
 ---
 

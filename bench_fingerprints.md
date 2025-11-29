@@ -19,19 +19,19 @@ Adjusting all implementations to the same tokenization scheme, one may experienc
 
 | Library                                  |  ~100 bytes lines | ~1,000 bytes lines |
 | ---------------------------------------- | ----------------: | -----------------: |
-| serial `<ByteGrams>` on 1x SPR           |        0.44 MiB/s |         0.47 MiB/s |
+| serial `<ByteGrams>` on 1x SPR           |         0.44 MB/s |          0.47 MB/s |
 |                                          | 92.81% collisions |  94.58% collisions |
 |                                          |    0.8528 entropy |     0.7979 entropy |
 |                                          |                   |                    |
-| `pc::MinHash<ByteGrams>` on 1x SPR       |        2.41 MiB/s |         3.16 MiB/s |
+| `pc::MinHash<ByteGrams>` on 1x SPR       |         2.41 MB/s |          3.16 MB/s |
 |                                          | 91.80% collisions |  93.17% collisions |
 |                                          |    0.9343 entropy |     0.8779 entropy |
 |                                          |                   |                    |
-| `stringzillas::Fingerprints` on 1x SPR   |        0.56 MiB/s |         0.51 MiB/s |
-| `stringzillas::Fingerprints` on 16x SPR  |        6.62 MiB/s |         8.03 MiB/s |
-| `stringzillas::Fingerprints` on 384x GNR |  __231.13 MiB/s__ |   __302.30 MiB/s__ |
-| `stringzillas::Fingerprints` on RTX6000  |     __138 MiB/s__ |       162.99 MiB/s |
-| `stringzillas::Fingerprints` on H100     |      102.07 MiB/s |   __392.37 MiB/s__ |
+| `stringzillas::Fingerprints` on 1x SPR   |         0.56 MB/s |          0.51 MB/s |
+| `stringzillas::Fingerprints` on 16x SPR  |         6.62 MB/s |          8.03 MB/s |
+| `stringzillas::Fingerprints` on 384x GNR |   **231.13 MB/s** |    **302.30 MB/s** |
+| `stringzillas::Fingerprints` on RTX6000  |      **138 MB/s** |        162.99 MB/s |
+| `stringzillas::Fingerprints` on H100     |       102.07 MB/s |    **392.37 MB/s** |
 |                                          | 86.80% collisions |  93.21% collisions |
 |                                          |    0.9992 entropy |     0.9967 entropy |
 

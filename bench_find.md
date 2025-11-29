@@ -14,14 +14,14 @@ The C standard library is, however, also implemented by humans, and a better sol
 | Library             | Short Word Queries | Long Line Queries |
 | ------------------- | -----------------: | ----------------: |
 | Rust                |                    |                   |
-| `std::str::find`    |         9.45 GiB/s |       10.88 GiB/s |
-| `memmem::find`      |         9.48 GiB/s |       10.83 GiB/s |
-| `memmem::Finder`    |         9.51 GiB/s |   __10.99 GiB/s__ |
-| `stringzilla::find` |    __10.51 GiB/s__ |       10.82 GiB/s |
+| `std::str::find`    |          9.45 GB/s |        10.88 GB/s |
+| `memmem::find`      |          9.48 GB/s |        10.83 GB/s |
+| `memmem::Finder`    |          9.51 GB/s |    **10.99 GB/s** |
+| `stringzilla::find` |     **10.51 GB/s** |        10.82 GB/s |
 |                     |                    |                   |
 | Python              |                    |                   |
-| `str.find`          |         1.05 GiB/s |        1.23 GiB/s |
-| `stringzilla.find`  |    __10.82 GiB/s__ |   __11.79 GiB/s__ |
+| `str.find`          |          1.05 GB/s |         1.23 GB/s |
+| `stringzilla.find`  |     **10.82 GB/s** |    **11.79 GB/s** |
 
 ### Reverse Search (rfind)
 
@@ -31,14 +31,14 @@ Still, those are provided by StringZilla mostly for parsing tasks and feature pa
 | Library              | Short Word Queries | Long Line Queries |
 | -------------------- | -----------------: | ----------------: |
 | Rust                 |                    |                   |
-| `std::str::rfind`    |         2.72 GiB/s |        5.94 GiB/s |
-| `memmem::rfind`      |         2.70 GiB/s |        5.90 GiB/s |
-| `memmem::FinderRev`  |         2.79 GiB/s |        5.81 GiB/s |
-| `stringzilla::rfind` |    __10.34 GiB/s__ |   __10.66 GiB/s__ |
+| `std::str::rfind`    |          2.72 GB/s |         5.94 GB/s |
+| `memmem::rfind`      |          2.70 GB/s |         5.90 GB/s |
+| `memmem::FinderRev`  |          2.79 GB/s |         5.81 GB/s |
+| `stringzilla::rfind` |     **10.34 GB/s** |    **10.66 GB/s** |
 |                      |                    |                   |
 | Python               |                    |                   |
-| `str.rfind`          |         1.54 GiB/s |        3.84 GiB/s |
-| `stringzilla.rfind`  |     __7.15 GiB/s__ |   __11.56 GiB/s__ |
+| `str.rfind`          |          1.54 GB/s |         3.84 GB/s |
+| `stringzilla.rfind`  |      **7.15 GB/s** |    **11.56 GB/s** |
 
 ## Byte-Set Search
 
@@ -51,17 +51,17 @@ StringWars takes a few representative examples of various character sets that ap
 It's common in such cases, to pre-construct some library-specific filter-object or Finite State Machine (FSM) to search for a set of characters.
 Once that object is constructed, all of its inclusions in each token (word or line) are counted.
 
-| Library                         |    Short Words |     Long Lines |
-| ------------------------------- | -------------: | -------------: |
-| Rust                            |                |                |
-| `bstr::iter`                    |     0.26 GiB/s |     0.25 GiB/s |
-| `regex::find_iter`              |     0.23 GiB/s |     5.22 GiB/s |
-| `aho_corasick::find_iter`       |     0.41 GiB/s |     0.50 GiB/s |
-| `stringzilla::find_byteset`     | __1.61 GiB/s__ | __8.17 GiB/s__ |
-|                                 |                |                |
-| Python                          |                |                |
-| `re.finditer`                   |     0.04 GiB/s |     0.19 GiB/s |
-| `stringzilla.Str.find_first_of` | __0.11 GiB/s__ | __8.79 GiB/s__ |
+| Library                         |   Short Words |    Long Lines |
+| ------------------------------- | ------------: | ------------: |
+| Rust                            |               |               |
+| `bstr::iter`                    |     0.26 GB/s |     0.25 GB/s |
+| `regex::find_iter`              |     0.23 GB/s |     5.22 GB/s |
+| `aho_corasick::find_iter`       |     0.41 GB/s |     0.50 GB/s |
+| `stringzilla::find_byteset`     | **1.61 GB/s** | **8.17 GB/s** |
+|                                 |               |               |
+| Python                          |               |               |
+| `re.finditer`                   |     0.04 GB/s |     0.19 GB/s |
+| `stringzilla.Str.find_first_of` | **0.11 GB/s** | **8.79 GB/s** |
 
 ---
 

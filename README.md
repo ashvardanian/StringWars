@@ -4,10 +4,10 @@
 
 ![StringWars Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
 
-There are many __great__ libraries for string processing!
+There are many **great** libraries for string processing!
 Mostly, of course, written in Assembly, C, and C++, but some in Rust as well.
 
-Where Rust decimates C and C++, is the __simplicity__ of dependency management, making it great for benchmarking "Systems Software" and lining up apples-to-apples across native crates and their Python bindings.
+Where Rust decimates C and C++, is the **simplicity** of dependency management, making it great for benchmarking "Systems Software" and lining up apples-to-apples across native crates and their Python bindings.
 So, to accelerate the development of the [`StringZilla`](https://github.com/ashvardanian/StringZilla) C, C++, and CUDA libraries (with Rust and Python bindings), I've created this repository to compare it against some of my & communities most beloved Rust projects, like:
 
 - [`memchr`](https://github.com/BurntSushi/memchr) for substring search.
@@ -24,7 +24,7 @@ Notably, I also favor modern hardware with support for a wider range SIMD instru
 
 > [!IMPORTANT]  
 > The numbers in the tables below are provided for reference only and may vary depending on the CPU, compiler, dataset, and tokenization method.
-> Most of them were obtained on Intel Sapphire Rapids __(SPR)__ and Granite Rapids __(GNR)__ CPUs and Nvidia Hopper-based __H100__ and Blackwell-based __RTX 6000__ Pro GPUs, using Rust with `-C target-cpu=native` optimization flag.
+> Most of them were obtained on Intel Sapphire Rapids **(SPR)** and Granite Rapids **(GNR)** CPUs and Nvidia Hopper-based **H100** and Blackwell-based **RTX 6000** Pro GPUs, using Rust with `-C target-cpu=native` optimization flag.
 > To replicate the results, please refer to the [Replicating the Results](#replicating-the-results) section below.
 
 ## Benchmarks at a Glance
@@ -37,15 +37,15 @@ Throughput on short words and long lines:
 ```
                     Short Words                  Long Lines
 Rust:
-stringzilla::hash   ████████████████████ 1.84    ████████████████████ 11.38 GiB/s
-aHash::hash_one     █████████████▍       1.23    ███████████████▏      8.61 GiB/s
-xxh3::xxh3_64       ███████████▊         1.08    ████████████████▋     9.48 GiB/s
-std::hash           ████▋                0.43    ██████▌               3.74 GiB/s
+stringzilla::hash   ████████████████████ 1.84    ████████████████████ 11.38 GB/s
+aHash::hash_one     █████████████▍       1.23    ███████████████▏      8.61 GB/s
+xxh3::xxh3_64       ███████████▊         1.08    ████████████████▋     9.48 GB/s
+std::hash           ████▋                0.43    ██████▌               3.74 GB/s
 
 Python:
-stringzilla.hash    ████████████████████ 0.14    ████████████████████  9.19 GiB/s
-hash                ██████████████████▌  0.13    █████████▎            4.27 GiB/s
-xxhash.xxh3_64      █████▋               0.04    █████████████▉        6.38 GiB/s
+stringzilla.hash    ████████████████████ 0.14    ████████████████████  9.19 GB/s
+hash                ██████████████████▌  0.13    █████████▎            4.27 GB/s
+xxhash.xxh3_64      █████▋               0.04    █████████████▉        6.38 GB/s
 ```
 
 See [bench_hash.md](bench_hash.md) for details
@@ -59,12 +59,12 @@ Throughput on long lines:
                     Left to right                Reverse order
 Rust:
 memmem::Finder      ████████████████████ 10.99
-stringzilla         ███████████████████▋ 10.82   ████████████████████ 10.66 GiB/s
-std::str            ███████████████████▊ 10.88   ███████████▏          5.94 GiB/s
+stringzilla         ███████████████████▋ 10.82   ████████████████████ 10.66 GB/s
+std::str            ███████████████████▊ 10.88   ███████████▏          5.94 GB/s
 
 Python:
-stringzilla         ████████████████████ 11.79   ████████████████████ 11.56 GiB/s
-str                 ██                    1.23   ██████▋               3.84 GiB/s
+stringzilla         ████████████████████ 11.79   ████████████████████ 11.56 GB/s
+str                 ██                    1.23   ██████▋               3.84 GB/s
 ```
 
 See [bench_find.md](bench_find.md) for details
@@ -76,13 +76,13 @@ Throughput counting all matches on long lines:
 
 ```
 Rust:
-stringzilla         ████████████████████   8.17 GiB/s
-regex::find_iter    ████████████▊          5.22 GiB/s
-aho_corasick        █▏                     0.50 GiB/s
+stringzilla         ████████████████████   8.17 GB/s
+regex::find_iter    ████████████▊          5.22 GB/s
+aho_corasick        █▏                     0.50 GB/s
 
 Python:
-stringzilla         ████████████████████   8.79 GiB/s
-re.finditer         ▍                      0.19 GiB/s
+stringzilla         ████████████████████   8.79 GB/s
+re.finditer         ▍                      0.19 GB/s
 ```
 
 See [bench_find.md](bench_find.md) for details
@@ -95,14 +95,35 @@ Throughput on AMD Zen5 Turin:
 ```
                       English                     Arabic
 Newline splitting:
-stringzilla           ████████████████ 15.45      ████████████████████ 18.34 GiB/s
-stdlib                ██                1.90      ██                    1.82 GiB/s
+stringzilla           ████████████████ 15.45      ████████████████████ 18.34 GB/s
+stdlib                ██                1.90      ██                    1.82 GB/s
 
                       English                     Korean
 Whitespace splitting:
-stringzilla           ████████████████████ 0.82   ████████████████████ 1.88 GiB/s
-stdlib                ██████████████████▊  0.77   ██████████▍          0.98 GiB/s
-icu::WhiteSpace       ██▋                  0.11   █▌                   0.15 GiB/s
+stringzilla           ████████████████████ 0.82   ████████████████████ 1.88 GB/s
+stdlib                ██████████████████▊  0.77   ██████████▍          0.98 GB/s
+icu::WhiteSpace       ██▋                  0.11   █▌                   0.15 GB/s
+```
+
+Case folding on bicameral scripts (Latin, Cyrillic, Greek, Armenian) plus Chinese for reference:
+
+```
+                      English 16x                 German 6x
+Case folding:
+stringzilla           ████████████████████ 7.53   ████████████████████ 2.59 GB/s
+stdlib                ██▌                  0.48   ███▎                 0.43 GB/s
+
+                      Russian 10x                 French 5x
+stringzilla           ████████████████████ 2.20   ████████████████████ 1.84 GB/s
+stdlib                ██                   0.22   ███▊                 0.35 GB/s
+
+                      Greek 5x                    Armenian 4x
+stringzilla           ████████████████████ 1.00   ████████████████████  908 MB/s
+stdlib                ████▍                0.22   ████▉                 223 MB/s
+
+                      Vietnamese 1.3x             Chinese 4x
+stringzilla           ████████████████████  352   ████████████████████ 1.21 GB/s
+stdlib                █████████████▏        265   █████▍                325 MB/s
 ```
 
 See [bench_unicode.md](bench_unicode.md) for details
@@ -127,7 +148,7 @@ pyarrow.sort        █████▌                 62.17 M cmp/s
 list.sort           ████▏                  47.06 M cmp/s
 ```
 
-GPU: `cudf` on H100 reaches __9,463 M cmp/s__ on short words.
+GPU: `cudf` on H100 reaches **9,463 M cmp/s** on short words.
 
 See [bench_sequence.md](bench_sequence.md) for details
 
@@ -138,14 +159,14 @@ Throughput on long lines:
 
 ```
 Rust:
-stringzilla         ████████████████████  10.57 GiB/s
-zeroize             ████████▉              4.73 GiB/s
-rand_xoshiro        ███████▎               3.85 GiB/s
+stringzilla         ████████████████████  10.57 GB/s
+zeroize             ████████▉              4.73 GB/s
+rand_xoshiro        ███████▎               3.85 GB/s
 
 Python:
-stringzilla         ████████████████████  20.37 GiB/s
-pycryptodome        ████████████▉         13.16 GiB/s
-numpy.Philox        █▌                     1.59 GiB/s
+stringzilla         ████████████████████  20.37 GB/s
+pycryptodome        ████████████▉         13.16 GB/s
+numpy.Philox        █▌                     1.59 GB/s
 ```
 
 See [bench_memory.md](bench_memory.md) for details
@@ -177,8 +198,8 @@ Throughput on ~1,000 byte lines:
                         1 Core                       1 Socket
 Rust:
 pc::MinHash             ████████████████████   3.16
-stringzilla (384x GNR)  ███▏                   0.51  ███████████████▍      302.30 MiB/s
-stringzilla (H100)                                   ████████████████████  392.37 MiB/s
+stringzilla (384x GNR)  ███▏                   0.51  ███████████████▍      302.30 MB/s
+stringzilla (H100)                                   ████████████████████  392.37 MB/s
 ```
 
 See [bench_fingerprints.md](bench_fingerprints.md) for details
@@ -189,9 +210,9 @@ ChaCha20 and AES256 encryption throughput comparison on long lines:
 
 ```
 Rust:
-ring::aes256        ████████████████████   2.89 GiB/s
-ring::chacha20      ████████▏              1.19 GiB/s
-libsodium::chacha20 █████                  0.71 GiB/s
+ring::aes256        ████████████████████   2.89 GB/s
+ring::chacha20      ████████▏              1.19 GB/s
+libsodium::chacha20 █████                  0.71 GB/s
 ```
 
 See [bench_encryption.md](bench_encryption.md) for details
@@ -304,11 +325,11 @@ The Cohere Wikipedia dataset provides pre-processed JSONL files for different la
 This may be the optimal dataset for relative comparison of UTF-8 decoding and matching enginges in each individual environment.
 Not all Wikipedia languages are available, but the following have been selected specifically:
 
-- __Chinese (zh)__: 3-byte CJK characters, rare 1-byte punctuation
-- __Korean (ko)__: 3-byte Hangul syllables, frequent 1-byte punctuation
-- __Arabic (ar)__: 2-byte Arabic script, with regular 1-byte punctuation
-- __French (fr)__: Mixed 1-2 byte Latin with high diacritic density
-- __English (en)__: Mostly 1-byte ASCII baseline
+- **Chinese (zh)**: 3-byte CJK characters, rare 1-byte punctuation
+- **Korean (ko)**: 3-byte Hangul syllables, frequent 1-byte punctuation
+- **Arabic (ar)**: 2-byte Arabic script, with regular 1-byte punctuation
+- **French (fr)**: Mixed 1-2 byte Latin with high diacritic density
+- **English (en)**: Mostly 1-byte ASCII baseline
 
 To download and decompress one file from each language:
 
@@ -332,13 +353,13 @@ Files are XZ-compressed plain text with documents separated by double-newlines.
 
 | Workload                    | Relevant Scripts                  | Best Test Languages                                  |
 | --------------------------- | --------------------------------- | ---------------------------------------------------- |
-| __Case Folding__            | Latin, Cyrillic, Greek, Armenian  | Turkish (I/i), German (ss->SS), Greek, Russian       |
-| __Normalization__           | Indic, Arabic, Vietnamese, Korean | Vietnamese, Hindi, Korean, Arabic                    |
-| __Whitespace Tokenization__ | Most scripts except CJK/Thai      | English, Russian, Arabic vs. Chinese, Japanese, Thai |
-| __Grapheme Clusters__       | Indic, Thai, Khmer, Myanmar       | Thai, Tamil, Myanmar, Khmer                          |
-| __RTL Handling__            | Arabic, Hebrew                    | Arabic, Hebrew, Persian                              |
+| **Case Folding**            | Latin, Cyrillic, Greek, Armenian  | Turkish (I/i), German (ss->SS), Greek, Russian       |
+| **Normalization**           | Indic, Arabic, Vietnamese, Korean | Vietnamese, Hindi, Korean, Arabic                    |
+| **Whitespace Tokenization** | Most scripts except CJK/Thai      | English, Russian, Arabic vs. Chinese, Japanese, Thai |
+| **Grapheme Clusters**       | Indic, Thai, Khmer, Myanmar       | Thai, Tamil, Myanmar, Khmer                          |
+| **RTL Handling**            | Arabic, Hebrew                    | Arabic, Hebrew, Persian                              |
 
-__Bicameral scripts__ with various case folding rules:
+**Bicameral scripts** with various case folding rules:
 
 ```bash
 curl -fL https://data.statmt.org/cc-100/en.txt.xz | xz -d > cc100_en.txt      # 82 GB - English
@@ -358,7 +379,7 @@ curl -fL https://data.statmt.org/cc-100/pt.txt.xz | xz -d > cc100_pt.txt      # 
 curl -fL https://data.statmt.org/cc-100/it.txt.xz | xz -d > cc100_it.txt      # 7.8 GB - Italian
 ```
 
-__Unicameral scripts__ without case folding, but with other normalization/segmentation challenges:
+**Unicameral scripts** without case folding, but with other normalization/segmentation challenges:
 
 ```bash
 curl -fL https://data.statmt.org/cc-100/ar.txt.xz | xz -d > cc100_ar.txt      # 5.4 GB - Arabic (RTL)
@@ -385,7 +406,7 @@ The [Leipzig Corpora Collection](https://wortschatz.uni-leipzig.de/en/download/)
 Each tar.gz contains `*-sentences.txt` (tab-separated `id\tsentence`), `*-words.txt` (frequencies), and co-occurrence files.
 Standard sizes: 10K, 30K, 100K, 300K, 1M sentences. Check for newer years at the download page.
 
-__Bicameral scripts__ with various case folding rules:
+**Bicameral scripts** with various case folding rules:
 
 ```bash
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/eng_wikipedia_2016_1M.tar.gz | tar -xzf - -O 'eng_wikipedia_2016_1M/eng_wikipedia_2016_1M-sentences.txt' | cut -f2 > leipzig1M_en.txt
@@ -406,7 +427,7 @@ curl -fL https://downloads.wortschatz-leipzig.de/corpora/ita_wikipedia_2021_1M.t
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/lit_wikipedia_2021_300K.tar.gz | tar -xzf - -O 'lit_wikipedia_2021_300K/lit_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_lt.txt
 ```
 
-__Unicameral scripts__ without case folding, but with other normalization/segmentation challenges:
+**Unicameral scripts** without case folding, but with other normalization/segmentation challenges:
 
 ```bash
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/ara_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ara_wikipedia_2021_1M/ara_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ar.txt
