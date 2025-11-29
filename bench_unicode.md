@@ -6,11 +6,11 @@ Benchmarks for UTF-8 text processing, including whitespace and newline splitting
 
 Different scripts stress UTF-8 processing in different ways:
 
-- __Korean__: 3-byte Hangul syllables with single-byte whitespace between words - representative for tokenization workloads
-- __Chinese__: 3-byte CJK characters with rare whitespace - tests raw byte throughput
-- __Arabic__: 2-byte Arabic script with regular punctuation - good for newline splitting benchmarks
-- __French__: Mixed 1-2 byte Latin with high diacritic density
-- __English__: Mostly 1-byte ASCII baseline
+- **Korean**: 3-byte Hangul syllables with single-byte whitespace between words - representative for tokenization workloads
+- **Chinese**: 3-byte CJK characters with rare whitespace - tests raw byte throughput
+- **Arabic**: 2-byte Arabic script with regular punctuation - good for newline splitting benchmarks
+- **French**: Mixed 1-2 byte Latin with high diacritic density
+- **English**: Mostly 1-byte ASCII baseline
 
 ### AMD Zen5 Turin
 
@@ -44,21 +44,34 @@ On AMD Zen5 Turin CPUs on different datasets, StringZilla provides the following
 
 ### AMD Zen5 Turin
 
-| Language      | `stdlib` | `stringzilla` | Speedup |     | Language      | `stdlib` | `stringzilla` | Speedup |
-| :------------ | -------: | ------------: | ------: | --- | :------------ | -------: | ------------: | ------: |
-| Arabic 🇸🇦     | 232 MB/s |     1004 MB/s |    4.3x |     | Japanese 🇯🇵   | 330 MB/s |     3.51 GB/s |   10.9x |
-| Armenian 🇦🇲   | 223 MB/s |      908 MB/s |    4.1x |     | Korean 🇰🇷     | 314 MB/s |      861 MB/s |    2.7x |
-| Bengali 🇧🇩    | 314 MB/s |     6.17 GB/s |   20.1x |     | Lithuanian 🇱🇹 | 352 MB/s |      864 MB/s |    2.5x |
-| Chinese 🇨🇳    | 325 MB/s |     1.21 GB/s |    3.8x |     | Polish 🇵🇱     | 364 MB/s |      939 MB/s |    2.6x |
-| Czech 🇨🇿      | 322 MB/s |      827 MB/s |    2.6x |     | Portuguese 🇧🇷 | 395 MB/s |     2.38 GB/s |    6.2x |
-| Dutch 🇳🇱      | 471 MB/s |     4.73 GB/s |   10.3x |     | Russian 🇷🇺    | 217 MB/s |     2.20 GB/s |   10.4x |
-| English 🇬🇧    | 482 MB/s |     7.53 GB/s |   16.0x |     | Spanish 🇪🇸    | 414 MB/s |     2.38 GB/s |    5.9x |
-| Farsi 🇮🇷      | 235 MB/s |      858 MB/s |    3.7x |     | Tamil 🇮🇳      | 306 MB/s |     6.05 GB/s |   20.2x |
-| French 🇫🇷     | 346 MB/s |     1.84 GB/s |    5.4x |     | Turkish 🇹🇷    | 326 MB/s |      852 MB/s |    2.7x |
-| Georgian 🇬🇪   | 294 MB/s |      192 MB/s |    0.7x |     | Ukrainian 🇺🇦  | 217 MB/s |     2.09 GB/s |    9.9x |
-| German 🇩🇪     | 432 MB/s |     2.59 GB/s |    6.1x |     | Vietnamese 🇻🇳 | 265 MB/s |      352 MB/s |    1.3x |
-| Greek 🇬🇷      | 220 MB/s |     1.00 GB/s |    4.7x |     | Hebrew 🇮🇱     | 233 MB/s |     1.01 GB/s |    4.4x |
-| Hindi 🇮🇳      | 293 MB/s |     6.32 GB/s |   22.1x |     | Italian 🇮🇹    | 439 MB/s |     2.29 GB/s |    5.3x |
+| Language     | Standard 🦀 | StringZilla 🦀 |      | Standard 🐍 | StringZilla 🐍 |      |
+| :----------- | ---------: | ------------: | ---: | ---------: | ------------: | ---: |
+| English 🇬🇧    |   482 MB/s |     7.53 GB/s |  16x |   257 MB/s |     3.14 GB/s |  12x |
+| German 🇩🇪     |   432 MB/s |     2.59 GB/s |   6x |   260 MB/s |     1.81 GB/s |   7x |
+| Russian 🇷🇺    |   217 MB/s |     2.20 GB/s |  10x |   470 MB/s |     1.56 GB/s |   3x |
+| French 🇫🇷     |   346 MB/s |     1.84 GB/s |   5x |   274 MB/s |     1.37 GB/s |   5x |
+| Greek 🇬🇷      |   220 MB/s |     1.00 GB/s |   5x |   431 MB/s |      779 MB/s |   2x |
+| Armenian 🇦🇲   |   223 MB/s |      908 MB/s |   4x |   470 MB/s |      746 MB/s |   2x |
+| Vietnamese 🇻🇳 |   265 MB/s |      352 MB/s |   1x |   340 MB/s |      291 MB/s |   1x |
+| Arabic 🇸🇦     |   232 MB/s |     1004 MB/s |   4x |   467 MB/s |     1.80 GB/s |   4x |
+| Bengali 🇧🇩    |   314 MB/s |     6.17 GB/s |  20x |   694 MB/s |     2.91 GB/s |   4x |
+| Chinese 🇨🇳    |   325 MB/s |     1.21 GB/s |   4x |   697 MB/s |      886 MB/s |   1x |
+| Czech 🇨🇿      |   322 MB/s |      827 MB/s |   3x |   292 MB/s |      688 MB/s |   2x |
+| Dutch 🇳🇱      |   471 MB/s |     4.73 GB/s |  10x |   262 MB/s |     2.97 GB/s |  11x |
+| Farsi 🇮🇷      |   235 MB/s |      858 MB/s |   4x |   475 MB/s |     1.42 GB/s |   3x |
+| Georgian 🇬🇪   |   294 MB/s |      192 MB/s |   1x |   689 MB/s |      488 MB/s |   1x |
+| Hebrew 🇮🇱     |   233 MB/s |     1.01 GB/s |   4x |   473 MB/s |     1.86 GB/s |   4x |
+| Hindi 🇮🇳      |   293 MB/s |     6.32 GB/s |  22x |   682 MB/s |     3.14 GB/s |   5x |
+| Italian 🇮🇹    |   439 MB/s |     2.29 GB/s |   5x |   268 MB/s |     1.93 GB/s |   7x |
+| Japanese 🇯🇵   |   330 MB/s |     3.51 GB/s |  11x |   726 MB/s |     2.00 GB/s |   3x |
+| Korean 🇰🇷     |   314 MB/s |      861 MB/s |   3x |   623 MB/s |     2.80 GB/s |   4x |
+| Lithuanian 🇱🇹 |   352 MB/s |      864 MB/s |   2x |   274 MB/s |      728 MB/s |   3x |
+| Polish 🇵🇱     |   364 MB/s |      939 MB/s |   3x |   277 MB/s |      786 MB/s |   3x |
+| Portuguese 🇧🇷 |   395 MB/s |     2.38 GB/s |   6x |   270 MB/s |     1.79 GB/s |   7x |
+| Spanish 🇪🇸    |   414 MB/s |     2.38 GB/s |   6x |   272 MB/s |     1.80 GB/s |   7x |
+| Tamil 🇮🇳      |   306 MB/s |     6.05 GB/s |  20x |   712 MB/s |     3.03 GB/s |   4x |
+| Turkish 🇹🇷    |   326 MB/s |      852 MB/s |   3x |   284 MB/s |      706 MB/s |   2x |
+| Ukrainian 🇺🇦  |   217 MB/s |     2.09 GB/s |  10x |   476 MB/s |     1.58 GB/s |   3x |
 
 To rerun the benchmarks for all languages:
 
@@ -66,9 +79,11 @@ To rerun the benchmarks for all languages:
 RUSTFLAGS="-C target-cpu=native" cargo build --release --bench bench_unicode --features bench_unicode
 bin=$(find target/release/deps -name 'bench_unicode-*' -executable -type f | head -1)
 
-for f in leipzig1M_*.txt; do
+for f in leipzig1M_*.txt leipzig300K_*.txt; do
+  [ -f "$f" ] || continue
   echo "=== $f ==="
   STRINGWARS_DATASET="$f" STRINGWARS_TOKENS=file STRINGWARS_FILTER="case-fold" "$bin"
+  STRINGWARS_DATASET="$f" STRINGWARS_TOKENS=file STRINGWARS_FILTER="case-fold/" uv run bench_unicode.py
 done
 ```
 
