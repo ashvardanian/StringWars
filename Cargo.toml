@@ -14,7 +14,7 @@ categories = ["text-processing", "development-tools::profiling"]
 [dependencies]
 criterion = "0.7.0"
 stringtape = "2.4.0"
-stringzilla = { git = "https://github.com/ashvardanian/StringZilla.git", branch = "main-dev", default-features = false }
+stringzilla = { version = "4.4.0", default-features = false }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
@@ -34,6 +34,7 @@ bench_unicode = [
     "simdutf",  # SIMD UTF-8 validation and transcoding
     "unicase",  # Case-insensitive string wrapper
     "focaccia", # Unicode case folding
+    "rand",     # Random needle sampling
 ]
 bench_hash = [
     "bit-set",      # for collision counting
