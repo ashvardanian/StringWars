@@ -173,16 +173,16 @@ def main():
     log_system_info()
 
     print("\n=== Substring Search Benchmarks ===")
-    if should_run("str.find", filter_pattern):
-        bench_op("str.find", pythonic_str, tokens[::-1], count_find, args.time_limit)
-    if should_run("stringzilla.Str.find", filter_pattern):
-        bench_op("stringzilla.Str.find", stringzilla_str, tokens[::-1], count_find, args.time_limit)
-    if should_run("str.rfind", filter_pattern):
-        bench_op("str.rfind", pythonic_str, tokens, count_rfind, args.time_limit)
-    if should_run("stringzilla.Str.rfind", filter_pattern):
-        bench_op("stringzilla.Str.rfind", stringzilla_str, tokens, count_rfind, args.time_limit)
-    if should_run("pyahocorasick.iter", filter_pattern):
-        bench_op("pyahocorasick.iter", pythonic_str, tokens[::-1], count_aho, args.time_limit)
+    if should_run("substring-forward/std.str.find()", filter_pattern):
+        bench_op("std.str.find()", pythonic_str, tokens[::-1], count_find, args.time_limit)
+    if should_run("substring-forward/stringzilla.Str.find()", filter_pattern):
+        bench_op("stringzilla.Str.find()", stringzilla_str, tokens[::-1], count_find, args.time_limit)
+    if should_run("substring-backward/std.str.rfind()", filter_pattern):
+        bench_op("std.str.rfind()", pythonic_str, tokens, count_rfind, args.time_limit)
+    if should_run("substring-backward/stringzilla.Str.rfind()", filter_pattern):
+        bench_op("stringzilla.Str.rfind()", stringzilla_str, tokens, count_rfind, args.time_limit)
+    if should_run("substring-forward/pyahocorasick.iter()", filter_pattern):
+        bench_op("pyahocorasick.iter()", pythonic_str, tokens[::-1], count_aho, args.time_limit)
 
     print("\n=== Character Set Search ===")
     if args.tokens == "lines":
@@ -191,10 +191,10 @@ def main():
     else:
         re_chars = re.compile(r"[\t\n\r ]")  # whitespace: space, tab, LF, CR
         sz_chars = " \t\n\r"
-    if should_run("re.finditer", filter_pattern):
-        bench_op("re.finditer", pythonic_str, [re_chars], count_regex, args.time_limit)
-    if should_run("stringzilla.Str.find_first_of", filter_pattern):
-        bench_op("stringzilla.Str.find_first_of", stringzilla_str, [sz_chars], count_byteset, args.time_limit)
+    if should_run("byteset-forward/std.re.finditer()", filter_pattern):
+        bench_op("std.re.finditer()", pythonic_str, [re_chars], count_regex, args.time_limit)
+    if should_run("byteset-forward/stringzilla.Str.find_first_of()", filter_pattern):
+        bench_op("stringzilla.Str.find_first_of()", stringzilla_str, [sz_chars], count_byteset, args.time_limit)
 
     return 0
 

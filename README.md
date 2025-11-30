@@ -1,21 +1,22 @@
 # StringWars
 
-## Text Processing on CPUs & GPUs, in Python 🐍 & Rust 🦀
+## Text Processing on CPUs & GPUs, in Python & Rust
 
 ![StringWars Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
 
-There are many __great__ libraries for string processing!
-Mostly, of course, written in Assembly, C, and C++, but some in Rust as well. 😅
+There are many **great** libraries for string processing!
+Mostly, of course, written in Assembly, C, and C++, but some in Rust as well.
 
-Where Rust decimates C and C++, is the __simplicity__ of dependency management, making it great for benchmarking "Systems Software" and lining up apples-to-apples across native crates and their Python bindings.
+Where Rust decimates C and C++, is the **simplicity** of dependency management, making it great for benchmarking "Systems Software" and lining up apples-to-apples across native crates and their Python bindings.
 So, to accelerate the development of the [`StringZilla`](https://github.com/ashvardanian/StringZilla) C, C++, and CUDA libraries (with Rust and Python bindings), I've created this repository to compare it against some of my & communities most beloved Rust projects, like:
 
 - [`memchr`](https://github.com/BurntSushi/memchr) for substring search.
-- [`rapidfuzz`](https://github.com/rapidfuzz/rapidfuzz-rs) for edit distances.
-- [`aHash`](https://github.com/tkaitchuck/aHash) and [`crc32fast`](https://github.com/srijs/rust-crc32fast) for hashing.
-- [`aho_corasick`](https://github.com/BurntSushi/aho-corasick) and [`regex`](https://github.com/rust-lang/regex) for multi-search.
-- [`arrow`](https://github.com/apache/arrow-rs) and [`polars`](https://github.com/pola-rs/polars) for collections.
-- [`ring`](https://github.com/briansmith/ring) borrowing Asm from BoringSSL and OpenSSL.
+- [`rapidfuzz`](https://github.com/rapidfuzz/rapidfuzz-rs) and [`bio`](https://github.com/rust-bio/rust-bio) for edit distances and alignments.
+- [`aHash`](https://github.com/tkaitchuck/aHash), [`xxhash-rust`](https://github.com/DoumanAsh/xxhash-rust), [`foldhash`](https://github.com/orlp/foldhash), and [`blake3`](https://github.com/BLAKE3-team/BLAKE3) for hashing.
+- [`aho_corasick`](https://github.com/BurntSushi/aho-corasick) and [`regex`](https://github.com/rust-lang/regex) for multi-pattern search.
+- [`arrow`](https://github.com/apache/arrow-rs) and [`polars`](https://github.com/pola-rs/polars) for collections and sorting.
+- [`icu`](https://github.com/unicode-org/icu4x) for Unicode processing.
+- [`ring`](https://github.com/briansmith/ring) and [`sodiumoxide`](https://github.com/sodiumoxide/sodiumoxide) for encryption.
 
 Of course, the functionality of the projects is different, as are the APIs and the usage patterns.
 So, I focus on the workloads for which StringZilla was designed and compare the throughput of the core operations.
@@ -23,389 +24,202 @@ Notably, I also favor modern hardware with support for a wider range SIMD instru
 
 > [!IMPORTANT]  
 > The numbers in the tables below are provided for reference only and may vary depending on the CPU, compiler, dataset, and tokenization method.
-> Most of them were obtained on Intel Sapphire Rapids __(SNR)__ and Granite Rapids __(GNR)__ CPUs and Nvidia Hopper-based __H100__ and Blackwell-based __RTX 6000__ Pro GPUs, using Rust with `-C target-cpu=native` optimization flag.
+> Most of them were obtained on Intel Sapphire Rapids **(SPR)** and Granite Rapids **(GNR)** CPUs and Nvidia Hopper-based **H100** and Blackwell-based **RTX 6000** Pro GPUs, using Rust with `-C target-cpu=native` optimization flag.
 > To replicate the results, please refer to the [Replicating the Results](#replicating-the-results) section below.
 
-## Hash
+## Benchmarks at a Glance
 
-Many great hashing libraries exist in Rust, C, and C++.
-Typical top choices are `aHash`, `xxHash`, `blake3`, `gxhash`, `CityHash`, `MurmurHash`, `crc32fast`, or the native `std::hash`.
-Many of them have similar pitfalls:
+### Hash
 
-- They are not always documented to have a certain reproducible output and are recommended for use only for local in-memory construction of hash tables, not for serialization or network communication.
-- They don't always support streaming and require the whole input to be available in memory at once.
-- They don't always pass the SMHasher test suite, especially with `--extra` checks enabled.
-- They generally don't have a dynamic dispatch mechanism to simplify shipping of precompiled software.
-- They are rarely available for multiple programming languages.
+Many hashing libraries exist, but they often lack reproducible outputs, streaming support, or cross-language availability.
+Throughput on short words and long lines:
 
-StringZilla addresses those issues and seems to provide competitive performance.
-On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can be expected for hashing individual whitespace-delimited words and newline-delimited lines:
+```
+                    Short Words                  Long Lines
+Rust:
+stringzilla::hash   ████████████████████ 1.84    ████████████████████ 11.38 GB/s
+aHash::hash_one     █████████████▍       1.23    ███████████████▏      8.61 GB/s
+xxh3::xxh3_64       ███████████▊         1.08    ████████████████▋     9.48 GB/s
+std::hash           ████▋                0.43    ██████▌               3.74 GB/s
 
-| Library               | Bits  | Ports ¹ | Arm ² |    Short Words |      Long Lines |
-| --------------------- | :---: | :-----: | :---: | -------------: | --------------: |
-| Rust 🦀                |       |         |       |                |                 |
-| `std::hash`           |  64   |    ❌    |   ✅   |     0.43 GiB/s |      3.74 GiB/s |
-| `crc32fast::hash`     |  32   |    ✅    |   ✅   |     0.49 GiB/s |      8.45 GiB/s |
-| `xxh3::xxh3_64`       |  64   |    ✅    |   ✅   |     1.08 GiB/s |      9.48 GiB/s |
-| `aHash::hash_one`     |  64   |    ❌    |   ✅   |     1.23 GiB/s |      8.61 GiB/s |
-| `foldhash::hash_one`  |  64   |    ❌    |   ✅   |     1.02 GiB/s |      8.24 GiB/s |
-| `gxhash::gxhash64`    |  64   |    ❌    |   ❌   |     2.68 GiB/s |      9.19 GiB/s |
-| `stringzilla::hash`   |  64   |    ✅    |   ✅   | __1.84 GiB/s__ | __11.38 GiB/s__ |
-|                       |       |         |       |                |
-| Python 🐍              |       |         |       |                |
-| `hash`                | 32/64 |    ❌    |   ✅   |     0.13 GiB/s |      4.27 GiB/s |
-| `xxhash.xxh3_64`      |  64   |    ✅    |   ✅   |     0.04 GiB/s |      6.38 GiB/s |
-| `google_crc32c.value` |  32   |    ✅    |   ✅   |     0.04 GiB/s |      5.96 GiB/s |
-| `mmh3.hash32`         |  32   |    ✅    |   ✅   |     0.05 GiB/s |      2.65 GiB/s |
-| `mmh3.hash64`         |  64   |    ✅    |   ✅   |     0.03 GiB/s |      4.45 GiB/s |
-| `cityhash.CityHash64` |  64   |    ✅    |   ❌   |     0.06 GiB/s |      4.87 GiB/s |
-| `stringzilla.hash`    |  64   |    ✅    |   ✅   | __0.14 GiB/s__ |  __9.19 GiB/s__ |
+Python:
+stringzilla.hash    ████████████████████ 0.14    ████████████████████  9.19 GB/s
+hash                ██████████████████▌  0.13    █████████▎            4.27 GB/s
+xxhash.xxh3_64      █████▋               0.04    █████████████▉        6.38 GB/s
+```
 
+See [bench_hash.md](bench_hash.md) for details
 
-> ¹ Portability means availability in multiple other programming languages, like C, C++, Python, Java, Go, JavaScript, etc.
-> ² Most hash functions work on both x86 and Arm, as well as many other CPU architectures, but gxHash, and many MurMurHash and CityHash implementations don't.
+### Substring Search
 
-In larger systems, however, we often need the ability to incrementally hash the data.
-This is especially important in distributed systems, where the data is too large to fit into memory at once.
+Substring search is offloaded to C's `memmem` or `strstr` in most languages, but SIMD-optimized implementations can do better.
+Throughput on long lines:
 
-| Library                    | Bits  | Ports ¹ |    Short Words |      Long Lines |
-| -------------------------- | :---: | :-----: | -------------: | --------------: |
-| Rust 🦀                     |       |         |                |                 |
-| `std::hash::DefaultHasher` |  64   |    ❌    |     0.51 GiB/s |      3.92 GiB/s |
-| `aHash::AHasher`           |  64   |    ❌    | __1.30 GiB/s__ |      8.56 GiB/s |
-| `foldhash::FoldHasher`     |  64   |    ❌    |     1.27 GiB/s |      8.18 GiB/s |
-| `crc32fast::Hasher`        |  32   |    ✅    |     0.37 GiB/s |      8.39 GiB/s |
-| `stringzilla::Hasher`      |  64   |    ✅    |     0.89 GiB/s | __11.03 GiB/s__ |
-|                            |       |         |                |                 |
-| Python 🐍                   |       |         |                |                 |
-| `xxhash.xxh3_64`           |  64   |    ✅    |     0.09 GiB/s |       7.09 GB/s |
-| `google_crc32c.Checksum`   |  32   |    ✅    |     0.04 GiB/s |      5.96 GiB/s |
-| `stringzilla.Hasher`       |  64   |    ✅    | __0.35 GiB/s__ |   __6.04 GB/s__ |
+```
+                    Left to right                Reverse order
+Rust:
+memmem::Finder      ████████████████████ 10.99
+stringzilla         ███████████████████▋ 10.82   ████████████████████ 10.66 GB/s
+std::str            ███████████████████▊ 10.88   ███████████▏          5.94 GB/s
 
-For reference, one may want to put those numbers next to check-sum calculation speeds on one end of complexity and cryptographic hashing speeds on the other end.
+Python:
+stringzilla         ████████████████████ 11.79   ████████████████████ 11.56 GB/s
+str                 ██                    1.23   ██████▋               3.84 GB/s
+```
 
-| Library                | Bits  | Ports ¹ | Short Words |  Long Lines |
-| ---------------------- | :---: | :-----: | ----------: | ----------: |
-| Rust 🦀                 |       |         |             |             |
-| `stringzilla::bytesum` |  64   |    ✅    |  2.16 GiB/s | 11.65 GiB/s |
-| `blake3::hash`         |  256  |    ✅    |  0.10 GiB/s |  1.97 GiB/s |
-|                        |       |         |             |             |
-| Python 🐍               |       |         |             |             |
-| `stringzilla.bytesum`  |  64   |    ✅    |  0.16 GiB/s |  8.62 GiB/s |
-| `blake3.digest`        |  256  |    ✅    |  0.02 GiB/s |  1.82 GiB/s |
+See [bench_find.md](bench_find.md) for details
 
+### Byte-Set Search
 
-## Substring Search
+Searching for character sets (tabs, HTML markup, digits) commonly uses regex or Aho-Corasick automata.
+Throughput counting all matches on long lines:
 
-Substring search is one of the most common operations in text processing, and one of the slowest.
-Most of the time, programmers don't think about replacing the `str::find` method, as it's already expected to be optimized.
-In many languages it's offloaded to the C standard library [`memmem`](https://man7.org/linux/man-pages/man3/memmem.3.html) or [`strstr`](https://en.cppreference.com/w/c/string/byte/strstr) for `NULL`-terminated strings.
-The C standard library is, however, also implemented by humans, and a better solution can be created.
+```
+Rust:
+stringzilla         ████████████████████   8.17 GB/s
+regex::find_iter    ████████████▊          5.22 GB/s
+aho_corasick        █▏                     0.50 GB/s
 
-| Library             | Short Word Queries | Long Line Queries |
-| ------------------- | -----------------: | ----------------: |
-| Rust 🦀              |                    |                   |
-| `std::str::find`    |         9.45 GiB/s |       10.88 GiB/s |
-| `memmem::find`      |         9.48 GiB/s |       10.83 GiB/s |
-| `memmem::Finder`    |         9.51 GiB/s |   __10.99 GiB/s__ |
-| `stringzilla::find` |    __10.51 GiB/s__ |       10.82 GiB/s |
-|                     |                    |                   |
-| Python 🐍            |                    |                   |
-| `str.find`          |         1.05 GiB/s |        1.23 GiB/s |
-| `stringzilla.find`  |    __10.82 GiB/s__ |   __11.79 GiB/s__ |
+Python:
+stringzilla         ████████████████████   8.79 GB/s
+re.finditer         ▍                      0.19 GB/s
+```
 
-Interestingly, the reverse order search is almost never implemented in SIMD, assuming fewer people ever need it.
-Still, those are provided by StringZilla mostly for parsing tasks and feature parity.
+See [bench_find.md](bench_find.md) for details
 
-| Library              | Short Word Queries | Long Line Queries |
-| -------------------- | -----------------: | ----------------: |
-| Rust 🦀               |                    |                   |
-| `std::str::rfind`    |         2.72 GiB/s |        5.94 GiB/s |
-| `memmem::rfind`      |         2.70 GiB/s |        5.90 GiB/s |
-| `memmem::FinderRev`  |         2.79 GiB/s |        5.81 GiB/s |
-| `stringzilla::rfind` |    __10.34 GiB/s__ |   __10.66 GiB/s__ |
-|                      |                    |                   |
-| Python 🐍             |                    |                   |
-| `str.rfind`          |         1.54 GiB/s |        3.84 GiB/s |
-| `stringzilla.rfind`  |     __7.15 GiB/s__ |   __11.56 GiB/s__ |
+### UTF-8 Processing
 
+Different scripts stress UTF-8 differently: Korean has 3-byte Hangul with single-byte whitespace (representative for tokenization), Arabic uses 2-byte characters, English is mostly 1-byte ASCII.
+Throughput on AMD Zen5 Turin:
 
-## Byte-Set Search
+```
+                      English                     Arabic
+Newline splitting:
+stringzilla           ████████████████ 15.45      ████████████████████ 18.34 GB/s
+stdlib                ██                1.90      ██                    1.82 GB/s
 
-StringWars takes a few representative examples of various character sets that appear in real parsing or string validation tasks:
+                      English                     Korean
+Whitespace splitting:
+stringzilla           ████████████████████ 0.82   ████████████████████ 1.88 GB/s
+stdlib                ██████████████████▊  0.77   ██████████▍          0.98 GB/s
+icu::WhiteSpace       ██▋                  0.11   █▌                   0.15 GB/s
+```
 
-- tabulation characters, like `\n\r\v\f`;
-- HTML and XML markup characters, like `</>&'\"=[]`;
-- numeric characters, like `0123456789`.
+Case folding on bicameral scripts (Latin, Cyrillic, Greek, Armenian) plus Chinese for reference:
 
-It's common in such cases, to pre-construct some library-specific filter-object or Finite State Machine (FSM) to search for a set of characters.
-Once that object is constructed, all of it's inclusions in each token (word or line) are counted.
-Current numbers should look like this:
+```
+                      English 16x                 German 6x
+Case folding:
+stringzilla           ████████████████████ 7.53   ████████████████████ 2.59 GB/s
+stdlib                ██▌                  0.48   ███▎                 0.43 GB/s
 
-| Library                         |    Short Words |     Long Lines |
-| ------------------------------- | -------------: | -------------: |
-| Rust 🦀                          |                |                |
-| `bstr::iter`                    |     0.26 GiB/s |     0.25 GiB/s |
-| `regex::find_iter`              |     0.23 GiB/s |     5.22 GiB/s |
-| `aho_corasick::find_iter`       |     0.41 GiB/s |     0.50 GiB/s |
-| `stringzilla::find_byteset`     | __1.61 GiB/s__ | __8.17 GiB/s__ |
-|                                 |                |                |
-| Python 🐍                        |                |                |
-| `re.finditer`                   |     0.04 GiB/s |     0.19 GiB/s |
-| `stringzilla.Str.find_first_of` | __0.11 GiB/s__ | __8.79 GiB/s__ |
+                      Russian 10x                 French 5x
+stringzilla           ████████████████████ 2.20   ████████████████████ 1.84 GB/s
+stdlib                ██                   0.22   ███▊                 0.35 GB/s
 
-## UTF-8 Processing
+                      Greek 5x                    Armenian 4x
+stringzilla           ████████████████████ 1.00   ████████████████████  908 MB/s
+stdlib                ████▍                0.22   ████▉                 223 MB/s
 
-On AMD Zen5 Turin CPUs on different datasets, StringZilla provides the following throughput for splitting around whitespace and newline characters on 5 vastly different languages.
-Chinese and Korean texts, for example, are both made of mostly 3-byte letters, but Korean uses a lot of whitespace characters for syllable separation, while Chinese doesn't use any.
-French and English both use a lot of single-byte whitespace characters, but French uses many accented letters that are 2-byte long in UTF-8.
+                      Vietnamese 1.3x             Chinese 4x
+stringzilla           ████████████████████  352   ████████████████████ 1.21 GB/s
+stdlib                █████████████▏        265   █████▍                325 MB/s
+```
 
-| Library                                   |     English |     Chinese |      Arabic |      French |      Korean |
-| ----------------------------------------- | ----------: | ----------: | ----------: | ----------: | ----------: |
-| Split around 25 whitespace characters:    |             |             |             |             |             |
-| `stringzilla::utf8_whitespace_splits`     |  0.82 GiB/s |  2.40 GiB/s |  2.40 GiB/s |  0.92 GiB/s |  1.88 GiB/s |
-| `stdlib::split(char::is_whitespace)`      |  0.77 GiB/s |  1.87 GiB/s |  1.04 GiB/s |  0.72 GiB/s |  0.98 GiB/s |
-| `icu::WhiteSpace`                         |  0.11 GiB/s |  0.16 GiB/s |  0.15 GiB/s |  0.12 GiB/s |  0.15 GiB/s |
-|                                           |             |             |             |             |             |
-| Split around 8 newline combinations:      |             |             |             |             |             |
-| `stringzilla::utf8_newline_splits`        | 15.45 GiB/s | 16.65 GiB/s | 18.34 GiB/s | 14.52 GiB/s | 16.71 GiB/s |
-| `stdlib::split(char::is_unicode_newline)` |  1.90 GiB/s |  1.93 GiB/s |  1.82 GiB/s |  1.78 GiB/s |  1.81 GiB/s |
+See [bench_unicode.md](bench_unicode.md) for details
 
-On Apple M2 Pro:
+### Sequence Operations
 
-| Library                                   |    English |    Chinese |     Arabic |     French |     Korean |
-| ----------------------------------------- | ---------: | ---------: | ---------: | ---------: | ---------: |
-| Split around 25 whitespace characters:    |            |            |            |            |            |
-| `stringzilla::utf8_whitespace_splits`     | 0.57 GiB/s | 2.45 GiB/s | 1.18 GiB/s | 0.61 GiB/s | 0.92 GiB/s |
-| `stdlib::split(char::is_whitespace)`      | 0.59 GiB/s | 1.16 GiB/s | 0.99 GiB/s | 0.63 GiB/s | 0.89 GiB/s |
-| `icu::WhiteSpace`                         | 0.10 GiB/s | 0.16 GiB/s | 0.14 GiB/s | 0.11 GiB/s | 0.14 GiB/s |
-|                                           |            |            |            |            |            |
-| Split around 8 newline combinations:      |            |            |            |            |            |
-| `stringzilla::utf8_newline_splits`        | 5.69 GiB/s | 6.24 GiB/s | 6.58 GiB/s | 6.70 GiB/s | 6.29 GiB/s |
-| `stdlib::split(char::is_unicode_newline)` | 1.12 GiB/s | 1.11 GiB/s | 1.11 GiB/s | 1.11 GiB/s | 1.13 GiB/s |
+Dataframe libraries and search engines rely heavily on string sorting.
+SIMD-accelerated comparisons and specialized radix sorts can outperform generic algorithms.
+Throughput on short words:
 
-## Sequence Operations
+```
+Rust:
+stringzilla         ████████████████████  213.73 M cmp/s
+polars::sort        ██████████████████▊   200.34 M cmp/s
+arrow::lexsort      ███████████▍          122.20 M cmp/s
+std::sort           █████                  54.35 M cmp/s
 
-Rust has several Dataframe libraries, DBMS and Search engines that heavily rely on string sorting and intersections.
-Those operations mostly are implemented using conventional algorithms:
+Python:
+polars.sort         ████████████████████  223.38 M cmp/s
+stringzilla.sorted  ███████████████▎      171.13 M cmp/s
+pyarrow.sort        █████▌                 62.17 M cmp/s
+list.sort           ████▏                  47.06 M cmp/s
+```
 
-- Comparison-based Quicksort or Mergesort for sorting.
-- Hash-based or Tree-based algorithms for intersections.
+GPU: `cudf` on H100 reaches **9,463 M cmp/s** on short words.
 
-Assuming the compares can be accelerated with SIMD and so can be the hash functions, StringZilla could already provide a performance boost in such applications, but starting with v4 it also provides specialized algorithms for sorting and intersections.
-Those are directly compatible with arbitrary string-comparable collection types with a support of an indexed access to the elements.
+See [bench_sequence.md](bench_sequence.md) for details
 
-| Library                                     |               Short Words |              Long Lines |
-| ------------------------------------------- | ------------------------: | ----------------------: |
-| Rust 🦀                                      |                           |                         |
-| `std::sort_unstable_by_key`                 |        54.35 M compares/s |      57.70 M compares/s |
-| `rayon::par_sort_unstable_by_key` on 1x SPR |        47.08 M compares/s |      50.35 M compares/s |
-| `polars::Series::sort`                      |       200.34 M compares/s |      65.44 M compares/s |
-| `polars::Series::arg_sort`                  |        25.01 M compares/s |      14.05 M compares/s |
-| `arrow::lexsort_to_indices`                 |       122.20 M compares/s |  __84.73 M compares/s__ |
-| `stringzilla::argsort_permutation`          |   __213.73 M compares/s__ |      74.64 M compares/s |
-|                                             |                           |                         |
-| Python 🐍                                    |                           |                         |
-| `list.sort` on 1x SPR                       |        47.06 M compares/s |      22.36 M compares/s |
-| `pandas.Series.sort_values` on 1x SPR       |         9.39 M compares/s |      11.93 M compares/s |
-| `pyarrow.compute.sort_indices` on 1x SPR    |        62.17 M compares/s |       5.53 M compares/s |
-| `polars.Series.sort` on 1x SPR              |       223.38 M compares/s | __181.60 M compares/s__ |
-| `cudf.Series.sort_values` on H100           | __9'463.59 M compares/s__ |      66.44 M compares/s |
-| `stringzilla.Strs.sorted` on 1x SPR         |       171.13 M compares/s |      77.88 M compares/s |
+### Random Generation
 
-## Random Generation & Lookup Tables
+Random byte generation and lookup tables are common in image processing and bioinformatics.
+Throughput on long lines:
 
-Some of the most common operations in data processing are random generation and lookup tables.
-That's true not only for strings but for any data type, and StringZilla has been extensively used in Image Processing and Bioinformatics for those purposes.
-Generating random byte-streams:
+```
+Rust:
+stringzilla         ████████████████████  10.57 GB/s
+zeroize             ████████▉              4.73 GB/s
+rand_xoshiro        ███████▎               3.85 GB/s
 
-| Library                        |    Short Words |      Long Lines |
-| ------------------------------ | -------------: | --------------: |
-| Rust 🦀                         |                |                 |
-| `getrandom::fill`              |     0.18 GiB/s |      0.45 GiB/s |
-| `rand_chacha::ChaCha20Rng`     |     0.62 GiB/s |      1.85 GiB/s |
-| `rand_xoshiro::Xoshiro128Plus` |     0.83 GiB/s |      3.85 GiB/s |
-| `zeroize::zeroize`             |     0.66 GiB/s |      4.73 GiB/s |
-| `stringzilla::fill_random`     | __2.47 GiB/s__ | __10.57 GiB/s__ |
-|                                |                |                 |
-| Python 🐍                       |                |                 |
-| `numpy.PCG64`                  |     0.01 GiB/s |      1.28 GiB/s |
-| `numpy.Philox`                 |     0.01 GiB/s |      1.59 GiB/s |
-| `pycryptodome.AES-CTR`         |     0.01 GiB/s |     13.16 GiB/s |
-| `stringzilla.random`           | __0.11 GiB/s__ | __20.37 GiB/s__ |
+Python:
+stringzilla         ████████████████████  20.37 GB/s
+pycryptodome        ████████████▉         13.16 GB/s
+numpy.Philox        █▌                     1.59 GB/s
+```
 
-Performing in-place lookups in a precomputed table of 256 bytes:
+See [bench_memory.md](bench_memory.md) for details
 
-| Library                         |    Short Words |     Long Lines |
-| ------------------------------- | -------------: | -------------: |
-| Rust 🦀                          |                |                |
-| serial code                     | __0.61 GiB/s__ |     1.49 GiB/s |
-| `stringzilla::lookup_inplace`   |     0.54 GiB/s | __9.90 GiB/s__ |
-|                                 |                |                |
-| Python 🐍                        |                |                |
-| `bytes.translate`               |     0.05 GiB/s |     1.92 GiB/s |
-| `numpy.take`                    |     0.01 GiB/s |     0.85 GiB/s |
-| `opencv.LUT`                    |     0.01 GiB/s |     1.95 GiB/s |
-| `opencv.LUT` inplace            |     0.01 GiB/s |     2.16 GiB/s |
-| `stringzilla.translate`         |     0.07 GiB/s |     7.92 GiB/s |
-| `stringzilla.translate` inplace | __0.06 GiB/s__ | __8.14 GiB/s__ |
+### Similarity Scoring
 
+Edit distance is essential for search engines, data cleaning, NLP, and bioinformatics.
+It's computationally expensive with O(n\*m) complexity, but GPUs and multi-core parallelism help.
+Levenshtein distance on ~1,000 byte lines (MCUPS = Million Cell Updates Per Second):
 
-## Similarities Scoring
+```
+                        1 Core                       1 Socket
+Rust:
+bio::levenshtein        █▏                      823
+rapidfuzz               ████████████████████ 14,316
+stringzilla (384x GNR)  ██████████████████▎  13,084  ████████████████████ 3,084,270 MCUPS
+stringzilla (B200)                                   ██████▍                998,620 MCUPS
+stringzilla (H100)                                   ██████                 925,890 MCUPS
+```
 
-Edit Distance calculation is a common component of Search Engines, Data Cleaning, and Natural Language Processing, as well as in Bioinformatics.
-It's a computationally expensive operation, generally implemented using dynamic programming, with a quadratic time complexity upper bound.
-For biological sequences, the Needleman-Wunsch and Smith-Waterman algorithms are more appropriate, as they allow overriding the default substitution costs.
-Each of those has two flavors - with linear and affine gap penalties, also known as the "Gotoh" variation.
+See [bench_similarities.md](bench_similarities.md) for details
 
-- byte-level and unicode [Levenshtein](#levenshtein) distance;
-- [Needleman-Wunsch](#needleman-wunsch), [Needleman-Wunsch-Gotoh](#needleman-wunsch-gotoh);
-- [Smith-Waterman](#smith-waterman), [Smith-Waterman-Gotoh](#smith-waterman-gotoh).
+### Fingerprinting
 
-### Levenshtein
+Converting variable-length strings into fixed-length sketches (like Min-Hashing) enables fast approximate matching in large-scale retrieval.
+Throughput on ~1,000 byte lines:
 
-| Library                                              | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| ---------------------------------------------------- | ----------------: | ------------------: |
-| Rust 🦀                                               |                   |
-| `bio::levenshtein` on 1x SPR                         |         428 MCUPS |           823 MCUPS |
-| `rapidfuzz::levenshtein<Bytes>` on 1x SPR            |       4'633 MCUPS |        14'316 MCUPS |
-| `rapidfuzz::levenshtein<Chars>` on 1x SPR            |       3'877 MCUPS |        13'179 MCUPS |
-| `stringzillas::LevenshteinDistances` on 1x SPR       |       3'315 MCUPS |        13'084 MCUPS |
-| `stringzillas::LevenshteinDistancesUtf8` on 1x SPR   |       3'283 MCUPS |        11'690 MCUPS |
-| `stringzillas::LevenshteinDistances` on 16x SPR      |      29'430 MCUPS |       105'400 MCUPS |
-| `stringzillas::LevenshteinDistancesUtf8` on 16x SPR  |      38'954 MCUPS |       103'500 MCUPS |
-| `stringzillas::LevenshteinDistances` on RTX6000      |  __32'030 MCUPS__ |   __901'990 MCUPS__ |
-| `stringzillas::LevenshteinDistances` on H100         |  __31'913 MCUPS__ |   __925'890 MCUPS__ |
-| `stringzillas::LevenshteinDistances` on B200         |  __32'960 MCUPS__ |   __998'620 MCUPS__ |
-| `stringzillas::LevenshteinDistances` on 384x GNR     | __114'190 MCUPS__ | __3'084'270 MCUPS__ |
-| `stringzillas::LevenshteinDistancesUtf8` on 384x GNR | __103'590 MCUPS__ | __2'938'320 MCUPS__ |
-|                                                      |                   |                     |
-| Python 🐍                                             |                   |                     |
-| `nltk.edit_distance`                                 |           2 MCUPS |             2 MCUPS |
-| `jellyfish.levenshtein_distance`                     |          81 MCUPS |           228 MCUPS |
-| `rapidfuzz.Levenshtein.distance`                     |         108 MCUPS |         9'272 MCUPS |
-| `editdistance.eval`                                  |          89 MCUPS |           660 MCUPS |
-| `edlib.align`                                        |          82 MCUPS |         7'262 MCUPS |
-| `polyleven.levenshtein`                              |          89 MCUPS |         3'887 MCUPS |
-| `stringzillas.LevenshteinDistances` on 1x SPR        |          53 MCUPS |         3'407 MCUPS |
-| `stringzillas.LevenshteinDistancesUTF8` on 1x SPR    |          57 MCUPS |         3'693 MCUPS |
-| `cudf.edit_distance` batch on H100                   |      24'754 MCUPS |         6'976 MCUPS |
-| `stringzillas.LevenshteinDistances` batch on 1x SPR  |       2'343 MCUPS |        12'141 MCUPS |
-| `stringzillas.LevenshteinDistances` batch on 16x SPR |       3'762 MCUPS |       119'261 MCUPS |
-| `stringzillas.LevenshteinDistances` batch on H100    |  __18'081 MCUPS__ |   __320'109 MCUPS__ |
+```
+                        1 Core                       1 Socket
+Rust:
+pc::MinHash             ████████████████████   3.16
+stringzilla (384x GNR)  ███▏                   0.51  ███████████████▍      302.30 MB/s
+stringzilla (H100)                                   ████████████████████  392.37 MB/s
+```
 
-### Needleman-Wunsch
+See [bench_fingerprints.md](bench_fingerprints.md) for details
 
-| Library                                               | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| ----------------------------------------------------- | ----------------: | ------------------: |
-| Rust 🦀                                                |                   |                     |
-| `bio::pairwise::global` on 1x SPR                     |          51 MCUPS |            57 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 1x SPR       |         278 MCUPS |           612 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 16x SPR      |       4'057 MCUPS |         8'492 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 384x GNR     |  __64'290 MCUPS__ |   __331'340 MCUPS__ |
-| `stringzillas::NeedlemanWunschScores` on H100         |         131 MCUPS |    __12'113 MCUPS__ |
-|                                                       |                   |                     |
-| Python 🐍                                              |                   |                     |
-| `biopython.PairwiseAligner.score` on 1x SPR           |          95 MCUPS |           557 MCUPS |
-| `stringzillas.NeedlemanWunschScores` on 1x SPR        |          30 MCUPS |           481 MCUPS |
-| `stringzillas.NeedlemanWunschScores` batch on 1x SPR  |         246 MCUPS |           570 MCUPS |
-| `stringzillas.NeedlemanWunschScores` batch on 16x SPR |       3'103 MCUPS |         9'208 MCUPS |
-| `stringzillas.NeedlemanWunschScores` batch on H100    |         127 MCUPS |        12'246 MCUPS |
+### Encryption
 
-### Smith-Waterman
+ChaCha20 and AES256 encryption throughput comparison on long lines:
 
-| Library                                             | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| --------------------------------------------------- | ----------------: | ------------------: |
-| Rust 🦀                                              |                   |                     |
-| `bio::pairwise::local` on 1x SPR                    |          49 MCUPS |            50 MCUPS |
-| `stringzillas::SmithWatermanScores` on 1x SPR       |         263 MCUPS |           552 MCUPS |
-| `stringzillas::SmithWatermanScores` on 16x SPR      |       3'883 MCUPS |         8'011 MCUPS |
-| `stringzillas::SmithWatermanScores` on 384x GNR     |  __58'880 MCUPS__ |   __285'480 MCUPS__ |
-| `stringzillas::SmithWatermanScores` on H100         |         143 MCUPS |    __12'921 MCUPS__ |
-|                                                     |                   |                     |
-| Python 🐍                                            |                   |                     |
-| `biopython.PairwiseAligner.score` on 1x SPR         |          95 MCUPS |           557 MCUPS |
-| `stringzillas.SmithWatermanScores` on 1x SPR        |          28 MCUPS |           440 MCUPS |
-| `stringzillas.SmithWatermanScores` batch on 1x SPR  |         255 MCUPS |           582 MCUPS |
-| `stringzillas.SmithWatermanScores` batch on 16x SPR |   __3'535 MCUPS__ |         8'235 MCUPS |
-| `stringzillas.SmithWatermanScores` batch on H100    |         130 MCUPS |    __12'702 MCUPS__ |
+```
+Rust:
+ring::aes256        ████████████████████   2.89 GB/s
+ring::chacha20      ████████▏              1.19 GB/s
+libsodium::chacha20 █████                  0.71 GB/s
+```
 
-### Needleman-Wunsch-Gotoh
-
-| Library                                           | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| ------------------------------------------------- | ----------------: | ------------------: |
-| Rust 🦀                                            |                   |                     |
-| `stringzillas::NeedlemanWunschScores` on 1x SPR   |          83 MCUPS |           354 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 16x SPR  |       1'267 MCUPS |         4'694 MCUPS |
-| `stringzillas::NeedlemanWunschScores` on 384x GNR |  __42'050 MCUPS__ |   __155'920 MCUPS__ |
-| `stringzillas::NeedlemanWunschScores` on H100     |         128 MCUPS |    __13'799 MCUPS__ |
-
-### Smith-Waterman-Gotoh
-
-| Library                                         | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| ----------------------------------------------- | ----------------: | ------------------: |
-| Rust 🦀                                          |                   |                     |
-| `stringzillas::SmithWatermanScores` on 1x SPR   |          79 MCUPS |           284 MCUPS |
-| `stringzillas::SmithWatermanScores` on 16x SPR  |       1'026 MCUPS |         3'776 MCUPS |
-| `stringzillas::SmithWatermanScores` on 384x GNR |  __38'430 MCUPS__ |   __129'140 MCUPS__ |
-| `stringzillas::SmithWatermanScores` on H100     |         127 MCUPS |    __13'205 MCUPS__ |
-
-## Byte-level Fingerprinting & Sketching Benchmarks
-
-In large-scale Retrieval workloads a common technique is to convert variable-length messy strings into some fixed-length representations.
-Those are often called "fingerprints" or "sketches", like "Min-Hashing" or "Count-Min-Sketching".
-There are a million variations of those algorithms, all resulting in different speed-vs-accuracy tradeoffs.
-Two of the approximations worth considering is the number of collisions of produced individual hashes withing fingerprints, and the bit-distribution entropy of the produced fingerprints.
-Adjusting all implementation to the same tokenization scheme, one my experience following numbers:
-
-| Library                                    | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| ------------------------------------------ | ----------------: | ------------------: |
-| serial `<ByteGrams>` on 1x SPR 🦀           |        0.44 MiB/s |          0.47 MiB/s |
-|                                            | 92.81% collisions |   94.58% collisions |
-|                                            |    0.8528 entropy |      0.7979 entropy |
-|                                            |                   |                     |
-| `pc::MinHash<ByteGrams>` on 1x SPR 🦀       |        2.41 MiB/s |          3.16 MiB/s |
-|                                            | 91.80% collisions |   93.17% collisions |
-|                                            |    0.9343 entropy |      0.8779 entropy |
-|                                            |                   |                     |
-| `stringzillas::Fingerprints` on 1x SPR 🦀   |        0.56 MiB/s |          0.51 MiB/s |
-| `stringzillas::Fingerprints` on 16x SPR 🦀  |        6.62 MiB/s |          8.03 MiB/s |
-| `stringzillas::Fingerprints` on 384x GNR 🦀 |  __231.13 MiB/s__ |    __302.30 MiB/s__ |
-| `stringzillas::Fingerprints` on RTX6000 🦀  |     __138 MiB/s__ |        162.99 MiB/s |
-| `stringzillas::Fingerprints` on H100 🦀     |      102.07 MiB/s |    __392.37 MiB/s__ |
-|                                            | 86.80% collisions |   93.21% collisions |
-|                                            |    0.9992 entropy |      0.9967 entropy |
-
-The trickiest part, however, is analyzing the retrieval quality of those fingerprints and comparing them to other approaches.
-So, how many bits per fingerprint are needed to achieve a specific recall rate for a given dataset?
-Or, how does the average Levenshtein distance among the top-k nearest neighbors change with the fingerprint size?
-It must clearly decrease, but how fast, and how does that compare to ground truth?
-For that please, check out the [HashEvals](https://github.com/ashvardanian/HashEvals) repository.
-
-## Encryption and Decryption Benchmarks
-
-Encryption:
-
-| Library               | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| --------------------- | ----------------: | ------------------: |
-| Rust 🦀                |                   |                     |
-| `libsodium::chacha20` |        0.20 GiB/s |          0.71 GiB/s |
-| `ring::chacha20`      |        0.39 GiB/s |          1.19 GiB/s |
-| `ring::aes256`        |        0.61 GiB/s |          2.89 GiB/s |
-
-
-Decryption:
-
-| Library               | ≅ 100 bytes lines | ≅ 1'000 bytes lines |
-| --------------------- | ----------------: | ------------------: |
-| Rust 🦀                |                   |                     |
-| `libsodium::chacha20` |        0.20 GiB/s |          0.69 GiB/s |
-| `ring::chacha20`      |        0.42 GiB/s |          1.08 GiB/s |
-| `ring::aes256`        |        0.85 GiB/s |          2.48 GiB/s |
+See [bench_encryption.md](bench_encryption.md) for details
 
 ## Replicating the Results
 
-### Replicating the Results in Rust 🦀
+### Replicating the Results in Rust
 
 Before running benchmarks, you can test your Rust environment running:
 
@@ -462,7 +276,7 @@ $env:STRINGWARS_DATASET="README.md"
 cargo criterion --jobs $(nproc)
 ```
 
-### Replicating the Results in Python 🐍
+### Replicating the Results in Python
 
 It's recommended to use `uv` for Python dependency management and running the benchmarks.
 To install all dependencies for all benchmarks:
@@ -488,24 +302,14 @@ uv run --no-project python bench_find.py --help
 uv run --no-project python bench_memory.py --help
 uv run --no-project python bench_sequence.py --help
 uv run --no-project python bench_similarities.py --help
-uv run --no-project python bench_fingerprints.py --help 🔜
+uv run --no-project python bench_fingerprints.py --help
 ```
 
 ## Datasets
 
-### ASCII Corpus
-
-For benchmarks on ASCII data I've used the English Leipzig Corpora Collection.
-It's 124 MB in size, 1'000'000 lines long, and contains 8'388'608 tokens of mean length 5.
-
-```bash
-curl -fL -o leipzig1M.txt https://introcs.cs.princeton.edu/python/42sort/leipzig1m.txt
-STRINGWARS_DATASET=leipzig1M.txt cargo criterion --jobs $(nproc)
-```
-
 ### UTF8 Corpus
 
-For richer mixed UTF data, I've used the XL Sum dataset for multilingual extractive summarization.
+For mixed UTF data, I've used the XL Sum dataset for multilingual extractive summarization.
 It's 4.7 GB in size (1.7 GB compressed), 1'004'598 lines long, and contains 268'435'456 tokens of mean length 8.
 To download, unpack, and run the benchmarks, execute the following bash script in your terminal:
 
@@ -521,23 +325,131 @@ The Cohere Wikipedia dataset provides pre-processed JSONL files for different la
 This may be the optimal dataset for relative comparison of UTF-8 decoding and matching enginges in each individual environment.
 Not all Wikipedia languages are available, but the following have been selected specifically:
 
-- __Chinese (zh)__: 3-byte CJK characters, rare 1-byte punctuation
-- __Korean (ko)__: 3-byte Hangul syllables, frequent 1-byte punctuation
-- __Arabic (ar)__: 2-byte Arabic script, with regular 1-byte punctuation
-- __French (fr)__: Mixed 1-2 byte Latin with high diacritic density
-- __English (en)__: Mostly 1-byte ASCII baseline
+- **Chinese (zh)**: 3-byte CJK characters, rare 1-byte punctuation
+- **Korean (ko)**: 3-byte Hangul syllables, frequent 1-byte punctuation
+- **Arabic (ar)**: 2-byte Arabic script, with regular 1-byte punctuation
+- **French (fr)**: Mixed 1-2 byte Latin with high diacritic density
+- **English (en)**: Mostly 1-byte ASCII baseline
 
 To download and decompress one file from each language:
 
 ```bash
+curl -fL -o wiki_en.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/en/000.jsonl.gz && gunzip wiki_en.jsonl.gz
 curl -fL -o wiki_zh.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/zh/000.jsonl.gz && gunzip wiki_zh.jsonl.gz
 curl -fL -o wiki_ko.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/ko/000.jsonl.gz && gunzip wiki_ko.jsonl.gz
 curl -fL -o wiki_ar.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/ar/000.jsonl.gz && gunzip wiki_ar.jsonl.gz
 curl -fL -o wiki_fr.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/fr/000.jsonl.gz && gunzip wiki_fr.jsonl.gz
-curl -fL -o wiki_en.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/en/000.jsonl.gz && gunzip wiki_en.jsonl.gz
+curl -fL -o wiki_de.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/de/000.jsonl.gz && gunzip wiki_de.jsonl.gz
+curl -fL -o wiki_es.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/es/000.jsonl.gz && gunzip wiki_es.jsonl.gz
+curl -fL -o wiki_it.jsonl.gz https://huggingface.co/datasets/Cohere/wikipedia-22-12/resolve/main/it/000.jsonl.gz && gunzip wiki_it.jsonl.gz
 ```
 
 Each JSONL file contains one JSON object per line with fields: `id`, `title`, `text` (paragraph content), `url`, `wiki_id`, and `paragraph_id`.
+
+### CC-100 Corpus
+
+The [CC-100](https://data.statmt.org/cc-100/) corpus provides large monolingual text files (1-80 GB) for 100+ languages, extracted from Common Crawl.
+Files are XZ-compressed plain text with documents separated by double-newlines.
+
+| Workload                    | Relevant Scripts                  | Best Test Languages                                  |
+| --------------------------- | --------------------------------- | ---------------------------------------------------- |
+| **Case Folding**            | Latin, Cyrillic, Greek, Armenian  | Turkish (I/i), German (ss->SS), Greek, Russian       |
+| **Normalization**           | Indic, Arabic, Vietnamese, Korean | Vietnamese, Hindi, Korean, Arabic                    |
+| **Whitespace Tokenization** | Most scripts except CJK/Thai      | English, Russian, Arabic vs. Chinese, Japanese, Thai |
+| **Grapheme Clusters**       | Indic, Thai, Khmer, Myanmar       | Thai, Tamil, Myanmar, Khmer                          |
+| **RTL Handling**            | Arabic, Hebrew                    | Arabic, Hebrew, Persian                              |
+
+**Bicameral scripts** with various case folding rules:
+
+```bash
+curl -fL https://data.statmt.org/cc-100/en.txt.xz | xz -d > cc100_en.txt      # 82 GB - English
+curl -fL https://data.statmt.org/cc-100/de.txt.xz | xz -d > cc100_de.txt      # 18 GB - German
+curl -fL https://data.statmt.org/cc-100/tr.txt.xz | xz -d > cc100_tr.txt      # 5.4 GB - Turkish
+curl -fL https://data.statmt.org/cc-100/ru.txt.xz | xz -d > cc100_ru.txt      # 46 GB - Russian
+curl -fL https://data.statmt.org/cc-100/uk.txt.xz | xz -d > cc100_uk.txt      # 14 GB - Ukrainian
+curl -fL https://data.statmt.org/cc-100/el.txt.xz | xz -d > cc100_el.txt      # 7.4 GB - Greek
+curl -fL https://data.statmt.org/cc-100/hy.txt.xz | xz -d > cc100_hy.txt      # 776 MB - Armenian
+curl -fL https://data.statmt.org/cc-100/ka.txt.xz | xz -d > cc100_ka.txt      # 1.1 GB - Georgian
+curl -fL https://data.statmt.org/cc-100/pl.txt.xz | xz -d > cc100_pl.txt      # 12 GB - Polish
+curl -fL https://data.statmt.org/cc-100/cs.txt.xz | xz -d > cc100_cs.txt      # 4.4 GB - Czech
+curl -fL https://data.statmt.org/cc-100/nl.txt.xz | xz -d > cc100_nl.txt      # 7.9 GB - Dutch
+curl -fL https://data.statmt.org/cc-100/fr.txt.xz | xz -d > cc100_fr.txt      # 14 GB - French
+curl -fL https://data.statmt.org/cc-100/es.txt.xz | xz -d > cc100_es.txt      # 14 GB - Spanish
+curl -fL https://data.statmt.org/cc-100/pt.txt.xz | xz -d > cc100_pt.txt      # 13 GB - Portuguese
+curl -fL https://data.statmt.org/cc-100/it.txt.xz | xz -d > cc100_it.txt      # 7.8 GB - Italian
+```
+
+**Unicameral scripts** without case folding, but with other normalization/segmentation challenges:
+
+```bash
+curl -fL https://data.statmt.org/cc-100/ar.txt.xz | xz -d > cc100_ar.txt      # 5.4 GB - Arabic (RTL)
+curl -fL https://data.statmt.org/cc-100/he.txt.xz | xz -d > cc100_he.txt      # 6.1 GB - Hebrew (RTL)
+curl -fL https://data.statmt.org/cc-100/fa.txt.xz | xz -d > cc100_fa.txt      # 20 GB - Persian (RTL)
+curl -fL https://data.statmt.org/cc-100/hi.txt.xz | xz -d > cc100_hi.txt      # 2.5 GB - Hindi (Devanagari)
+curl -fL https://data.statmt.org/cc-100/bn.txt.xz | xz -d > cc100_bn.txt      # 860 MB - Bengali
+curl -fL https://data.statmt.org/cc-100/ta.txt.xz | xz -d > cc100_ta.txt      # 1.3 GB - Tamil
+curl -fL https://data.statmt.org/cc-100/te.txt.xz | xz -d > cc100_te.txt      # 536 MB - Telugu
+curl -fL https://data.statmt.org/cc-100/th.txt.xz | xz -d > cc100_th.txt      # 8.7 GB - Thai (no spaces)
+curl -fL https://data.statmt.org/cc-100/vi.txt.xz | xz -d > cc100_vi.txt      # 28 GB - Vietnamese
+curl -fL https://data.statmt.org/cc-100/zh-Hans.txt.xz | xz -d > cc100_zh.txt # 14 GB - Chinese
+curl -fL https://data.statmt.org/cc-100/ja.txt.xz | xz -d > cc100_ja.txt      # 15 GB - Japanese
+curl -fL https://data.statmt.org/cc-100/ko.txt.xz | xz -d > cc100_ko.txt      # 14 GB - Korean (Jamo)
+curl -fL https://data.statmt.org/cc-100/my.txt.xz | xz -d > cc100_my.txt      # 46 MB - Myanmar
+curl -fL https://data.statmt.org/cc-100/km.txt.xz | xz -d > cc100_km.txt      # 153 MB - Khmer
+curl -fL https://data.statmt.org/cc-100/am.txt.xz | xz -d > cc100_am.txt      # 133 MB - Amharic (Ethiopic)
+curl -fL https://data.statmt.org/cc-100/si.txt.xz | xz -d > cc100_si.txt      # 452 MB - Sinhala
+```
+
+### Leipzig Corpora Collection
+
+The [Leipzig Corpora Collection](https://wortschatz.uni-leipzig.de/en/download/) provides pre-segmented sentences in 200+ languages.
+Each tar.gz contains `*-sentences.txt` (tab-separated `id\tsentence`), `*-words.txt` (frequencies), and co-occurrence files.
+Standard sizes: 10K, 30K, 100K, 300K, 1M sentences. Check for newer years at the download page.
+
+**Bicameral scripts** with various case folding rules:
+
+```bash
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/eng_wikipedia_2016_1M.tar.gz | tar -xzf - -O 'eng_wikipedia_2016_1M/eng_wikipedia_2016_1M-sentences.txt' | cut -f2 > leipzig1M_en.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/deu_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'deu_wikipedia_2021_1M/deu_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_de.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tur_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'tur_wikipedia_2021_1M/tur_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_tr.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/rus_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'rus_wikipedia_2021_1M/rus_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ru.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ukr_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ukr_wikipedia_2021_1M/ukr_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_uk.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ell_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ell_wikipedia_2021_1M/ell_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_el.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/hye_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'hye_wikipedia_2021_1M/hye_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_hy.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/kat_wikipedia_2021_300K.tar.gz | tar -xzf - -O 'kat_wikipedia_2021_300K/kat_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_ka.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/pol_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'pol_wikipedia_2021_1M/pol_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pl.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ces_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ces_wikipedia_2021_1M/ces_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_cs.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/nld_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'nld_wikipedia_2021_1M/nld_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_nl.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/fra_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'fra_wikipedia_2021_1M/fra_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_fr.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/spa_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'spa_wikipedia_2021_1M/spa_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_es.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/por_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'por_wikipedia_2021_1M/por_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_pt.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ita_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ita_wikipedia_2021_1M/ita_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_it.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/lit_wikipedia_2021_300K.tar.gz | tar -xzf - -O 'lit_wikipedia_2021_300K/lit_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_lt.txt
+```
+
+**Unicameral scripts** without case folding, but with other normalization/segmentation challenges:
+
+```bash
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ara_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ara_wikipedia_2021_1M/ara_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ar.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/heb_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'heb_wikipedia_2021_1M/heb_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_he.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/fas_wikipedia_2014_1M.tar.gz | tar -xzf - -O 'fas_wikipedia_2014_1M/fas_wikipedia_2014_1M-sentences.txt' | cut -f2 > leipzig1M_fa.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/hin_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'hin_wikipedia_2021_1M/hin_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_hi.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/ben_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ben_wikipedia_2021_1M/ben_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_bn.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tam_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'tam_wikipedia_2021_1M/tam_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ta.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tel_wikipedia_2021_300K.tar.gz | tar -xzf - -O 'tel_wikipedia_2021_300K/tel_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_te.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/tha_wikipedia_2021_10K.tar.gz | tar -xzf - -O 'tha_wikipedia_2021_10K/tha_wikipedia_2021_10K-sentences.txt' | cut -f2 > leipzig10K_th.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/vie_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'vie_wikipedia_2021_1M/vie_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_vi.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/zho_wikipedia_2018_1M.tar.gz | tar -xzf - -O 'zho_wikipedia_2018_1M/zho_wikipedia_2018_1M-sentences.txt' | cut -f2 > leipzig1M_zh.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/jpn_wikipedia_2018_1M.tar.gz | tar -xzf - -O 'jpn_wikipedia_2018_1M/jpn_wikipedia_2018_1M-sentences.txt' | cut -f2 > leipzig1M_ja.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/kor_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'kor_wikipedia_2021_1M/kor_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ko.txt
+curl -fL https://downloads.wortschatz-leipzig.de/corpora/amh_wikipedia_2021_30K.tar.gz | tar -xzf - -O 'amh_wikipedia_2021_30K/amh_wikipedia_2021_30K-sentences.txt' | cut -f2 > leipzig30K_am.txt
+```
+
+To produce a mixed dataset with rows in all languages:
+
+```bash
+cat leipzig*.txt | shuf | head -c 1G > leipzig1GB.txt
+```
 
 ### DNA Corpus
 

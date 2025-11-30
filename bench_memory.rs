@@ -44,7 +44,7 @@ use stringzilla::sz;
 use zeroize::Zeroize;
 
 mod utils;
-use utils::should_run;
+use utils::{install_panic_hook, should_run, ResultExt};
 
 fn log_stringzilla_metadata() {
     let v = sz::version();
@@ -379,11 +379,12 @@ fn bench_memmove(
 }
 
 fn main() {
+    install_panic_hook();
     log_stringzilla_metadata();
 
-    // Load the dataset defined by the environment variables, and panic if the content is missing
-    let mut dataset = load_dataset().unwrap();
-    let mut tokens = tokenize(&mut dataset).unwrap();
+    // Load the dataset defined by the environment variables
+    let mut dataset = load_dataset().unwrap_nice();
+    let mut tokens = tokenize(&mut dataset).unwrap_nice();
     if tokens.is_empty() {
         panic!("No tokens found in the dataset.");
     }

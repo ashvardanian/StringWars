@@ -114,34 +114,34 @@ def run_stateless_benchmarks(
     print("\n=== Stateless Hash Benchmarks ===")
 
     # Python built-in hash
-    if should_run("hash", filter_pattern):
-        bench_hash_function("hash", tokens, lambda x: hash(x), time_limit_seconds)
+    if should_run("stateless/std.hash()", filter_pattern):
+        bench_hash_function("std.hash()", tokens, lambda x: hash(x), time_limit_seconds)
 
     # xxHash
-    if should_run("xxhash.xxh3_64", filter_pattern):
-        bench_hash_function("xxhash.xxh3_64", tokens, lambda x: xxhash.xxh3_64(x).intdigest(), time_limit_seconds)
+    if should_run("stateless/xxhash.xxh3_64()", filter_pattern):
+        bench_hash_function("xxhash.xxh3_64()", tokens, lambda x: xxhash.xxh3_64(x).intdigest(), time_limit_seconds)
 
     # StringZilla hashes
-    if should_run("stringzilla.hash", filter_pattern):
-        bench_hash_function("stringzilla.hash", tokens, lambda x: sz.hash(x), time_limit_seconds)
+    if should_run("stateless/stringzilla.hash()", filter_pattern):
+        bench_hash_function("stringzilla.hash()", tokens, lambda x: sz.hash(x), time_limit_seconds)
 
     # Google CRC32C (Castagnoli) one-shot
-    if should_run("google_crc32c.value", filter_pattern):
-        bench_hash_function("google_crc32c.value", tokens, lambda x: google_crc32c.value(x), time_limit_seconds)
+    if should_run("stateless/google_crc32c.value()", filter_pattern):
+        bench_hash_function("google_crc32c.value()", tokens, lambda x: google_crc32c.value(x), time_limit_seconds)
 
     # MurmurHash3 — stateless
-    if should_run("mmh3.hash32", filter_pattern):
-        bench_hash_function("mmh3.hash32", tokens, lambda x: mmh3.hash(x, signed=False), time_limit_seconds)
-    if should_run("mmh3.hash64", filter_pattern):
-        bench_hash_function("mmh3.hash64", tokens, lambda x: mmh3.hash64(x, signed=False)[0], time_limit_seconds)
-    if should_run("mmh3.hash128", filter_pattern):
-        bench_hash_function("mmh3.hash128", tokens, lambda x: mmh3.hash128(x, signed=False), time_limit_seconds)
+    if should_run("stateless/mmh3.hash32()", filter_pattern):
+        bench_hash_function("mmh3.hash32()", tokens, lambda x: mmh3.hash(x, signed=False), time_limit_seconds)
+    if should_run("stateless/mmh3.hash64()", filter_pattern):
+        bench_hash_function("mmh3.hash64()", tokens, lambda x: mmh3.hash64(x, signed=False)[0], time_limit_seconds)
+    if should_run("stateless/mmh3.hash128()", filter_pattern):
+        bench_hash_function("mmh3.hash128()", tokens, lambda x: mmh3.hash128(x, signed=False), time_limit_seconds)
 
     # CityHash — stateless
-    if should_run("cityhash.CityHash64", filter_pattern):
-        bench_hash_function("cityhash.CityHash64", tokens, lambda x: cityhash.CityHash64(x), time_limit_seconds)
-    if should_run("cityhash.CityHash128", filter_pattern):
-        bench_hash_function("cityhash.CityHash128", tokens, lambda x: cityhash.CityHash128(x), time_limit_seconds)
+    if should_run("stateless/cityhash.CityHash64()", filter_pattern):
+        bench_hash_function("cityhash.CityHash64()", tokens, lambda x: cityhash.CityHash64(x), time_limit_seconds)
+    if should_run("stateless/cityhash.CityHash128()", filter_pattern):
+        bench_hash_function("cityhash.CityHash128()", tokens, lambda x: cityhash.CityHash128(x), time_limit_seconds)
 
 
 def bench_stateful_hash(
@@ -189,16 +189,16 @@ def run_stateful_benchmarks(
     print("\n=== Stateful Hash Benchmarks ===")
 
     # xxHash stateful
-    if should_run("xxhash.xxh3_64", filter_pattern):
-        bench_stateful_hash("xxhash.xxh3_64", tokens, lambda: xxhash.xxh3_64(), time_limit_seconds)
+    if should_run("stateful/xxhash.xxh3_64()", filter_pattern):
+        bench_stateful_hash("xxhash.xxh3_64()", tokens, lambda: xxhash.xxh3_64(), time_limit_seconds)
 
     # StringZilla stateful hasher
-    if should_run("stringzilla.Hasher", filter_pattern):
-        bench_stateful_hash("stringzilla.Hasher", tokens, lambda: sz.Hasher(), time_limit_seconds)
+    if should_run("stateful/stringzilla.Hasher()", filter_pattern):
+        bench_stateful_hash("stringzilla.Hasher()", tokens, lambda: sz.Hasher(), time_limit_seconds)
 
     # Google CRC32C (Castagnoli) stateful
-    if should_run("google_crc32c.Checksum", filter_pattern):
-        bench_stateful_hash("google_crc32c.Checksum", tokens, lambda: google_crc32c.Checksum(), time_limit_seconds)
+    if should_run("stateful/google_crc32c.Checksum()", filter_pattern):
+        bench_stateful_hash("google_crc32c.Checksum()", tokens, lambda: google_crc32c.Checksum(), time_limit_seconds)
 
 
 def run_checksum_benchmarks(
@@ -210,20 +210,20 @@ def run_checksum_benchmarks(
     print("\n=== Checksum Hash Benchmarks ===")
 
     # StringZilla bytesum - reference lower bound
-    if should_run("stringzilla.bytesum", filter_pattern):
-        bench_hash_function("stringzilla.bytesum", tokens, lambda x: sz.bytesum(x), time_limit_seconds)
+    if should_run("checksum/stringzilla.bytesum()", filter_pattern):
+        bench_hash_function("stringzilla.bytesum()", tokens, lambda x: sz.bytesum(x), time_limit_seconds)
 
     # Blake3 - cryptographic hash
-    if should_run("blake3.digest", filter_pattern):
-        bench_hash_function("blake3.digest", tokens, lambda x: blake3.blake3(x).digest(), time_limit_seconds)
+    if should_run("checksum/blake3.blake3()", filter_pattern):
+        bench_hash_function("blake3.blake3()", tokens, lambda x: blake3.blake3(x).digest(), time_limit_seconds)
 
     # SHA256 via hashlib (Python standard library)
-    if should_run("hashlib.sha256", filter_pattern):
-        bench_hash_function("hashlib.sha256", tokens, lambda x: hashlib.sha256(x).digest(), time_limit_seconds)
+    if should_run("checksum/hashlib.sha256()", filter_pattern):
+        bench_hash_function("hashlib.sha256()", tokens, lambda x: hashlib.sha256(x).digest(), time_limit_seconds)
 
     # SHA256 via StringZilla
-    if should_run("stringzilla.Sha256", filter_pattern):
-        bench_hash_function("stringzilla.Sha256", tokens, lambda x: sz.Sha256().update(x).digest(), time_limit_seconds)
+    if should_run("checksum/stringzilla.Sha256()", filter_pattern):
+        bench_hash_function("stringzilla.Sha256()", tokens, lambda x: sz.Sha256().update(x).digest(), time_limit_seconds)
 
 
 _main_epilog = """

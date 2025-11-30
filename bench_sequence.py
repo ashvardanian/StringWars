@@ -134,22 +134,22 @@ def main():
     print("\n=== Sort Benchmarks ===")
 
     # Python list.sort
-    if should_run("list.sort", filter_pattern):
+    if should_run("argsort/std.list.sort()", filter_pattern):
         py_list = list(tokens)
-        bench_sort_operation("list.sort", lambda: py_list.sort(), len(tokens))
+        bench_sort_operation("std.list.sort()", lambda: py_list.sort(), len(tokens))
 
     # StringZilla
-    if should_run("stringzilla.Strs.sorted", filter_pattern):
+    if should_run("argsort/stringzilla.Strs.sorted()", filter_pattern):
         sz_strs = sz.Strs(tokens)
-        bench_sort_operation("stringzilla.Strs.sorted", lambda: sz_strs.sorted(), len(tokens))
+        bench_sort_operation("stringzilla.Strs.sorted()", lambda: sz_strs.sorted(), len(tokens))
 
     # Pandas
-    if should_run("pandas.Series.sort_values", filter_pattern):
+    if should_run("argsort/pandas.Series.sort_values()", filter_pattern):
         s = pd.Series(tokens)
-        bench_sort_operation("pandas.Series.sort_values", lambda: s.sort_values(ignore_index=True), len(tokens))
+        bench_sort_operation("pandas.Series.sort_values()", lambda: s.sort_values(ignore_index=True), len(tokens))
 
     # PyArrow
-    if should_run("pyarrow.compute.sort_indices", filter_pattern):
+    if should_run("argsort/pyarrow.compute.sort_indices()", filter_pattern):
         # Choose Arrow string type without timing the conversion
         INT32_MAX = 2_147_483_647
         total_bytes = 0
@@ -164,17 +164,17 @@ def main():
             idx = pc.sort_indices(arr)
             _ = pc.take(arr, idx)
 
-        bench_sort_operation("pyarrow.compute.sort_indices", _pa_sort_call, len(tokens))
+        bench_sort_operation("pyarrow.compute.sort_indices()", _pa_sort_call, len(tokens))
 
     # Polars
-    if should_run("polars.Series.sort", filter_pattern):
+    if should_run("argsort/polars.Series.sort()", filter_pattern):
         ps = pl.Series(tokens)
-        bench_sort_operation("polars.Series.sort", lambda: ps.sort(), len(tokens))
+        bench_sort_operation("polars.Series.sort()", lambda: ps.sort(), len(tokens))
 
     # cuDF GPU (if available)
-    if CUDF_AVAILABLE and should_run("cudf.Series.sort_values", filter_pattern):
+    if CUDF_AVAILABLE and should_run("argsort/cudf.Series.sort_values(1xGPU)", filter_pattern):
         cs = cudf.Series(tokens)
-        bench_sort_operation("cudf.Series.sort_values", lambda: cs.sort_values(ignore_index=True), len(tokens))
+        bench_sort_operation("cudf.Series.sort_values(1xGPU)", lambda: cs.sort_values(ignore_index=True), len(tokens))
 
     return 0
 

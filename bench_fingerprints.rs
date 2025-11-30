@@ -46,7 +46,6 @@ RUSTFLAGS="-C target-cpu=native" \
 
 use core::convert::TryInto;
 use std::collections::hash_map::DefaultHasher;
-use std::env;
 use std::hash::{Hash, Hasher};
 
 use criterion::{Criterion, Throughput};
@@ -59,7 +58,10 @@ use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version}
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
 mod utils;
-use utils::{load_dataset, set_fingerprints_bytes_per_hash, should_run, HashesWallTime};
+use utils::{
+    get_env_parsed, install_panic_hook, load_dataset, set_fingerprints_bytes_per_hash, should_run,
+    HashesWallTime, ResultExt,
+};
 
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
@@ -173,29 +175,13 @@ fn configure_bench() -> Criterion<HashesWallTime> {
 
 fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     // Load dataset using unified loader
-    let tape_bytes = load_dataset();
+    let tape_bytes = load_dataset().unwrap_nice();
     let tape = tape_bytes
         .as_chars()
         .expect("Dataset must be valid UTF-8 for fingerprinting");
 
-    let batch_size = env::var("STRINGWARS_BATCH")
-        .unwrap_or_else(|_| "1024".to_string())
-        .parse::<usize>()
-        .unwrap_or_else(|e| {
-            panic!(
-                "STRINGWARS_BATCH must be a valid number for fingerprinting benchmarks: {}",
-                e
-            )
-        });
-
-    let ndim = env::var("STRINGWARS_NDIM")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(256);
-
-    if tape.is_empty() {
-        panic!("Dataset must contain at least one token for fingerprinting.");
-    }
+    let batch_size: usize = get_env_parsed("STRINGWARS_BATCH", 1024);
+    let ndim: usize = get_env_parsed("STRINGWARS_NDIM", 256);
 
     if batch_size == 0 {
         panic!("STRINGWARS_BATCH must be greater than zero for fingerprinting benchmarks.");
@@ -315,9 +301,9 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     min_counts.resize(batch_size * ndim, 0);
 
     // StringZilla: 1x CPU
-    if should_run("fingerprinting/stringzillas::Fingerprints(1xCPU)") {
+    if should_run("fingerprinting/stringzillas/Fingerprints(1xCPU)") {
         g.throughput(Throughput::Elements(per_batch_hash_ops));
-        g.bench_function("stringzillas::Fingerprints(1xCPU)", |b| {
+        g.bench_function("stringzillas/Fingerprints(1xCPU)", |b| {
             start_idx = 0;
             b.iter(|| {
                 let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
@@ -351,12 +337,12 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
 
     // StringZilla: Nx CPU
     if should_run(&format!(
-        "fingerprinting/stringzillas::Fingerprints({}xCPU)",
+        "fingerprinting/stringzillas/Fingerprints({}xCPU)",
         num_cores
     )) {
         g.throughput(Throughput::Elements(per_batch_hash_ops));
         g.bench_function(
-            &format!("stringzillas::Fingerprints({}xCPU)", num_cores),
+            &format!("stringzillas/Fingerprints({}xCPU)", num_cores),
             |b| {
                 start_idx = 0;
                 b.iter(|| {
@@ -408,9 +394,9 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
 
     // StringZilla: 1x GPU (if available)
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sz_gpu.as_ref()) {
-        if should_run("fingerprinting/stringzillas::Fingerprints(1xGPU)") {
+        if should_run("fingerprinting/stringzillas/Fingerprints(1xGPU)") {
             g.throughput(Throughput::Elements(per_batch_hash_ops));
-            g.bench_function("stringzillas::Fingerprints(1xGPU)", |b| {
+            g.bench_function("stringzillas/Fingerprints(1xGPU)", |b| {
                 start_idx = 0;
                 b.iter(|| {
                     let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
@@ -452,9 +438,9 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     let mut out = Vec::with_capacity(batch_size);
     let mut combined_signature = Vec::with_capacity(ndim);
 
-    if should_run("fingerprinting/pc::MinHash<ByteGrams>") {
+    if should_run("fingerprinting/pc/MinHash<ByteGrams>()") {
         g.throughput(Throughput::Elements(per_batch_hash_ops));
-        g.bench_function("pc::MinHash<ByteGrams>", |b| {
+        g.bench_function("pc/MinHash<ByteGrams>()", |b| {
             start_idx = 0;
             b.iter(|| {
                 let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
@@ -501,9 +487,9 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
 
     // Serial MinHash baseline implementing correct independent hash functions
     // This addresses the flaw in probabilistic_collections where hash function index is ignored
-    if should_run("fingerprinting/serial::MinHash<ByteGrams>") {
+    if should_run("fingerprinting/serial/MinHash<ByteGrams>()") {
         g.throughput(Throughput::Elements(per_batch_hash_ops));
-        g.bench_function("serial::MinHash<ByteGrams>", |b| {
+        g.bench_function("serial/MinHash<ByteGrams>()", |b| {
             // Pre-construct hash parameters for independent universal hash functions
             // Each hash function uses: hash_i(x) = (a_i * hash(x) + b_i) mod mersenne_prime
 
@@ -609,6 +595,7 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
 }
 
 fn main() {
+    install_panic_hook();
     log_stringzilla_metadata();
     println!("Text Fingerprinting Benchmarks");
     println!("- szs::Fingerprints: CPU/GPU fingerprints with multi-width byte n-grams");

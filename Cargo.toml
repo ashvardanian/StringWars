@@ -14,7 +14,7 @@ categories = ["text-processing", "development-tools::profiling"]
 [dependencies]
 criterion = "0.7.0"
 stringtape = "2.4.0"
-stringzilla = { git = "https://github.com/ashvardanian/StringZilla.git", branch = "main-dev", default-features = false }
+stringzilla = { version = "4.4.0", default-features = false }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
@@ -28,8 +28,13 @@ bench_find = [
     "memchr",       # Substring search
     "bstr",         # Byteset search
     "aho-corasick", # Byteset search
-    "icu",          # Unicode properties for character matching
-    "simdutf",      # SIMD UTF-8 validation and transcoding
+]
+bench_unicode = [
+    "icu",      # Unicode properties (WhiteSpace, etc.)
+    "simdutf",  # SIMD UTF-8 validation and transcoding
+    "unicase",  # Case-insensitive string wrapper
+    "focaccia", # Unicode case folding
+    "rand",     # Random needle sampling
 ]
 bench_hash = [
     "bit-set",      # for collision counting
@@ -106,6 +111,14 @@ features = ["compiled_data"]
 
 [dependencies.simdutf]
 version = "0.6"
+optional = true
+
+[dependencies.unicase]
+version = "2.7"
+optional = true
+
+[dependencies.focaccia]
+version = "2.0"
 optional = true
 
 [dependencies.regex]
@@ -229,6 +242,12 @@ name = "bench_find"
 path = "bench_find.rs"
 harness = false
 required-features = ["bench_find"]
+
+[[bench]]
+name = "bench_unicode"
+path = "bench_unicode.rs"
+harness = false
+required-features = ["bench_unicode"]
 
 [[bench]]
 name = "bench_similarities"

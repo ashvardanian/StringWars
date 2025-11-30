@@ -9,23 +9,23 @@ authors = [
 ]
 license = { text = "Apache 2.0" }
 
+# Keep the base install minimal; opt into extras per-bench
+dependencies = []
+
 [project.urls]
 Homepage = "https://ashvardanian.com/posts/stringwars-on-gpus"
 Repository = "https://github.com/ashvardanian/StringWars"
 
-# Keep the base install minimal; opt into extras per-bench
-dependencies = []
-
 [project.optional-dependencies]
 # Substring/byteset + transforms
-find = ["stringzilla", "pyahocorasick"]
+find = ["stringzilla>=4.4.0", "pyahocorasick"]
 
 # Sequence ops (split/sort)
-sequence = ["stringzilla", "pandas", "pyarrow", "polars"]
+sequence = ["stringzilla>=4.4.0", "pandas", "pyarrow", "polars"]
 
 # Fingerprinting/sketching
 fingerprints = [
-  "stringzilla",
+  "stringzilla>=4.4.0",
   "stringzillas-cpus",
   "datasketch",
   "numpy",
@@ -34,7 +34,7 @@ fingerprints = [
 
 # Similarities / edit distances
 similarities = [
-  "stringzilla",
+  "stringzilla>=4.4.0",
   "stringzillas-cpus",
   "jellyfish",
   "python-Levenshtein",
@@ -47,10 +47,10 @@ similarities = [
 ]
 
 # Hash functions
-hash = ["stringzilla", "xxhash", "blake3", "google-crc32c", "mmh3", "cityhash"]
+hash = ["stringzilla>=4.4.0", "xxhash", "blake3", "google-crc32c", "mmh3", "cityhash"]
 
 # Random byte generators and translation tables
-memory = ["stringzilla", "numpy", "pycryptodome", "opencv-python"]
+memory = ["stringzilla>=4.4.0", "numpy", "pycryptodome", "opencv-python"]
 
 [tool.ruff]
 # Enforce 120-column lines across formatting and linting

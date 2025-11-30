@@ -1,7 +1,221 @@
 use std::borrow::Cow;
 use std::env;
+use std::fmt;
 use std::fs;
+use std::panic;
+use std::path::Path;
+use std::str::FromStr;
 use stringtape::BytesCowsAuto;
+
+// ============================================================================
+// Environment Variable Helpers
+// ============================================================================
+// Standardized functions for fetching environment variables consistently.
+// Use these instead of raw env::var() calls throughout the codebase.
+
+/// Get an optional environment variable, returning None if not set.
+#[allow(dead_code)]
+pub fn get_env(name: &str) -> Option<String> {
+    env::var(name).ok()
+}
+
+/// Get an environment variable with a default value.
+#[allow(dead_code)]
+pub fn get_env_or_default(name: &str, default: &str) -> String {
+    env::var(name).unwrap_or_else(|_| default.to_string())
+}
+
+/// Get an environment variable parsed to a type, with a default value.
+/// Returns the default if the variable is not set or cannot be parsed.
+#[allow(dead_code)]
+pub fn get_env_parsed<T: FromStr>(name: &str, default: T) -> T {
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Get an optional environment variable parsed to a type.
+/// Returns None if the variable is not set or cannot be parsed.
+#[allow(dead_code)]
+pub fn get_env_parsed_opt<T: FromStr>(name: &str) -> Option<T> {
+    env::var(name).ok().and_then(|v| v.parse().ok())
+}
+
+/// Get a boolean environment variable.
+/// Accepts "1", "true", or "yes" (case-insensitive) as true values.
+/// Returns false if not set or set to any other value.
+#[allow(dead_code)]
+pub fn get_env_bool(name: &str) -> bool {
+    env::var(name)
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+// ============================================================================
+
+/// Installs a custom panic hook that formats errors cleanly for CLI usage.
+/// Call this at the start of main() before any potential panics.
+#[allow(dead_code)]
+pub fn install_panic_hook() {
+    panic::set_hook(Box::new(|info| {
+        let message = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown error".to_string()
+        };
+
+        // Print clean error message
+        eprintln!("\nError: {}", message);
+
+        // Only show location in debug builds or if RUST_BACKTRACE is set
+        if cfg!(debug_assertions) || get_env("RUST_BACKTRACE").is_some() {
+            if let Some(location) = info.location() {
+                eprintln!("  at {}:{}", location.file(), location.line());
+            }
+        }
+    }));
+}
+
+/// Extension trait for Result that provides clean panic-on-error semantics.
+/// Uses Display formatting for errors (not Debug), which works well with
+/// the custom panic hook for user-friendly CLI error messages.
+#[allow(dead_code)]
+pub trait ResultExt<T> {
+    /// Unwrap the result or panic with the Display-formatted error.
+    /// Equivalent to `.unwrap_or_else(|e| panic!("{}", e))` but cleaner.
+    fn unwrap_nice(self) -> T;
+
+    /// Unwrap the result or panic with a custom message and the error.
+    /// Equivalent to `.unwrap_or_else(|e| panic!("{}: {}", msg, e))`.
+    fn expect_nice(self, msg: &str) -> T;
+}
+
+impl<T, E: fmt::Display> ResultExt<T> for Result<T, E> {
+    #[track_caller]
+    fn unwrap_nice(self) -> T {
+        match self {
+            Ok(v) => v,
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[track_caller]
+    fn expect_nice(self, msg: &str) -> T {
+        match self {
+            Ok(v) => v,
+            Err(e) => panic!("{}: {}", msg, e),
+        }
+    }
+}
+
+/// Extension trait for Option that provides clean panic-on-none semantics.
+#[allow(dead_code)]
+pub trait OptionExt<T> {
+    /// Unwrap the option or panic with a custom message.
+    fn expect_nice(self, msg: &str) -> T;
+}
+
+impl<T> OptionExt<T> for Option<T> {
+    #[track_caller]
+    fn expect_nice(self, msg: &str) -> T {
+        match self {
+            Some(v) => v,
+            None => panic!("{}", msg),
+        }
+    }
+}
+
+/// Errors that can occur when loading a dataset.
+#[derive(Debug)]
+pub enum DatasetError {
+    /// The STRINGWARS_DATASET environment variable is not set.
+    EnvVarNotSet,
+    /// The dataset file does not exist.
+    FileNotFound { path: String },
+    /// Failed to read the dataset file.
+    ReadError {
+        path: String,
+        source: std::io::Error,
+    },
+    /// The dataset file is empty.
+    EmptyFile { path: String },
+    /// No tokens were extracted from the dataset.
+    NoTokens { path: String, mode: String },
+    /// Unknown tokenization mode.
+    UnknownMode { mode: String },
+    /// Failed to create the token tape.
+    TapeCreationFailed { path: String },
+}
+
+impl fmt::Display for DatasetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DatasetError::EnvVarNotSet => {
+                write!(
+                    f,
+                    "STRINGWARS_DATASET environment variable not set.\n\n\
+                     Usage: STRINGWARS_DATASET=<file> STRINGWARS_TOKENS=<mode> cargo criterion ...\n\n\
+                     Examples:\n  \
+                       STRINGWARS_DATASET=README.md STRINGWARS_TOKENS=lines cargo criterion ...\n  \
+                       STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=words cargo criterion ..."
+                )
+            }
+            DatasetError::FileNotFound { path } => {
+                write!(
+                    f,
+                    "Dataset file not found: {}\n\n\
+                     Please ensure the file exists. For Leipzig corpora, download with:\n  \
+                       curl -fL https://downloads.wortschatz-leipzig.de/corpora/<corpus>.tar.gz \\\n    \
+                         | tar --wildcards -xzf - --to-stdout '*-sentences.txt' | cut -f2 > {}",
+                    path, path
+                )
+            }
+            DatasetError::ReadError { path, source } => {
+                write!(f, "Failed to read dataset '{}': {}", path, source)
+            }
+            DatasetError::EmptyFile { path } => {
+                write!(
+                    f,
+                    "Dataset file is empty: {}\n\n\
+                     Please provide a non-empty file.",
+                    path
+                )
+            }
+            DatasetError::NoTokens { path, mode } => {
+                write!(
+                    f,
+                    "No tokens found in dataset '{}' with mode '{}'.\n\n\
+                     The file exists but contains no valid tokens for this mode.\n\
+                     Try a different STRINGWARS_TOKENS mode (lines, words, or file).",
+                    path, mode
+                )
+            }
+            DatasetError::UnknownMode { mode } => {
+                write!(
+                    f,
+                    "Unknown STRINGWARS_TOKENS mode: '{}'\n\n\
+                     Valid modes: 'lines', 'words', 'file'",
+                    mode
+                )
+            }
+            DatasetError::TapeCreationFailed { path } => {
+                write!(f, "Failed to create token tape from '{}'", path)
+            }
+        }
+    }
+}
+
+impl std::error::Error for DatasetError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            DatasetError::ReadError { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
 
 /// Forces the allocator to release memory back to the OS.
 /// This is particularly useful after dropping large allocations in benchmarks.
@@ -27,21 +241,41 @@ pub fn reclaim_memory() {
 /// Can be cast to CharsCowsAuto for UTF-8 string benchmarks (StringTape 2.2+).
 /// Supports `STRINGWARS_MAX_TOKENS` to limit the number of tokens loaded.
 /// Logs dataset statistics to stderr.
+///
+/// # Errors
+/// Returns `DatasetError` if:
+/// - `STRINGWARS_DATASET` environment variable is not set
+/// - The dataset file does not exist or cannot be read
+/// - The dataset file is empty
+/// - No tokens can be extracted from the dataset
+/// - Unknown tokenization mode is specified
 #[allow(dead_code)]
-pub fn load_dataset() -> BytesCowsAuto<'static> {
-    let dataset_path =
-        env::var("STRINGWARS_DATASET").expect("STRINGWARS_DATASET environment variable not set");
-    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-    let max_tokens = env::var("STRINGWARS_MAX_TOKENS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok());
+pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
+    let dataset_path = get_env("STRINGWARS_DATASET").ok_or(DatasetError::EnvVarNotSet)?;
+    let mode = get_env_or_default("STRINGWARS_TOKENS", "lines");
+    let max_tokens: Option<usize> = get_env_parsed_opt("STRINGWARS_MAX_TOKENS");
 
     if let Some(max) = max_tokens {
         eprintln!("STRINGWARS_MAX_TOKENS: limiting to {} tokens", max);
     }
 
-    // Read and leak the content to get 'static lifetime
-    let content = fs::read(&dataset_path).expect("Could not read dataset");
+    // Check if file exists before attempting to read
+    if !Path::new(&dataset_path).exists() {
+        return Err(DatasetError::FileNotFound { path: dataset_path });
+    }
+
+    // Read the file content
+    let content = fs::read(&dataset_path).map_err(|e| DatasetError::ReadError {
+        path: dataset_path.clone(),
+        source: e,
+    })?;
+
+    // Check for empty file
+    if content.is_empty() {
+        return Err(DatasetError::EmptyFile { path: dataset_path });
+    }
+
+    // Leak the content to get 'static lifetime
     let content_static: &'static [u8] = Box::leak(content.into_boxed_slice());
     let content_bytes = Cow::Borrowed(content_static);
 
@@ -71,22 +305,29 @@ pub fn load_dataset() -> BytesCowsAuto<'static> {
             let iter = std::iter::once(content_static);
             BytesCowsAuto::from_iter_and_data(iter, content_bytes)
         }
-        other => panic!(
-            "Unknown STRINGWARS_TOKENS: {}. Use 'lines', 'words', or 'file'.",
-            other
-        ),
+        other => {
+            return Err(DatasetError::UnknownMode {
+                mode: other.to_string(),
+            });
+        }
     };
 
-    let tape = tape.expect("Failed to create BytesTape");
+    let tape = tape.map_err(|_| DatasetError::TapeCreationFailed {
+        path: dataset_path.clone(),
+    })?;
+
+    // Check if we got any tokens
+    if tape.is_empty() {
+        return Err(DatasetError::NoTokens {
+            path: dataset_path,
+            mode,
+        });
+    }
 
     // Streaming statistics with log-scale histogram (O(1) memory)
     let count = tape.len();
-    let total_bytes: usize = tape.iter().map(|s| s.len()).sum();
-    let mean_len = if count > 0 {
-        total_bytes as f64 / count as f64
-    } else {
-        0.0
-    };
+    let total_bytes: usize = tape.iter().map(|s: &[u8]| s.len()).sum();
+    let mean_len = total_bytes as f64 / count as f64;
 
     // Log-scale buckets: 0, 1, 2-3, 4-7, 8-15, 16-31, ... 32K-64K, 64K+
     let mut buckets = [0u64; 18];
@@ -95,7 +336,7 @@ pub fn load_dataset() -> BytesCowsAuto<'static> {
     let mut variance_sum = 0.0;
 
     for token in tape.iter() {
-        let len = token.len();
+        let len: usize = token.len();
         min_len = min_len.min(len);
         max_len = max_len.max(len);
 
@@ -116,7 +357,7 @@ pub fn load_dataset() -> BytesCowsAuto<'static> {
         buckets[bucket] += 1;
     }
 
-    let std_dev = (variance_sum / count as f64).sqrt();
+    let std_dev: f64 = (variance_sum / count as f64).sqrt();
 
     eprintln!(
         "Dataset: {} tokens, {} bytes ({:.2} GB)\n  \
@@ -148,7 +389,7 @@ pub fn load_dataset() -> BytesCowsAuto<'static> {
         }
     }
 
-    tape
+    Ok(tape)
 }
 
 /// Format large numbers with thousand separators for readability
@@ -196,7 +437,7 @@ pub fn should_run(name: &str) -> bool {
     use std::sync::Once;
     static FILTER_INIT: Once = Once::new();
 
-    if let Ok(filter) = env::var("STRINGWARS_FILTER") {
+    if let Some(filter) = get_env("STRINGWARS_FILTER") {
         FILTER_INIT.call_once(|| {
             eprintln!("STRINGWARS_FILTER active: '{}'", filter);
         });
@@ -611,10 +852,6 @@ impl Measurement for ComparisonsWallTime {
         &ComparisonsFormatter
     }
 }
-
-// ============================================================================
-// Perf profiling utilities for comprehensive hardware counter collection
-// ============================================================================
 
 /// RAII guard that profiles a code section using perf events on Linux.
 /// On non-Linux platforms, this is a zero-cost abstraction.

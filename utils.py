@@ -8,7 +8,67 @@ used across bench_find.py, bench_hash.py, and other benchmarking scripts.
 import os
 import re
 import time
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, TypeVar, Union
+
+T = TypeVar("T")
+
+
+# ============================================================================
+# Environment Variable Helpers
+# ============================================================================
+# Standardized functions for fetching environment variables consistently.
+# Use these instead of raw os.environ.get() calls throughout the codebase.
+
+
+def get_env(name: str) -> Optional[str]:
+    """Get an optional environment variable, returning None if not set."""
+    return os.environ.get(name)
+
+
+def get_env_or_default(name: str, default: str) -> str:
+    """Get an environment variable with a default value."""
+    return os.environ.get(name, default)
+
+
+def get_env_parsed(name: str, default: T, parser: Callable[[str], T] = int) -> T:
+    """
+    Get an environment variable parsed to a type, with a default value.
+    Returns the default if the variable is not set or cannot be parsed.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return parser(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def get_env_parsed_opt(name: str, parser: Callable[[str], T] = int) -> Optional[T]:
+    """
+    Get an optional environment variable parsed to a type.
+    Returns None if the variable is not set or cannot be parsed.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    try:
+        return parser(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def get_env_bool(name: str) -> bool:
+    """
+    Get a boolean environment variable.
+    Accepts "1", "true", or "yes" (case-insensitive) as true values.
+    Returns False if not set or set to any other value.
+    """
+    value = os.environ.get(name, "").lower()
+    return value in ("1", "true", "yes")
+
+
+# ============================================================================
 
 
 def now_ns() -> int:
@@ -63,7 +123,7 @@ def load_dataset(
         Dataset contents as str or bytes based on as_bytes parameter
     """
     if dataset_path is None:
-        dataset_path = os.environ.get("STRINGWARS_DATASET")
+        dataset_path = get_env("STRINGWARS_DATASET")
         if dataset_path is None:
             raise ValueError("No dataset path provided and STRINGWARS_DATASET not set")
 
@@ -98,7 +158,7 @@ def tokenize_dataset(haystack: Union[str, bytes], tokens_mode: Optional[str] = N
         List of tokens in the same type as input (List[str] or List[bytes])
     """
     if tokens_mode is None:
-        tokens_mode = os.environ.get("STRINGWARS_TOKENS", "words")
+        tokens_mode = get_env_or_default("STRINGWARS_TOKENS", "words")
 
     is_bytes = isinstance(haystack, bytes)
 
@@ -129,7 +189,8 @@ def add_common_args(parser):
         "-k",
         "--filter",
         metavar="REGEX",
-        help="Regex to select which benchmarks to run",
+        default=get_env("STRINGWARS_FILTER"),
+        help="Regex to select which benchmarks to run (or set STRINGWARS_FILTER env var)",
     )
     parser.add_argument(
         "--time-limit",
