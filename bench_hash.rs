@@ -67,7 +67,6 @@ RUSTFLAGS="-C target-cpu=native" \
 Note: `gxhash` and `cityhash` are only compiled on x86_64 targets as they require x86-specific instructions.
 "#]
 use std::collections::HashSet;
-use std::env;
 use std::hash::{BuildHasher, Hasher};
 use std::hint::black_box;
 
@@ -91,7 +90,7 @@ use cityhash;
 use gxhash;
 
 mod utils;
-use utils::{install_panic_hook, load_dataset, should_run, ResultExt};
+use utils::{get_env_bool, install_panic_hook, load_dataset, should_run, ResultExt};
 
 /// Counts collisions for a given hash function using a bitset sized to the number of unique tokens
 fn count_collisions<F>(unique_tokens: &[&[u8]], hash_fn: F) -> usize
@@ -160,9 +159,7 @@ fn bench_stateless(
 
     // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable
     // This avoids OOM on large datasets (can use GBs of RAM for deduplication)
-    let enable_collision_detection = env::var("STRINGWARS_COLLISIONS")
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(false);
+    let enable_collision_detection = get_env_bool("STRINGWARS_COLLISIONS");
 
     let unique_tokens: Vec<&[u8]> = if enable_collision_detection {
         println!("\nComputing unique tokens for collision detection...");
@@ -186,8 +183,8 @@ fn bench_stateless(
     let tokens = tokens_tape.view();
 
     // Benchmark: StringZilla
-    if should_run("stateless/stringzilla::hash") {
-        group.bench_function("stringzilla::hash", |b| {
+    if should_run("stateless/stringzilla/hash()") {
+        group.bench_function("stringzilla/hash()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let _ = black_box(sz::hash(black_box(token)));
@@ -200,9 +197,9 @@ fn bench_stateless(
     }
 
     // Benchmark: SipHash via `std::DefaultHasher`
-    if should_run("stateless/std::DefaultHasher::hash_one") {
+    if should_run("stateless/std/DefaultHasher.hash_one()") {
         let std_builder = std::collections::hash_map::RandomState::new();
-        group.bench_function("std::DefaultHasher::hash_one", |b| {
+        group.bench_function("std/DefaultHasher.hash_one()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let t = black_box(token);
@@ -216,9 +213,9 @@ fn bench_stateless(
     }
 
     // Benchmark: aHash
-    if should_run("stateless/aHash::hash_one") {
+    if should_run("stateless/ahash/hash_one()") {
         let hash_builder = AHashState::with_seed(42);
-        group.bench_function("aHash::hash_one", |b| {
+        group.bench_function("ahash/hash_one()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let t = black_box(token);
@@ -232,8 +229,8 @@ fn bench_stateless(
     }
 
     // Benchmark: xxHash
-    if should_run("stateless/xxh3::xxh3_64") {
-        group.bench_function("xxh3::xxh3_64", |b| {
+    if should_run("stateless/xxh3/xxh3_64()") {
+        group.bench_function("xxh3/xxh3_64()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let t = black_box(token);
@@ -248,8 +245,8 @@ fn bench_stateless(
 
     // Benchmark: gxhash (x86_64 only)
     #[cfg(target_arch = "x86_64")]
-    if should_run("stateless/gxhash::gxhash64") {
-        group.bench_function("gxhash::gxhash64", |b| {
+    if should_run("stateless/gxhash/gxhash64()") {
+        group.bench_function("gxhash/gxhash64()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let t = black_box(token);
@@ -263,9 +260,9 @@ fn bench_stateless(
     }
 
     // Benchmark: FoldHash
-    if should_run("stateless/foldhash::hash_one") {
+    if should_run("stateless/foldhash/hash_one()") {
         let foldhash_builder = foldhash::fast::RandomState::default();
-        group.bench_function("foldhash::hash_one", |b| {
+        group.bench_function("foldhash/hash_one()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let t = black_box(token);
@@ -279,8 +276,8 @@ fn bench_stateless(
     }
 
     // Benchmark: CRC32
-    if should_run("stateless/crc32fast::hash") {
-        group.bench_function("crc32fast::hash", |b| {
+    if should_run("stateless/crc32fast/hash()") {
+        group.bench_function("crc32fast/hash()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let t = black_box(token);
@@ -294,8 +291,8 @@ fn bench_stateless(
     }
 
     // Benchmark: MurmurHash32 via `murmurhash32` (stateless)
-    if should_run("stateless/murmurhash32") {
-        group.bench_function("murmurhash32", |b| {
+    if should_run("stateless/murmurhash32/murmurhash3()") {
+        group.bench_function("murmurhash32/murmurhash3()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let t = black_box(token);
@@ -310,8 +307,8 @@ fn bench_stateless(
 
     // Benchmark: CityHash64 via `cityhash` (stateless, x86_64 only)
     #[cfg(target_arch = "x86_64")]
-    if should_run("stateless/cityhash::city_hash_64") {
-        group.bench_function("cityhash::city_hash_64", |b| {
+    if should_run("stateless/cityhash/city_hash_64()") {
+        group.bench_function("cityhash/city_hash_64()", |b| {
             b.iter(|| {
                 for token in &tokens {
                     let t = black_box(token);
@@ -339,9 +336,7 @@ fn bench_checksum(
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable
-    let enable_collision_detection = env::var("STRINGWARS_COLLISIONS")
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(false);
+    let enable_collision_detection = get_env_bool("STRINGWARS_COLLISIONS");
 
     let unique_tokens: Vec<&[u8]> = if enable_collision_detection {
         let unique_set: HashSet<&[u8]> = tokens.iter().collect();
@@ -357,8 +352,8 @@ fn bench_checksum(
     };
 
     // Benchmark: StringZilla `bytesum` reference lower bound
-    if should_run("checksum/stringzilla::bytesum") {
-        group.bench_function("stringzilla::bytesum", |b| {
+    if should_run("checksum/stringzilla/bytesum()") {
+        group.bench_function("stringzilla/bytesum()", |b| {
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(token);
@@ -369,8 +364,8 @@ fn bench_checksum(
     }
 
     // Benchmark: Blake3 - cryptographic hash
-    if should_run("checksum/blake3::hash") {
-        group.bench_function("blake3::hash", |b| {
+    if should_run("checksum/blake3/hash()") {
+        group.bench_function("blake3/hash()", |b| {
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(token);
@@ -390,8 +385,8 @@ fn bench_checksum(
     }
 
     // Benchmark: SHA256 via sha2
-    if should_run("checksum/sha2::Sha256") {
-        group.bench_function("sha2::Sha256", |b| {
+    if should_run("checksum/sha2/Sha256()") {
+        group.bench_function("sha2/Sha256()", |b| {
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(token);
@@ -415,8 +410,8 @@ fn bench_checksum(
     }
 
     // Benchmark: SHA256 via ring
-    if should_run("checksum/ring::SHA256") {
-        group.bench_function("ring::SHA256", |b| {
+    if should_run("checksum/ring/SHA256()") {
+        group.bench_function("ring/SHA256()", |b| {
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(token);
@@ -436,8 +431,8 @@ fn bench_checksum(
     }
 
     // Benchmark: SHA256 via stringzilla
-    if should_run("checksum/stringzilla::Sha256") {
-        group.bench_function("stringzilla::Sha256", |b| {
+    if should_run("checksum/stringzilla/Sha256()") {
+        group.bench_function("stringzilla/Sha256()", |b| {
             b.iter(|| {
                 for token in tokens {
                     let t = black_box(token);
@@ -478,8 +473,8 @@ fn bench_stateful(
     group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark: StringZilla `hash`
-    if should_run("stateful/stringzilla::Hasher") {
-        group.bench_function("stringzilla::Hasher", |b| {
+    if should_run("stateful/stringzilla/Hasher()") {
+        group.bench_function("stringzilla/Hasher()", |b| {
             b.iter(|| {
                 let mut hasher = sz::Hasher::new(0);
                 for token in &tokens {
@@ -491,8 +486,8 @@ fn bench_stateful(
     }
 
     // Benchmark: SipHash via `std::DefaultHasher`
-    if should_run("stateful/std::DefaultHasher") {
-        group.bench_function("std::DefaultHasher", |b| {
+    if should_run("stateful/std/DefaultHasher()") {
+        group.bench_function("std/DefaultHasher()", |b| {
             let std_builder = std::collections::hash_map::RandomState::new();
             b.iter(|| {
                 let mut aggregate = std_builder.build_hasher();
@@ -505,8 +500,8 @@ fn bench_stateful(
     }
 
     // Benchmark: aHash
-    if should_run("stateful/aHash::AHasher") {
-        group.bench_function("aHash::AHasher", |b| {
+    if should_run("stateful/ahash/AHasher()") {
+        group.bench_function("ahash/AHasher()", |b| {
             let state = AHashState::with_seed(42);
             b.iter(|| {
                 let mut aggregate = state.build_hasher();
@@ -519,8 +514,8 @@ fn bench_stateful(
     }
 
     // Benchmark: FoldHash
-    if should_run("stateful/foldhash::FoldHasher") {
-        group.bench_function("foldhash::FoldHasher", |b| {
+    if should_run("stateful/foldhash/FoldHasher()") {
+        group.bench_function("foldhash/FoldHasher()", |b| {
             let state = foldhash::fast::RandomState::default();
             b.iter(|| {
                 let mut aggregate = state.build_hasher();
@@ -533,8 +528,8 @@ fn bench_stateful(
     }
 
     // Benchmark: CRC32
-    if should_run("stateful/crc32fast::Hasher") {
-        group.bench_function("crc32fast::Hasher", |b| {
+    if should_run("stateful/crc32fast/Hasher()") {
+        group.bench_function("crc32fast/Hasher()", |b| {
             b.iter(|| {
                 let mut hasher = crc32fast::Hasher::new();
                 for token in &tokens {

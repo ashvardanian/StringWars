@@ -73,9 +73,9 @@ fn bench_tokenize_whitespace(
     g.throughput(Throughput::Bytes(haystack.len() as u64));
 
     // Benchmark for StringZilla whitespace splits.
-    if should_run("tokenize-whitespace/stringzilla::utf8_whitespace_splits().count()") {
+    if should_run("tokenize-whitespace/stringzilla/utf8_whitespace_splits().count()") {
         use sz::StringZillableUnary;
-        g.bench_function("stringzilla::utf8_whitespace_splits().count()", |b| {
+        g.bench_function("stringzilla/utf8_whitespace_splits().count()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
                 let count: usize = haystack_bytes.sz_utf8_whitespace_splits().count();
@@ -85,8 +85,8 @@ fn bench_tokenize_whitespace(
     }
 
     // Benchmark for Rust stdlib char::is_whitespace.
-    if should_run("tokenize-whitespace/stdlib::split(char::is_whitespace).count()") {
-        g.bench_function("stdlib::split(char::is_whitespace).count()", |b| {
+    if should_run("tokenize-whitespace/std/split(char::is_whitespace).count()") {
+        g.bench_function("std/split(char::is_whitespace).count()", |b| {
             b.iter(|| {
                 let haystack_str = black_box(std::str::from_utf8(haystack).unwrap());
                 let count: usize = haystack_str
@@ -99,9 +99,9 @@ fn bench_tokenize_whitespace(
     }
 
     // Benchmark for ICU4X WhiteSpace property.
-    if should_run("tokenize-whitespace/icu::WhiteSpace.split().count()") {
+    if should_run("tokenize-whitespace/icu/WhiteSpace.split().count()") {
         let white_space = CodePointSetData::new::<WhiteSpace>();
-        g.bench_function("icu::WhiteSpace.split().count()", |b| {
+        g.bench_function("icu/WhiteSpace.split().count()", |b| {
             b.iter(|| {
                 let haystack_str = black_box(std::str::from_utf8(haystack).unwrap());
                 let count: usize = haystack_str
@@ -131,9 +131,9 @@ fn bench_tokenize_newlines(
     }
 
     // Benchmark for StringZilla newline splits.
-    if should_run("tokenize-newlines/stringzilla::utf8_newline_splits().count()") {
+    if should_run("tokenize-newlines/stringzilla/utf8_newline_splits().count()") {
         use sz::StringZillableUnary;
-        g.bench_function("stringzilla::utf8_newline_splits().count()", |b| {
+        g.bench_function("stringzilla/utf8_newline_splits().count()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
                 let count: usize = haystack_bytes.sz_utf8_newline_splits().count();
@@ -143,8 +143,8 @@ fn bench_tokenize_newlines(
     }
 
     // Benchmark for custom newline predicate.
-    if should_run("tokenize-newlines/custom::split(is_unicode_newline).count()") {
-        g.bench_function("custom::split(is_unicode_newline).count()", |b| {
+    if should_run("tokenize-newlines/custom/split(is_unicode_newline).count()") {
+        g.bench_function("custom/split(is_unicode_newline).count()", |b| {
             b.iter(|| {
                 let haystack_str = black_box(std::str::from_utf8(haystack).unwrap());
                 let count: usize = haystack_str
@@ -166,9 +166,9 @@ fn bench_utf8_length(
     g.throughput(Throughput::Bytes(haystack.len() as u64));
 
     // Benchmark for StringZilla UTF-8 character counting.
-    if should_run("utf8-length/stringzilla::utf8_chars().len()") {
+    if should_run("utf8-length/stringzilla/utf8_chars().len()") {
         use sz::StringZillableUnary;
-        g.bench_function("stringzilla::utf8_chars().len()", |b| {
+        g.bench_function("stringzilla/utf8_chars().len()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
                 let count: usize = haystack_bytes.sz_utf8_chars().len();
@@ -178,8 +178,8 @@ fn bench_utf8_length(
     }
 
     // Benchmark for simdutf UTF-8 character counting.
-    if should_run("utf8-length/simdutf::count_utf8()") {
-        g.bench_function("simdutf::count_utf8()", |b| {
+    if should_run("utf8-length/simdutf/count_utf8()") {
+        g.bench_function("simdutf/count_utf8()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
                 let count: usize = simdutf::count_utf8(haystack_bytes);
@@ -189,8 +189,8 @@ fn bench_utf8_length(
     }
 
     // Benchmark for stdlib UTF-8 character counting.
-    if should_run("utf8-length/stdlib::chars().count()") {
-        g.bench_function("stdlib::chars().count()", |b| {
+    if should_run("utf8-length/std/chars().count()") {
+        g.bench_function("std/chars().count()", |b| {
             b.iter(|| {
                 let haystack_str = black_box(std::str::from_utf8(haystack).unwrap());
                 let count: usize = haystack_str.chars().count();
@@ -209,9 +209,9 @@ fn bench_utf8_iterate(
     g.throughput(Throughput::Bytes(haystack.len() as u64));
 
     // Benchmark for StringZilla UTF-8 character iteration.
-    if should_run("utf8-iterate/stringzilla::utf8_chars().iter()") {
+    if should_run("utf8-iterate/stringzilla/utf8_chars().iter()") {
         use sz::StringZillableUnary;
-        g.bench_function("stringzilla::utf8_chars().iter()", |b| {
+        g.bench_function("stringzilla/utf8_chars().iter()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
                 let mut sum: u32 = 0;
@@ -224,10 +224,10 @@ fn bench_utf8_iterate(
     }
 
     // Benchmark for simdutf UTF-8 to UTF-32 conversion.
-    if should_run("utf8-iterate/simdutf::convert_utf8_to_utf32()") {
+    if should_run("utf8-iterate/simdutf/convert_utf8_to_utf32()") {
         // Pre-allocate buffer for UTF-32 output (worst case: same number of codepoints as bytes)
         let mut utf32_buffer = vec![0u32; haystack.len()];
-        g.bench_function("simdutf::convert_utf8_to_utf32()", |b| {
+        g.bench_function("simdutf/convert_utf8_to_utf32()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
                 let len = unsafe {
@@ -247,8 +247,8 @@ fn bench_utf8_iterate(
     }
 
     // Benchmark for stdlib UTF-8 character iteration.
-    if should_run("utf8-iterate/stdlib::chars()") {
-        g.bench_function("stdlib::chars()", |b| {
+    if should_run("utf8-iterate/std/chars()") {
+        g.bench_function("std/chars()", |b| {
             b.iter(|| {
                 let haystack_str = black_box(unsafe { std::str::from_utf8_unchecked(haystack) });
                 let mut sum: u32 = 0;
@@ -279,8 +279,8 @@ fn bench_case_fold(
     let mut fold_buffer = vec![0u8; haystack.len() * 3];
 
     // Benchmark for StringZilla case folding (full Unicode).
-    if should_run("case-fold/stringzilla::utf8_case_fold()") {
-        g.bench_function("stringzilla::utf8_case_fold()", |b| {
+    if should_run("case-fold/stringzilla/utf8_case_fold()") {
+        g.bench_function("stringzilla/utf8_case_fold()", |b| {
             b.iter(|| {
                 let input = black_box(haystack);
                 let len = sz::utf8_case_fold(input, &mut fold_buffer);
@@ -290,8 +290,8 @@ fn bench_case_fold(
     }
 
     // Benchmark for stdlib to_lowercase (full Unicode, allocates).
-    if should_run("case-fold/stdlib::to_lowercase()") {
-        g.bench_function("stdlib::to_lowercase()", |b| {
+    if should_run("case-fold/std/to_lowercase()") {
+        g.bench_function("std/to_lowercase()", |b| {
             b.iter(|| {
                 let input = black_box(haystack_str);
                 let lowered = input.to_lowercase();
@@ -324,8 +324,8 @@ fn bench_case_insensitive_compare(
     g.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Benchmark for StringZilla case-insensitive comparison.
-    if should_run("case-insensitive-compare/stringzilla::utf8_case_insensitive_order()") {
-        g.bench_function("stringzilla::utf8_case_insensitive_order()", |b| {
+    if should_run("case-insensitive-compare/stringzilla/utf8_case_insensitive_order()") {
+        g.bench_function("stringzilla/utf8_case_insensitive_order()", |b| {
             b.iter(|| {
                 let mut matches = 0usize;
                 for (left, right) in &pairs {
@@ -339,8 +339,8 @@ fn bench_case_insensitive_compare(
     }
 
     // Benchmark for unicase equality.
-    if should_run("case-insensitive-compare/unicase::eq()") {
-        g.bench_function("unicase::eq()", |b| {
+    if should_run("case-insensitive-compare/unicase/eq()") {
+        g.bench_function("unicase/eq()", |b| {
             b.iter(|| {
                 let mut matches = 0usize;
                 for (left, right) in &pairs {
@@ -356,8 +356,8 @@ fn bench_case_insensitive_compare(
     }
 
     // Benchmark for focaccia case-insensitive equality (full Unicode).
-    if should_run("case-insensitive-compare/focaccia::unicode_full_case_eq()") {
-        g.bench_function("focaccia::unicode_full_case_eq()", |b| {
+    if should_run("case-insensitive-compare/focaccia/unicode_full_case_eq()") {
+        g.bench_function("focaccia/unicode_full_case_eq()", |b| {
             b.iter(|| {
                 let mut matches = 0usize;
                 for (left, right) in &pairs {
@@ -373,8 +373,8 @@ fn bench_case_insensitive_compare(
     }
 
     // Benchmark for stdlib lowercase + equality (baseline).
-    if should_run("case-insensitive-compare/stdlib::to_lowercase().eq()") {
-        g.bench_function("stdlib::to_lowercase().eq()", |b| {
+    if should_run("case-insensitive-compare/std/to_lowercase().eq()") {
+        g.bench_function("std/to_lowercase().eq()", |b| {
             b.iter(|| {
                 let mut matches = 0usize;
                 for (left, right) in &pairs {
@@ -439,8 +439,8 @@ fn bench_case_insensitive_find(
     ));
 
     // Benchmark for StringZilla case-insensitive find (all matches).
-    if should_run("case-insensitive-find/stringzilla::utf8_case_insensitive_find()") {
-        g.bench_function("stringzilla::utf8_case_insensitive_find()", |b| {
+    if should_run("case-insensitive-find/stringzilla/utf8_case_insensitive_find()") {
+        g.bench_function("stringzilla/utf8_case_insensitive_find()", |b| {
             b.iter(|| {
                 let hay = black_box(haystack);
                 let mut total_matches = 0usize;
@@ -459,7 +459,7 @@ fn bench_case_insensitive_find(
     }
 
     // Benchmark for regex case-insensitive search (all matches).
-    if should_run("case-insensitive-find/regex::find_iter(case_insensitive)") {
+    if should_run("case-insensitive-find/regex/find_iter(case_insensitive)") {
         // Pre-compile regexes for fair comparison
         let regexes: Vec<_> = search_needles
             .iter()
@@ -472,7 +472,7 @@ fn bench_case_insensitive_find(
             })
             .collect();
 
-        g.bench_function("regex::find_iter(case_insensitive)", |b| {
+        g.bench_function("regex/find_iter(case_insensitive)", |b| {
             b.iter(|| {
                 let hay: &[u8] = black_box(haystack);
                 let mut total_matches = 0usize;
@@ -486,8 +486,8 @@ fn bench_case_insensitive_find(
 
     // Benchmark for stdlib: lowercase haystack + needle for each search, find all matches.
     // This is the fair comparison - includes full allocation and case folding cost per search.
-    if should_run("case-insensitive-find/stdlib::to_lowercase().find()") {
-        g.bench_function("stdlib::to_lowercase().find()", |b| {
+    if should_run("case-insensitive-find/std/to_lowercase().find()") {
+        g.bench_function("std/to_lowercase().find()", |b| {
             b.iter(|| {
                 let haystack_str = black_box(haystack_str);
                 let mut total_matches = 0usize;

@@ -4,7 +4,55 @@ use std::fmt;
 use std::fs;
 use std::panic;
 use std::path::Path;
+use std::str::FromStr;
 use stringtape::BytesCowsAuto;
+
+// ============================================================================
+// Environment Variable Helpers
+// ============================================================================
+// Standardized functions for fetching environment variables consistently.
+// Use these instead of raw env::var() calls throughout the codebase.
+
+/// Get an optional environment variable, returning None if not set.
+#[allow(dead_code)]
+pub fn get_env(name: &str) -> Option<String> {
+    env::var(name).ok()
+}
+
+/// Get an environment variable with a default value.
+#[allow(dead_code)]
+pub fn get_env_or_default(name: &str, default: &str) -> String {
+    env::var(name).unwrap_or_else(|_| default.to_string())
+}
+
+/// Get an environment variable parsed to a type, with a default value.
+/// Returns the default if the variable is not set or cannot be parsed.
+#[allow(dead_code)]
+pub fn get_env_parsed<T: FromStr>(name: &str, default: T) -> T {
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Get an optional environment variable parsed to a type.
+/// Returns None if the variable is not set or cannot be parsed.
+#[allow(dead_code)]
+pub fn get_env_parsed_opt<T: FromStr>(name: &str) -> Option<T> {
+    env::var(name).ok().and_then(|v| v.parse().ok())
+}
+
+/// Get a boolean environment variable.
+/// Accepts "1", "true", or "yes" (case-insensitive) as true values.
+/// Returns false if not set or set to any other value.
+#[allow(dead_code)]
+pub fn get_env_bool(name: &str) -> bool {
+    env::var(name)
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
+// ============================================================================
 
 /// Installs a custom panic hook that formats errors cleanly for CLI usage.
 /// Call this at the start of main() before any potential panics.
@@ -23,7 +71,7 @@ pub fn install_panic_hook() {
         eprintln!("\nError: {}", message);
 
         // Only show location in debug builds or if RUST_BACKTRACE is set
-        if cfg!(debug_assertions) || env::var("RUST_BACKTRACE").is_ok() {
+        if cfg!(debug_assertions) || get_env("RUST_BACKTRACE").is_some() {
             if let Some(location) = info.location() {
                 eprintln!("  at {}:{}", location.file(), location.line());
             }
@@ -203,11 +251,9 @@ pub fn reclaim_memory() {
 /// - Unknown tokenization mode is specified
 #[allow(dead_code)]
 pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
-    let dataset_path = env::var("STRINGWARS_DATASET").map_err(|_| DatasetError::EnvVarNotSet)?;
-    let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
-    let max_tokens = env::var("STRINGWARS_MAX_TOKENS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok());
+    let dataset_path = get_env("STRINGWARS_DATASET").ok_or(DatasetError::EnvVarNotSet)?;
+    let mode = get_env_or_default("STRINGWARS_TOKENS", "lines");
+    let max_tokens: Option<usize> = get_env_parsed_opt("STRINGWARS_MAX_TOKENS");
 
     if let Some(max) = max_tokens {
         eprintln!("STRINGWARS_MAX_TOKENS: limiting to {} tokens", max);
@@ -391,7 +437,7 @@ pub fn should_run(name: &str) -> bool {
     use std::sync::Once;
     static FILTER_INIT: Once = Once::new();
 
-    if let Ok(filter) = env::var("STRINGWARS_FILTER") {
+    if let Some(filter) = get_env("STRINGWARS_FILTER") {
         FILTER_INIT.call_once(|| {
             eprintln!("STRINGWARS_FILTER active: '{}'", filter);
         });

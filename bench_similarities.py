@@ -224,9 +224,9 @@ def benchmark_third_party_edit_distances(
     """Benchmark various edit distance implementations."""
 
     # RapidFuzz
-    if should_run("rapidfuzz.Levenshtein.distance", filter_pattern):
+    if should_run("levenshtein/rapidfuzz.Levenshtein.distance()", filter_pattern):
         log_similarity_operation(
-            "rapidfuzz.Levenshtein.distance",
+            "rapidfuzz.Levenshtein.distance()",
             string_pairs,
             rf.distance,
             timeout_seconds=timeout_seconds,
@@ -235,7 +235,7 @@ def benchmark_third_party_edit_distances(
         )
 
     # RapidFuzz batch API
-    # if should_run(f"rapidfuzz.Levenshtein.cpdist(batch={batch_size})", filter_pattern):
+    # if should_run(f"levenshtein/rapidfuzz.Levenshtein.cpdist(batch={batch_size})", filter_pattern):
     #     log_similarity_operation(
     #         f"rapidfuzz.Levenshtein.cpdist(batch={batch_size})",
     #         string_pairs,
@@ -243,9 +243,9 @@ def benchmark_third_party_edit_distances(
     #     )
 
     # python-Levenshtein
-    if should_run("Levenshtein.distance", filter_pattern):
+    if should_run("levenshtein/Levenshtein.distance()", filter_pattern):
         log_similarity_operation(
-            "Levenshtein.distance",
+            "Levenshtein.distance()",
             string_pairs,
             le.distance,
             timeout_seconds=timeout_seconds,
@@ -254,9 +254,9 @@ def benchmark_third_party_edit_distances(
         )
 
     # Jellyfish
-    if should_run("jellyfish.levenshtein_distance", filter_pattern):
+    if should_run("levenshtein/jellyfish.levenshtein_distance()", filter_pattern):
         log_similarity_operation(
-            "jellyfish.levenshtein_distance",
+            "jellyfish.levenshtein_distance()",
             string_pairs,
             jf.levenshtein_distance,
             timeout_seconds=timeout_seconds,
@@ -265,9 +265,9 @@ def benchmark_third_party_edit_distances(
         )
 
     # EditDistance
-    if should_run("editdistance.eval", filter_pattern):
+    if should_run("levenshtein/editdistance.eval()", filter_pattern):
         log_similarity_operation(
-            "editdistance.eval",
+            "editdistance.eval()",
             string_pairs,
             ed.eval,
             timeout_seconds=timeout_seconds,
@@ -276,9 +276,9 @@ def benchmark_third_party_edit_distances(
         )
 
     # NLTK
-    if should_run("nltk.edit_distance", filter_pattern):
+    if should_run("levenshtein/nltk.edit_distance()", filter_pattern):
         log_similarity_operation(
-            "nltk.edit_distance",
+            "nltk.edit_distance()",
             string_pairs,
             nltk_ed,
             timeout_seconds=timeout_seconds,
@@ -287,13 +287,13 @@ def benchmark_third_party_edit_distances(
         )
 
     # Edlib
-    if should_run("edlib.align", filter_pattern):
+    if should_run("levenshtein/edlib.align()", filter_pattern):
 
         def kernel(a: str, b: str) -> int:
             return edlib.align(a, b, mode="NW", task="distance")["editDistance"]
 
         log_similarity_operation(
-            "edlib.align",
+            "edlib.align()",
             string_pairs,
             kernel,
             timeout_seconds=timeout_seconds,
@@ -302,9 +302,9 @@ def benchmark_third_party_edit_distances(
         )
 
     # Polyleven (if available)
-    if should_run("polyleven.levenshtein", filter_pattern) and POLYLEVEN_AVAILABLE:
+    if should_run("levenshtein/polyleven.levenshtein()", filter_pattern) and POLYLEVEN_AVAILABLE:
         log_similarity_operation(
-            "polyleven.levenshtein",
+            "polyleven.levenshtein()",
             string_pairs,
             polyleven.levenshtein,
             timeout_seconds=timeout_seconds,
@@ -313,7 +313,7 @@ def benchmark_third_party_edit_distances(
         )
 
     # cuDF edit_distance
-    if should_run(f"cudf.edit_distance(1xGPU,batch={batch_size})", filter_pattern) and CUDF_AVAILABLE:
+    if should_run(f"levenshtein/cudf.edit_distance(1xGPU,batch={batch_size})", filter_pattern) and CUDF_AVAILABLE:
 
         def batch_kernel(a_array: Sequence, b_array: Sequence) -> List[int]:
             results = a_array.str.edit_distance(b_array)
@@ -353,7 +353,7 @@ def benchmark_stringzillas_edit_distances(
     moved_pairs = (sz.Strs(string_pairs[0]), sz.Strs(string_pairs[1]))
 
     # Single-input variants on 1 CPU core
-    if should_run(f"{szs_name}(1xCPU)", filter_pattern):
+    if should_run(f"levenshtein/{szs_name}(1xCPU)", filter_pattern):
 
         engine = szs_class(capabilities=default_scope)
 
@@ -370,7 +370,7 @@ def benchmark_stringzillas_edit_distances(
         )
 
     # Single-input variants on all CPU cores
-    if should_run(f"{szs_name}({cpu_cores}xCPU)", filter_pattern):
+    if should_run(f"levenshtein/{szs_name}({cpu_cores}xCPU)", filter_pattern):
 
         engine = szs_class(capabilities=cpu_scope)
 
@@ -387,7 +387,7 @@ def benchmark_stringzillas_edit_distances(
         )
 
     # Single-input variants on GPU
-    if should_run(f"{szs_name}(1xGPU)", filter_pattern) and not is_utf8 and gpu_scope is not None:
+    if should_run(f"levenshtein/{szs_name}(1xGPU)", filter_pattern) and not is_utf8 and gpu_scope is not None:
 
         engine = szs_class(capabilities=gpu_scope)
 
@@ -404,7 +404,7 @@ def benchmark_stringzillas_edit_distances(
         )
 
     # Batch-input variants on 1 CPU core
-    if should_run(f"{szs_name}(1xCPU,batch={batch_size})", filter_pattern):
+    if should_run(f"levenshtein/{szs_name}(1xCPU,batch={batch_size})", filter_pattern):
 
         engine = szs_class(capabilities=default_scope)
 
@@ -421,7 +421,7 @@ def benchmark_stringzillas_edit_distances(
         )
 
     # Batch-input variants on all CPU cores
-    if should_run(f"{szs_name}({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
+    if should_run(f"levenshtein/{szs_name}({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
 
         engine = szs_class(capabilities=cpu_scope)
 
@@ -438,7 +438,7 @@ def benchmark_stringzillas_edit_distances(
         )
 
     # Batch-input variants on GPU
-    if should_run(f"{szs_name}(1xGPU,batch={batch_size})", filter_pattern) and not is_utf8 and gpu_scope is not None:
+    if should_run(f"levenshtein/{szs_name}(1xGPU,batch={batch_size})", filter_pattern) and not is_utf8 and gpu_scope is not None:
 
         engine = szs_class(capabilities=gpu_scope)
 
@@ -466,14 +466,14 @@ def benchmark_third_party_similarity_scores(
     """Benchmark various similarity scoring implementations."""
 
     # BioPython
-    if should_run("biopython.PairwiseAligner.score", filter_pattern) and BIOPYTHON_AVAILABLE:
+    if should_run("needleman-wunsch/biopython.PairwiseAligner.score()", filter_pattern) and BIOPYTHON_AVAILABLE:
         aligner = Align.PairwiseAligner()
         aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
         aligner.open_gap_score = gap_open
         aligner.extend_gap_score = gap_extend
 
         log_similarity_operation(
-            "biopython.PairwiseAligner.score",
+            "biopython.PairwiseAligner.score()",
             string_pairs,
             aligner.score,
             timeout_seconds=timeout_seconds,
@@ -489,6 +489,7 @@ def benchmark_stringzillas_similarity_scores(
     filter_pattern: Optional[re.Pattern] = None,
     szs_class: Any = szs.NeedlemanWunschScores,
     szs_name: str = "stringzillas.NeedlemanWunschScores",
+    category: str = "needleman-wunsch",
     gap_open: int = -10,
     gap_extend: int = -2,
     cells_per_pair: Optional[np.ndarray] = None,
@@ -522,7 +523,7 @@ def benchmark_stringzillas_similarity_scores(
     moved_pairs = (sz.Strs(string_pairs[0]), sz.Strs(string_pairs[1]))
 
     # Single-input variants on 1 CPU core
-    if should_run(f"{szs_name}(1xCPU)", filter_pattern):
+    if should_run(f"{category}/{szs_name}(1xCPU)", filter_pattern):
 
         engine = szs_class(
             capabilities=default_scope,
@@ -544,7 +545,7 @@ def benchmark_stringzillas_similarity_scores(
         )
 
     # Single-input variants on all CPU cores
-    if should_run(f"{szs_name}({cpu_cores}xCPU)", filter_pattern):
+    if should_run(f"{category}/{szs_name}({cpu_cores}xCPU)", filter_pattern):
 
         engine = szs_class(
             capabilities=cpu_scope,
@@ -566,7 +567,7 @@ def benchmark_stringzillas_similarity_scores(
         )
 
     # Single-input variants on GPU
-    if should_run(f"{szs_name}(1xGPU)", filter_pattern) and gpu_scope is not None:
+    if should_run(f"{category}/{szs_name}(1xGPU)", filter_pattern) and gpu_scope is not None:
 
         engine = szs_class(
             capabilities=gpu_scope,
@@ -588,7 +589,7 @@ def benchmark_stringzillas_similarity_scores(
         )
 
     # Batch-input variants on 1 CPU core
-    if should_run(f"{szs_name}(1xCPU,batch={batch_size})", filter_pattern):
+    if should_run(f"{category}/{szs_name}(1xCPU,batch={batch_size})", filter_pattern):
 
         engine = szs_class(
             capabilities=default_scope,
@@ -610,7 +611,7 @@ def benchmark_stringzillas_similarity_scores(
         )
 
     # Batch-input variants on all CPU cores
-    if should_run(f"{szs_name}({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
+    if should_run(f"{category}/{szs_name}({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
 
         engine = szs_class(
             capabilities=cpu_scope,
@@ -632,7 +633,7 @@ def benchmark_stringzillas_similarity_scores(
         )
 
     # Batch-input variants on GPU
-    if should_run(f"{szs_name}(1xGPU,batch={batch_size})", filter_pattern) and gpu_scope is not None:
+    if should_run(f"{category}/{szs_name}(1xGPU,batch={batch_size})", filter_pattern) and gpu_scope is not None:
 
         engine = szs_class(
             capabilities=gpu_scope,
@@ -785,6 +786,7 @@ def main():
             filter_pattern=filter_pattern,
             szs_class=szs.NeedlemanWunschScores,
             szs_name="stringzillas.NeedlemanWunschScores",
+            category="needleman-wunsch",
             gap_open=-2,
             gap_extend=-2,
             cells_per_pair=cells_per_pair_binary,
@@ -796,6 +798,7 @@ def main():
             filter_pattern=filter_pattern,
             szs_class=szs.SmithWatermanScores,
             szs_name="stringzillas.SmithWatermanScores",
+            category="smith-waterman",
             gap_open=-2,
             gap_extend=-2,
             cells_per_pair=cells_per_pair_binary,
@@ -818,6 +821,7 @@ def main():
             filter_pattern=filter_pattern,
             szs_class=szs.NeedlemanWunschScores,
             szs_name="stringzillas.NeedlemanWunschScores",
+            category="needleman-wunsch",
             gap_open=-10,
             gap_extend=-2,
             cells_per_pair=cells_per_pair_binary,
@@ -829,6 +833,7 @@ def main():
             filter_pattern=filter_pattern,
             szs_class=szs.SmithWatermanScores,
             szs_name="stringzillas.SmithWatermanScores",
+            category="smith-waterman",
             gap_open=-10,
             gap_extend=-2,
             cells_per_pair=cells_per_pair_binary,

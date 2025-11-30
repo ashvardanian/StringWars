@@ -337,33 +337,33 @@ def main():
 
     # === Case-Insensitive Comparison ===
     print("=== Case-Insensitive Comparison ===")
-    if should_run("case-insensitive-compare/sz", filter_pattern):
-        bench_case_compare("sz.utf8_case_insensitive_order", pairs, compare_stringzilla, args.time_limit)
-    if should_run("case-insensitive-compare/str", filter_pattern):
-        bench_case_compare("str.casefold().eq()", pairs, compare_casefold, args.time_limit)
-    if should_run("case-insensitive-compare/regex", filter_pattern):
+    if should_run("case-insensitive-compare/stringzilla.utf8_case_insensitive_order()", filter_pattern):
+        bench_case_compare("stringzilla.utf8_case_insensitive_order()", pairs, compare_stringzilla, args.time_limit)
+    if should_run("case-insensitive-compare/std.casefold().eq()", filter_pattern):
+        bench_case_compare("std.casefold().eq()", pairs, compare_casefold, args.time_limit)
+    if should_run("case-insensitive-compare/regex.fullmatch(FULLCASE)", filter_pattern):
         bench_case_compare("regex.fullmatch(FULLCASE)", pairs, compare_regex_fullcase, args.time_limit)
-    if should_run("case-insensitive-compare/icu", filter_pattern):
+    if should_run("case-insensitive-compare/icu.CaseMap.foldCase().eq()", filter_pattern):
         bench_case_compare("icu.CaseMap.foldCase().eq()", pairs, compare_icu, args.time_limit)
 
     # === Case-Insensitive Substring Search ===
     print("\n=== Case-Insensitive Substring Search ===")
-    if should_run("case-insensitive-find/sz", filter_pattern):
-        bench_case_find("sz.utf8_case_insensitive_find", pythonic_str, search_needles, find_stringzilla, args.time_limit)
-    if should_run("case-insensitive-find/str", filter_pattern):
-        bench_case_find("str.casefold().find()", pythonic_str, search_needles, find_casefold, args.time_limit)
-    if should_run("case-insensitive-find/regex", filter_pattern):
+    if should_run("case-insensitive-find/stringzilla.utf8_case_insensitive_find()", filter_pattern):
+        bench_case_find("stringzilla.utf8_case_insensitive_find()", pythonic_str, search_needles, find_stringzilla, args.time_limit)
+    if should_run("case-insensitive-find/std.casefold().find()", filter_pattern):
+        bench_case_find("std.casefold().find()", pythonic_str, search_needles, find_casefold, args.time_limit)
+    if should_run("case-insensitive-find/regex.search(FULLCASE)", filter_pattern):
         bench_case_find("regex.search(FULLCASE)", pythonic_str, search_needles, find_regex_fullcase, args.time_limit)
-    if should_run("case-insensitive-find/icu", filter_pattern):
-        bench_case_find("icu.StringSearch", pythonic_str, search_needles, find_icu, args.time_limit)
+    if should_run("case-insensitive-find/icu.StringSearch()", filter_pattern):
+        bench_case_find("icu.StringSearch()", pythonic_str, search_needles, find_icu, args.time_limit)
 
     # === Case Folding Transformation ===
     print("\n=== Case Folding Transformation ===")
-    if should_run("case-fold/sz", filter_pattern):
-        bench_case_fold("sz.utf8_case_fold()", tokens, fold_stringzilla, args.time_limit)
-    if should_run("case-fold/str", filter_pattern):
-        bench_case_fold("str.casefold()", tokens, fold_casefold, args.time_limit)
-    if should_run("case-fold/icu", filter_pattern):
+    if should_run("case-fold/stringzilla.utf8_case_fold()", filter_pattern):
+        bench_case_fold("stringzilla.utf8_case_fold()", tokens, fold_stringzilla, args.time_limit)
+    if should_run("case-fold/std.casefold()", filter_pattern):
+        bench_case_fold("std.casefold()", tokens, fold_casefold, args.time_limit)
+    if should_run("case-fold/icu.CaseMap.foldCase()", filter_pattern):
         bench_case_fold("icu.CaseMap.foldCase()", tokens, fold_icu, args.time_limit)
 
     return 0
