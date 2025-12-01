@@ -4,6 +4,7 @@
 This file benchmarks Unicode text processing operations including:
 - UTF-8 character counting and iteration
 - Unicode whitespace and newline splitting (tokenization)
+- Unicode TR29 (UAX#29) word segmentation
 - Case folding transformation
 - Case-insensitive string comparison
 - Case-insensitive substring search
@@ -12,6 +13,7 @@ This file benchmarks Unicode text processing operations including:
 
 - `tokenize-whitespace`: Unicode whitespace splitting
 - `tokenize-newlines`: Unicode newline splitting
+- `tokenize-words-tr29`: Unicode TR29 word boundary segmentation
 - `utf8-length`: UTF-8 character counting
 - `utf8-iterate`: UTF-8 to UTF-32 decoding
 - `case-fold`: Case folding transformation
@@ -32,6 +34,7 @@ Filter specific operations:
 ```sh
 STRINGWARS_FILTER="case-insensitive" cargo criterion ...
 STRINGWARS_FILTER="tokenize" cargo criterion ...
+STRINGWARS_FILTER="tokenize-words-tr29" cargo criterion ...
 ```
 "#]
 use std::hint::black_box;
@@ -43,9 +46,11 @@ use stringtape::BytesCowsAuto;
 use focaccia::unicode_full_case_eq;
 use icu::properties::props::WhiteSpace;
 use icu::properties::CodePointSetData;
+use icu::segmenter::WordSegmenter;
 use regex::bytes::RegexBuilder;
 use stringzilla::sz;
 use unicase::UniCase;
+use unicode_segmentation::UnicodeSegmentation;
 
 mod utils;
 use utils::{install_panic_hook, load_dataset, should_run, ResultExt};
@@ -151,6 +156,75 @@ fn bench_tokenize_newlines(
                     .split(is_unicode_newline)
                     .filter(|s| !s.is_empty())
                     .count();
+                black_box(count);
+            })
+        });
+    }
+}
+
+/// Benchmarks Unicode TR29 (UAX#29) word segmentation.
+///
+/// TR29 defines linguistically-aware word boundaries that handle complex cases like
+/// contractions ("can't"), numeric sequences ("3.14"), and scripts without spaces.
+/// - `unicode-segmentation::unicode_words()`: Filters to word-like segments only
+/// - `unicode-segmentation::split_word_bounds()`: All boundary segments including punctuation
+/// - `icu::segmenter::WordSegmenter`: ICU4X implementation with LSTM/dictionary models
+fn bench_tokenize_words_tr29(
+    g: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    haystack: &[u8],
+    _needles: &BytesCowsAuto,
+) {
+    let haystack_str = match std::str::from_utf8(haystack) {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("Warning: Haystack is not valid UTF-8, skipping TR29 word benchmarks");
+            return;
+        }
+    };
+
+    g.throughput(Throughput::Bytes(haystack.len() as u64));
+
+    // Benchmark for unicode-segmentation: unicode_words() - only word-like segments
+    if should_run("tokenize-words-tr29/unicode-segmentation/unicode_words().count()") {
+        g.bench_function("unicode-segmentation/unicode_words().count()", |b| {
+            b.iter(|| {
+                let text = black_box(haystack_str);
+                let count: usize = text.unicode_words().count();
+                black_box(count);
+            })
+        });
+    }
+
+    // Benchmark for unicode-segmentation: split_word_bounds() - all segments
+    if should_run("tokenize-words-tr29/unicode-segmentation/split_word_bounds().count()") {
+        g.bench_function("unicode-segmentation/split_word_bounds().count()", |b| {
+            b.iter(|| {
+                let text = black_box(haystack_str);
+                let count: usize = text.split_word_bounds().count();
+                black_box(count);
+            })
+        });
+    }
+
+    // Benchmark for ICU4X WordSegmenter with dictionary model
+    if should_run("tokenize-words-tr29/icu/WordSegmenter::new_dictionary().segment_str()") {
+        let segmenter = WordSegmenter::new_dictionary(Default::default());
+        g.bench_function("icu/WordSegmenter::new_dictionary().segment_str()", |b| {
+            b.iter(|| {
+                let text = black_box(haystack_str);
+                // WordSegmenter returns boundary indices; count segments = boundaries - 1
+                let boundaries: usize = segmenter.segment_str(text).count();
+                black_box(boundaries);
+            })
+        });
+    }
+
+    // Benchmark for stdlib split_whitespace as baseline comparison
+    if should_run("tokenize-words-tr29/std/split_whitespace().count()") {
+        g.bench_function("std/split_whitespace().count()", |b| {
+            b.iter(|| {
+                let text = black_box(haystack_str);
+                let count: usize = text.split_whitespace().count();
                 black_box(count);
             })
         });
@@ -528,6 +602,10 @@ fn main() {
 
     let mut group = criterion.benchmark_group("tokenize-newlines");
     bench_tokenize_newlines(&mut group, &haystack, needles);
+    group.finish();
+
+    let mut group = criterion.benchmark_group("tokenize-words-tr29");
+    bench_tokenize_words_tr29(&mut group, &haystack, needles);
     group.finish();
 
     // UTF-8 processing benchmarks
