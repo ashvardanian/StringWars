@@ -12,8 +12,8 @@ keywords = ["string", "benchmark", "simd", "gpu", "stringzilla"]
 categories = ["text-processing", "development-tools::profiling"]
 
 [dependencies]
-criterion = "0.7.0"
-stringtape = "2.4.0"
+criterion = "0.8.0"
+stringtape = "2.4.1"
 stringzilla = { version = "4.4.0", default-features = false }
 
 # To use a local version of StringZilla, set the path:
@@ -30,11 +30,12 @@ bench_find = [
     "aho-corasick", # Byteset search
 ]
 bench_unicode = [
-    "icu",      # Unicode properties (WhiteSpace, etc.)
-    "simdutf",  # SIMD UTF-8 validation and transcoding
-    "unicase",  # Case-insensitive string wrapper
-    "focaccia", # Unicode case folding
-    "rand",     # Random needle sampling
+    "icu",                  # Unicode properties and TR29 word segmentation
+    "simdutf",              # SIMD UTF-8 validation and transcoding
+    "unicase",              # Case-insensitive string wrapper
+    "focaccia",             # Unicode case folding
+    "rand",                 # Random needle sampling
+    "unicode-segmentation", # UAX#29 word/grapheme segmentation
 ]
 bench_hash = [
     "bit-set",      # for collision counting
@@ -81,7 +82,6 @@ bench_encryption = [
 # TODO: String properties:
 # - `unicode-width`
 # - `textwrap`
-# - `unicode-segmentation`
 
 [dependencies.memchr]
 version = "2.7.6"
@@ -119,6 +119,10 @@ optional = true
 
 [dependencies.focaccia]
 version = "2.0"
+optional = true
+
+[dependencies.unicode-segmentation]
+version = "1.12"
 optional = true
 
 [dependencies.regex]
