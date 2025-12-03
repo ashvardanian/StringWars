@@ -2799,6 +2799,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pcre2"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e970b0fcce0c7ee6ef662744ff711f21ccd6f11b7cf03cd187a80e89797fc67"
+dependencies = [
+ "libc",
+ "log",
+ "pcre2-sys",
+]
+
+[[package]]
+name = "pcre2-sys"
+version = "0.2.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18b9073c1a2549bd409bf4a32c94d903bb1a09bf845bc306ae148897fa0760a4"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4429,6 +4451,7 @@ dependencies = [
  "memchr",
  "murmurhash32",
  "openssl",
+ "pcre2",
  "perf-event",
  "polars",
  "probabilistic-collections",
@@ -4456,8 +4479,6 @@ dependencies = [
 [[package]]
 name = "stringzilla"
 version = "4.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c928ccc97d701d7960025d6b9118d4d377b5519bde9b98daf0b1a3a12bbfb14"
 dependencies = [
  "allocator-api2 0.3.1",
  "cc",

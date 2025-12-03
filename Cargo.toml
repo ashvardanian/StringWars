@@ -14,7 +14,8 @@ categories = ["text-processing", "development-tools::profiling"]
 [dependencies]
 criterion = "0.8.0"
 stringtape = "2.4.1"
-stringzilla = { version = "4.4.0", default-features = false }
+stringzilla = { path = "../StringZilla/" }
+# stringzilla = { version = "4.4.0", default-features = false }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
@@ -36,6 +37,7 @@ bench_unicode = [
     "focaccia",             # Unicode case folding
     "rand",                 # Random needle sampling
     "unicode-segmentation", # UAX#29 word/grapheme segmentation
+    "pcre2",                # Full Unicode case folding in regex (unlike `regex` crate)
 ]
 bench_hash = [
     "bit-set",      # for collision counting
@@ -128,6 +130,10 @@ optional = true
 [dependencies.regex]
 version = "1.12.2"
 optional = false
+
+[dependencies.pcre2]
+version = "0.2"
+optional = true
 
 [dependencies.rapidfuzz]
 version = "0.5.0"

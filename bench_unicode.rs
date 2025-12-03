@@ -47,7 +47,7 @@ use focaccia::unicode_full_case_eq;
 use icu::properties::props::WhiteSpace;
 use icu::properties::CodePointSetData;
 use icu::segmenter::WordSegmenter;
-use regex::bytes::RegexBuilder;
+use pcre2::bytes::RegexBuilder;
 use stringzilla::sz;
 use unicase::UniCase;
 use unicode_segmentation::UnicodeSegmentation;
@@ -532,21 +532,26 @@ fn bench_case_insensitive_find(
         });
     }
 
-    // Benchmark for regex case-insensitive search (all matches).
-    if should_run("case-insensitive-find/regex/find_iter(case_insensitive)") {
+    // Benchmark for PCRE2 case-insensitive search (all matches).
+    // We use PCRE2 instead of Rust's `regex` crate because `regex` only supports
+    // Unicode "simple" case folding (1:1 character mappings). PCRE2 with `.utf(true)`
+    // supports full Unicode case folding, including expansions like ß→ss, İ→i̇, ﬁ→fi.
+    // This makes it a fair comparison against StringZilla's full case folding.
+    // See: https://github.com/rust-lang/regex/blob/master/UNICODE.md
+    if should_run("case-insensitive-find/pcre2/find_iter(caseless+utf)") {
         // Pre-compile regexes for fair comparison
         let regexes: Vec<_> = search_needles
             .iter()
             .filter_map(|needle| {
-                RegexBuilder::new(&regex::escape(needle))
-                    .case_insensitive(true)
-                    .unicode(true)
-                    .build()
+                RegexBuilder::new()
+                    .caseless(true)
+                    .utf(true)
+                    .build(&pcre2::escape(needle))
                     .ok()
             })
             .collect();
 
-        g.bench_function("regex/find_iter(case_insensitive)", |b| {
+        g.bench_function("pcre2/find_iter(caseless+utf)", |b| {
             b.iter(|| {
                 let hay: &[u8] = black_box(haystack);
                 let mut total_matches = 0usize;
