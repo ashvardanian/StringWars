@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -254,9 +255,13 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
     let dataset_path = get_env("STRINGWARS_DATASET").ok_or(DatasetError::EnvVarNotSet)?;
     let mode = get_env_or_default("STRINGWARS_TOKENS", "lines");
     let max_tokens: Option<usize> = get_env_parsed_opt("STRINGWARS_MAX_TOKENS");
+    let unique = get_env_bool("STRINGWARS_UNIQUE");
 
     if let Some(max) = max_tokens {
         eprintln!("STRINGWARS_MAX_TOKENS: limiting to {} tokens", max);
+    }
+    if unique {
+        eprintln!("STRINGWARS_UNIQUE: deduplicating tokens");
     }
 
     // Check if file exists before attempting to read
@@ -277,33 +282,45 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
 
     // Leak the content to get 'static lifetime
     let content_static: &'static [u8] = Box::leak(content.into_boxed_slice());
-    let content_bytes = Cow::Borrowed(content_static);
+    let limit = max_tokens.unwrap_or(usize::MAX);
 
     // Build BytesCowsAuto directly from iterator - it will own references to the leaked bytes
     let tape = match mode.as_str() {
         "lines" => {
             let iter = content_static
                 .split(|&b| b == b'\n')
-                .filter(|s| !s.is_empty());
-            if let Some(max) = max_tokens {
-                BytesCowsAuto::from_iter_and_data(iter.take(max), content_bytes)
+                .filter(|s| !s.is_empty())
+                .take(limit);
+            if unique {
+                let mut seen: HashSet<&'static [u8]> = HashSet::new();
+                let unique_tokens: Vec<&'static [u8]> = iter.filter(|t| seen.insert(*t)).collect();
+                BytesCowsAuto::from_iter_and_data(
+                    unique_tokens.into_iter(),
+                    Cow::Borrowed(content_static),
+                )
             } else {
-                BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+                BytesCowsAuto::from_iter_and_data(iter, Cow::Borrowed(content_static))
             }
         }
         "words" => {
             let iter = content_static
                 .split(|&b| b == b' ' || b == b'\n')
-                .filter(|s| !s.is_empty());
-            if let Some(max) = max_tokens {
-                BytesCowsAuto::from_iter_and_data(iter.take(max), content_bytes)
+                .filter(|s| !s.is_empty())
+                .take(limit);
+            if unique {
+                let mut seen: HashSet<&'static [u8]> = HashSet::new();
+                let unique_tokens: Vec<&'static [u8]> = iter.filter(|t| seen.insert(*t)).collect();
+                BytesCowsAuto::from_iter_and_data(
+                    unique_tokens.into_iter(),
+                    Cow::Borrowed(content_static),
+                )
             } else {
-                BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+                BytesCowsAuto::from_iter_and_data(iter, Cow::Borrowed(content_static))
             }
         }
         "file" => {
             let iter = std::iter::once(content_static);
-            BytesCowsAuto::from_iter_and_data(iter, content_bytes)
+            BytesCowsAuto::from_iter_and_data(iter, Cow::Borrowed(content_static))
         }
         other => {
             return Err(DatasetError::UnknownMode {

@@ -146,13 +146,18 @@ def load_dataset(
                 return f.read()
 
 
-def tokenize_dataset(haystack: Union[str, bytes], tokens_mode: Optional[str] = None) -> Union[List[str], List[bytes]]:
+def tokenize_dataset(
+    haystack: Union[str, bytes],
+    tokens_mode: Optional[str] = None,
+    unique: Optional[bool] = None,
+) -> Union[List[str], List[bytes]]:
     """
     Tokenize haystack based on mode from argument or environment variable.
 
     Args:
         haystack: Input data to tokenize (str or bytes)
         tokens_mode: Tokenization mode ('lines', 'words', 'file') or None to use env var
+        unique: If True, deduplicate tokens (preserving order). If None, uses STRINGWARS_UNIQUE.
 
     Returns:
         List of tokens in the same type as input (List[str] or List[bytes])
@@ -164,14 +169,23 @@ def tokenize_dataset(haystack: Union[str, bytes], tokens_mode: Optional[str] = N
 
     if tokens_mode == "lines":
         # Split on LF only
-        return haystack.split(b"\n" if is_bytes else "\n")
+        tokens = haystack.split(b"\n" if is_bytes else "\n")
     elif tokens_mode == "words":
         # Use default split() which handles all whitespace
-        return haystack.split()
+        tokens = haystack.split()
     elif tokens_mode == "file":
-        return [haystack]
+        tokens = [haystack]
     else:
         raise ValueError(f"Unknown tokens mode: {tokens_mode}. Use 'lines', 'words', or 'file'.")
+
+    if unique is None:
+        unique = get_env_bool("STRINGWARS_UNIQUE")
+
+    # Deduplicate, preserving the order of first appearance.
+    if tokens_mode != "file" and unique:
+        tokens = list(dict.fromkeys(tokens))
+
+    return tokens
 
 
 def add_common_args(parser):
