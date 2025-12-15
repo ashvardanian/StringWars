@@ -38,17 +38,23 @@ STRINGWARS_FILTER="tokenize-words-tr29" cargo criterion ...
 ```
 "#]
 use std::hint::black_box;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput};
+use rand::prelude::IndexedRandom;
+use rand::SeedableRng;
 use stringtape::BytesCowsAuto;
 
 use focaccia::unicode_full_case_eq;
+use icu::casemap::CaseMapper;
 use icu::properties::props::WhiteSpace;
 use icu::properties::CodePointSetData;
 use icu::segmenter::WordSegmenter;
+use memchr::memmem;
 use pcre2::bytes::RegexBuilder;
 use stringzilla::sz;
+use stringzilla::sz::StringZillableUnary;
 use unicase::UniCase;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -60,6 +66,12 @@ fn log_stringzilla_metadata() {
     println!("StringZilla v{}.{}.{}", v.major, v.minor, v.patch);
     println!("- uses dynamic dispatch: {}", sz::dynamic_dispatch());
     println!("- capabilities: {}", sz::capabilities().as_str());
+}
+
+fn log_pcre2_metadata() {
+    let (major, minor) = pcre2::version();
+    println!("PCRE2 v{}.{}", major, minor);
+    println!("- JIT available: {}", pcre2::is_jit_available());
 }
 
 fn configure_bench() -> Criterion {
@@ -79,7 +91,6 @@ fn bench_tokenize_whitespace(
 
     // Benchmark for StringZilla whitespace splits.
     if should_run("tokenize-whitespace/stringzilla/utf8_whitespace_splits().count()") {
-        use sz::StringZillableUnary;
         g.bench_function("stringzilla/utf8_whitespace_splits().count()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
@@ -137,7 +148,6 @@ fn bench_tokenize_newlines(
 
     // Benchmark for StringZilla newline splits.
     if should_run("tokenize-newlines/stringzilla/utf8_newline_splits().count()") {
-        use sz::StringZillableUnary;
         g.bench_function("stringzilla/utf8_newline_splits().count()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
@@ -241,7 +251,6 @@ fn bench_utf8_length(
 
     // Benchmark for StringZilla UTF-8 character counting.
     if should_run("utf8-length/stringzilla/utf8_chars().len()") {
-        use sz::StringZillableUnary;
         g.bench_function("stringzilla/utf8_chars().len()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
@@ -284,7 +293,6 @@ fn bench_utf8_iterate(
 
     // Benchmark for StringZilla UTF-8 character iteration.
     if should_run("utf8-iterate/stringzilla/utf8_chars().iter()") {
-        use sz::StringZillableUnary;
         g.bench_function("stringzilla/utf8_chars().iter()", |b| {
             b.iter(|| {
                 let haystack_bytes = black_box(haystack);
@@ -470,9 +478,6 @@ fn bench_case_insensitive_find(
     haystack: &[u8],
     needles: &BytesCowsAuto,
 ) {
-    use rand::prelude::IndexedRandom;
-    use rand::SeedableRng;
-
     // Limit haystack size to 10MB for case-insensitive search (it's O(n*m) with Unicode folding)
     const MAX_HAYSTACK_SIZE: usize = 10 * 1024 * 1024;
     let haystack = if haystack.len() > MAX_HAYSTACK_SIZE {
@@ -507,81 +512,119 @@ fn bench_case_insensitive_find(
         .copied()
         .collect();
 
-    // Throughput: each iteration searches for first match of each needle
-    g.throughput(Throughput::Bytes(
-        (haystack.len() * search_needles.len()) as u64,
-    ));
+    // Throughput: each iteration searches haystack once with a single needle
+    g.throughput(Throughput::Bytes(haystack.len() as u64));
 
-    // Benchmark for StringZilla case-insensitive find (all matches).
+    // Use atomic counter to rotate through needles across iterations
+    // Benchmark for StringZilla case-insensitive find (all matches for one needle).
     if should_run("case-insensitive-find/stringzilla/utf8_case_insensitive_find()") {
+        let needle_idx = AtomicUsize::new(0);
         g.bench_function("stringzilla/utf8_case_insensitive_find()", |b| {
             b.iter(|| {
                 let hay = black_box(haystack);
-                let mut total_matches = 0usize;
-                for needle in &search_needles {
-                    let mut remaining = hay;
-                    while let Some((offset, len)) =
-                        sz::utf8_case_insensitive_find(remaining, needle)
-                    {
-                        total_matches += 1;
-                        remaining = &remaining[offset + len.max(1)..];
-                    }
+                let idx = needle_idx.fetch_add(1, Ordering::Relaxed) % search_needles.len();
+                let needle = sz::Utf8CaseInsensitiveNeedle::new(search_needles[idx].as_bytes());
+                let mut matches = 0usize;
+                let mut remaining = hay;
+                while let Some((offset, len)) = sz::utf8_case_insensitive_find(remaining, &needle) {
+                    matches += 1;
+                    remaining = &remaining[offset + len.max(1)..];
                 }
-                black_box(total_matches);
+                black_box(matches)
             })
         });
     }
 
-    // Benchmark for PCRE2 case-insensitive search (all matches).
-    // We use PCRE2 instead of Rust's `regex` crate because `regex` only supports
+    // PCRE2 benchmarks for case-insensitive search with full Unicode case folding.
+    // NOTE: We use PCRE2 instead of Rust's `regex` crate because `regex` only supports
     // Unicode "simple" case folding (1:1 character mappings). PCRE2 with `.utf(true)`
     // supports full Unicode case folding, including expansions like ß→ss, İ→i̇, ﬁ→fi.
     // This makes it a fair comparison against StringZilla's full case folding.
     // See: https://github.com/rust-lang/regex/blob/master/UNICODE.md
-    if should_run("case-insensitive-find/pcre2/find_iter(caseless+utf)") {
-        // Pre-compile regexes for fair comparison
+
+    // Variant 1: Pre-compiled with JIT (compilation cost excluded from benchmark)
+    if should_run("case-insensitive-find/pcre2/pre-jit") {
         let regexes: Vec<_> = search_needles
             .iter()
             .filter_map(|needle| {
                 RegexBuilder::new()
                     .caseless(true)
                     .utf(true)
+                    .jit_if_available(true)
                     .build(&pcre2::escape(needle))
                     .ok()
             })
             .collect();
 
-        g.bench_function("pcre2/find_iter(caseless+utf)", |b| {
+        let needle_idx = AtomicUsize::new(0);
+        g.bench_function("pcre2/pre-jit", |b| {
             b.iter(|| {
                 let hay: &[u8] = black_box(haystack);
-                let mut total_matches = 0usize;
-                for re in &regexes {
-                    total_matches += re.find_iter(hay).count();
-                }
-                black_box(total_matches);
+                let idx = needle_idx.fetch_add(1, Ordering::Relaxed) % regexes.len();
+                black_box(regexes[idx].find_iter(hay).count())
             })
         });
     }
 
-    // Benchmark for stdlib: lowercase haystack + needle for each search, find all matches.
-    // This is the fair comparison - includes full allocation and case folding cost per search.
-    if should_run("case-insensitive-find/std/to_lowercase().find()") {
-        g.bench_function("std/to_lowercase().find()", |b| {
+    // Variant 2: JIT compilation included in benchmark (compile + search per iteration)
+    if should_run("case-insensitive-find/pcre2/jit-on-fly") {
+        let needle_idx = AtomicUsize::new(0);
+        g.bench_function("pcre2/jit-on-fly", |b| {
             b.iter(|| {
-                let haystack_str = black_box(haystack_str);
-                let mut total_matches = 0usize;
-                for needle in &search_needles {
-                    let hay = haystack_str.to_lowercase();
-                    let needle_lower = needle.to_lowercase();
-                    // Work on the lowercased string slice to avoid UTF-8 boundary issues
-                    let mut remaining: &str = &hay;
-                    while let Some(pos) = remaining.find(&needle_lower) {
-                        total_matches += 1;
-                        // Advance past the match (at least 1 byte to avoid infinite loop)
-                        remaining = &remaining[pos + needle_lower.len().max(1)..];
-                    }
-                }
-                black_box(total_matches);
+                let hay: &[u8] = black_box(haystack);
+                let idx = needle_idx.fetch_add(1, Ordering::Relaxed) % search_needles.len();
+                let needle = search_needles[idx];
+                let re = RegexBuilder::new()
+                    .caseless(true)
+                    .utf(true)
+                    .jit_if_available(true)
+                    .build(&pcre2::escape(needle))
+                    .unwrap();
+                black_box(re.find_iter(hay).count())
+            })
+        });
+    }
+
+    // Variant 3: No JIT (interpreter mode only)
+    if should_run("case-insensitive-find/pcre2/no-jit") {
+        let regexes: Vec<_> = search_needles
+            .iter()
+            .filter_map(|needle| {
+                RegexBuilder::new()
+                    .caseless(true)
+                    .utf(true)
+                    // No .jit_if_available() - uses interpreter
+                    .build(&pcre2::escape(needle))
+                    .ok()
+            })
+            .collect();
+
+        let needle_idx = AtomicUsize::new(0);
+        g.bench_function("pcre2/no-jit", |b| {
+            b.iter(|| {
+                let hay: &[u8] = black_box(haystack);
+                let idx = needle_idx.fetch_add(1, Ordering::Relaxed) % regexes.len();
+                black_box(regexes[idx].find_iter(hay).count())
+            })
+        });
+    }
+
+    // Benchmark for ICU case-fold + memchr SIMD search.
+    // Full Unicode case folding (ß→ss) + fast byte search.
+    // Folding happens inside the loop for fair comparison.
+    if should_run("case-insensitive-find/icu+memchr/fold+find") {
+        let cm = CaseMapper::new();
+        let needle_idx = AtomicUsize::new(0);
+        g.bench_function("icu+memchr/fold+find", |b| {
+            b.iter(|| {
+                let hay_str = black_box(haystack_str);
+                let idx = needle_idx.fetch_add(1, Ordering::Relaxed) % search_needles.len();
+                let needle = search_needles[idx];
+                // Fold both haystack and needle inside the benchmark
+                let folded_hay = cm.fold_string(hay_str);
+                let folded_needle = cm.fold_string(needle);
+                let finder = memmem::Finder::new(folded_needle.as_bytes());
+                black_box(finder.find_iter(folded_hay.as_bytes()).count())
             })
         });
     }
@@ -590,6 +633,7 @@ fn bench_case_insensitive_find(
 fn main() {
     install_panic_hook();
     log_stringzilla_metadata();
+    log_pcre2_metadata();
 
     // Load the dataset defined by the environment variables
     let tape = load_dataset().unwrap_nice();

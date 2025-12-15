@@ -1,6 +1,6 @@
 # /// script
 # dependencies = [
-#   "stringzilla>=4.4.0",
+#   "stringzilla>=4.5.0",
 #   "regex",
 #   "PyICU",
 # ]
@@ -26,6 +26,7 @@ Timing via time.monotonic_ns; throughput in decimal GB/s. Filter with -k/--filte
 """
 
 import argparse
+import random
 import re
 import sys
 from importlib.metadata import version as pkg_version
@@ -190,7 +191,8 @@ def find_regex_fullcase(haystack: str, needle: str) -> int:
     if not needle:
         return 0
     pattern = regex.compile(regex.escape(needle), regex.IGNORECASE | regex.FULLCASE)
-    return len(pattern.findall(haystack))
+    # Use finditer for fair comparison (same Python loop overhead as StringZilla)
+    return sum(1 for _ in pattern.finditer(haystack))
 
 
 def find_icu(haystack: str, needle: str) -> int:
@@ -209,18 +211,10 @@ def find_icu(haystack: str, needle: str) -> int:
 
 
 def find_stringzilla(haystack: str, needle: str) -> int:
-    """Count occurrences using StringZilla's utf8_case_insensitive_find."""
+    """Count occurrences using StringZilla's utf8_case_insensitive_find_iter."""
     if not needle:
         return 0
-    count = 0
-    start = 0
-    while True:
-        pos = sz.utf8_case_insensitive_find(haystack[start:], needle)
-        if pos == -1:
-            break
-        count += 1
-        start += pos + 1
-    return count
+    return sum(1 for _ in sz.utf8_case_insensitive_find_iter(haystack, needle))
 
 
 def bench_case_fold(
@@ -323,8 +317,12 @@ def main():
     # Create adjacent pairs for comparison benchmarks
     pairs = make_pairs(tokens)
 
-    # Select subset of tokens as needles for search benchmarks (use every 100th token or first 100)
-    search_needles = tokens[::max(1, len(tokens) // 100)][:100]
+    # Select subset of tokens as needles for search benchmarks
+    # Filter to needles with >= 3 UTF-8 bytes (matching Rust benchmark)
+    candidates = [t for t in tokens if len(t.encode('utf-8')) >= 3]
+    # Random sample with fixed seed for reproducibility
+    random.seed(42)
+    search_needles = random.sample(candidates, min(1000, len(candidates))) if candidates else []
 
     total_tokens = len(tokens)
     total_pairs = len(pairs)
