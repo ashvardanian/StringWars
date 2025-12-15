@@ -4,10 +4,10 @@
 
 ![StringWars Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
 
-There are many **great** libraries for string processing!
+There are many __great__ libraries for string processing!
 Mostly, of course, written in Assembly, C, and C++, but some in Rust as well.
 
-Where Rust decimates C and C++, is the **simplicity** of dependency management, making it great for benchmarking "Systems Software" and lining up apples-to-apples across native crates and their Python bindings.
+Where Rust decimates C and C++, is the __simplicity__ of dependency management, making it great for benchmarking "Systems Software" and lining up apples-to-apples across native crates and their Python bindings.
 So, to accelerate the development of the [`StringZilla`](https://github.com/ashvardanian/StringZilla) C, C++, and CUDA libraries (with Rust and Python bindings), I've created this repository to compare it against some of my & communities most beloved Rust projects, like:
 
 - [`memchr`](https://github.com/BurntSushi/memchr) for substring search.
@@ -24,7 +24,7 @@ Notably, I also favor modern hardware with support for a wider range SIMD instru
 
 > [!IMPORTANT]  
 > The numbers in the tables below are provided for reference only and may vary depending on the CPU, compiler, dataset, and tokenization method.
-> Most of them were obtained on Intel Sapphire Rapids **(SPR)** and Granite Rapids **(GNR)** CPUs and Nvidia Hopper-based **H100** and Blackwell-based **RTX 6000** Pro GPUs, using Rust with `-C target-cpu=native` optimization flag.
+> Most of them were obtained on Intel Sapphire Rapids __(SPR)__ and Granite Rapids __(GNR)__ CPUs and Nvidia Hopper-based __H100__ and Blackwell-based __RTX 6000__ Pro GPUs, using Rust with `-C target-cpu=native` optimization flag.
 > To replicate the results, please refer to the [Replicating the Results](#replicating-the-results) section below.
 
 ## Benchmarks at a Glance
@@ -50,7 +50,34 @@ xxhash.xxh3_64      █████▋               0.04    ██████�
 
 See [bench_hash.md](bench_hash.md) for details
 
-### Substring Search
+### Case-Insensitive UTF-8 Search
+
+Unicode-aware case-insensitive search with full case folding (ß↔SS, σ↔ς).
+Throughput searching across ~100MB multilingual corpora:
+
+```
+Rust:
+                      English                      German
+stringzilla           ████████████████████ 12.79   ████████████████████ 10.67 GB/s
+icu                   ▏                     0.08   ▏                     0.08 GB/s
+
+                      Russian                      Korean
+stringzilla           ████████████████████  7.12   ████████████████████ 35.10 GB/s
+icu                   ▏                     0.14   ▏                     0.23 GB/s
+
+Python:
+                      English                      German
+stringzilla           ████████████████████  5.61   ████████████████████  6.08 GB/s
+regex                 ██▋                   0.77   ███                   0.90 GB/s
+
+                      Russian                      Korean
+stringzilla           ████████████████████  5.70   ████████████████████ 20.05 GB/s
+regex                 ████████              2.30   ████▋                 4.59 GB/s
+```
+
+See [bench_unicode.md](bench_unicode.md) for details
+
+### Exact Substring Search
 
 Substring search is offloaded to C's `memmem` or `strstr` in most languages, but SIMD-optimized implementations can do better.
 Throughput on long lines:
@@ -93,13 +120,13 @@ Different scripts stress UTF-8 differently: Korean has 3-byte Hangul with single
 Throughput on AMD Zen5 Turin:
 
 ```
-                      English                     Arabic
 Newline splitting:
+                      English                     Arabic
 stringzilla           ████████████████ 15.45      ████████████████████ 18.34 GB/s
 stdlib                ██                1.90      ██                    1.82 GB/s
 
-                      English                     Korean
 Whitespace splitting:
+                      English                     Korean
 stringzilla           ████████████████████ 0.82   ████████████████████ 1.88 GB/s
 stdlib                ██████████████████▊  0.77   ██████████▍          0.98 GB/s
 icu::WhiteSpace       ██▋                  0.11   █▌                   0.15 GB/s
@@ -108,8 +135,8 @@ icu::WhiteSpace       ██▋                  0.11   █▌                  
 Case folding on bicameral scripts (Latin, Cyrillic, Greek, Armenian) plus Chinese for reference:
 
 ```
-                      English 16x                 German 6x
 Case folding:
+                      English 16x                 German 6x
 stringzilla           ████████████████████ 7.53   ████████████████████ 2.59 GB/s
 stdlib                ██▌                  0.48   ███▎                 0.43 GB/s
 
@@ -148,7 +175,7 @@ pyarrow.sort        █████▌                 62.17 M cmp/s
 list.sort           ████▏                  47.06 M cmp/s
 ```
 
-GPU: `cudf` on H100 reaches **9,463 M cmp/s** on short words.
+GPU: `cudf` on H100 reaches __9,463 M cmp/s__ on short words.
 
 See [bench_sequence.md](bench_sequence.md) for details
 
@@ -178,8 +205,8 @@ It's computationally expensive with O(n\*m) complexity, but GPUs and multi-core 
 Levenshtein distance on ~1,000 byte lines (MCUPS = Million Cell Updates Per Second):
 
 ```
-                        1 Core                       1 Socket
 Rust:
+                        1 Core                       1 Socket
 bio::levenshtein        █▏                      823
 rapidfuzz               ████████████████████ 14,316
 stringzilla (384x GNR)  ██████████████████▎  13,084  ████████████████████ 3,084,270 MCUPS
@@ -195,8 +222,8 @@ Converting variable-length strings into fixed-length sketches (like Min-Hashing)
 Throughput on ~1,000 byte lines:
 
 ```
-                        1 Core                       1 Socket
 Rust:
+                        1 Core                       1 Socket
 pc::MinHash             ████████████████████   3.16
 stringzilla (384x GNR)  ███▏                   0.51  ███████████████▍      302.30 MB/s
 stringzilla (H100)                                   ████████████████████  392.37 MB/s
@@ -325,11 +352,11 @@ The Cohere Wikipedia dataset provides pre-processed JSONL files for different la
 This may be the optimal dataset for relative comparison of UTF-8 decoding and matching enginges in each individual environment.
 Not all Wikipedia languages are available, but the following have been selected specifically:
 
-- **Chinese (zh)**: 3-byte CJK characters, rare 1-byte punctuation
-- **Korean (ko)**: 3-byte Hangul syllables, frequent 1-byte punctuation
-- **Arabic (ar)**: 2-byte Arabic script, with regular 1-byte punctuation
-- **French (fr)**: Mixed 1-2 byte Latin with high diacritic density
-- **English (en)**: Mostly 1-byte ASCII baseline
+- __Chinese (zh)__: 3-byte CJK characters, rare 1-byte punctuation
+- __Korean (ko)__: 3-byte Hangul syllables, frequent 1-byte punctuation
+- __Arabic (ar)__: 2-byte Arabic script, with regular 1-byte punctuation
+- __French (fr)__: Mixed 1-2 byte Latin with high diacritic density
+- __English (en)__: Mostly 1-byte ASCII baseline
 
 To download and decompress one file from each language:
 
@@ -353,13 +380,13 @@ Files are XZ-compressed plain text with documents separated by double-newlines.
 
 | Workload                    | Relevant Scripts                  | Best Test Languages                                  |
 | --------------------------- | --------------------------------- | ---------------------------------------------------- |
-| **Case Folding**            | Latin, Cyrillic, Greek, Armenian  | Turkish (I/i), German (ss->SS), Greek, Russian       |
-| **Normalization**           | Indic, Arabic, Vietnamese, Korean | Vietnamese, Hindi, Korean, Arabic                    |
-| **Whitespace Tokenization** | Most scripts except CJK/Thai      | English, Russian, Arabic vs. Chinese, Japanese, Thai |
-| **Grapheme Clusters**       | Indic, Thai, Khmer, Myanmar       | Thai, Tamil, Myanmar, Khmer                          |
-| **RTL Handling**            | Arabic, Hebrew                    | Arabic, Hebrew, Persian                              |
+| __Case Folding__            | Latin, Cyrillic, Greek, Armenian  | Turkish (I/i), German (ss->SS), Greek, Russian       |
+| __Normalization__           | Indic, Arabic, Vietnamese, Korean | Vietnamese, Hindi, Korean, Arabic                    |
+| __Whitespace Tokenization__ | Most scripts except CJK/Thai      | English, Russian, Arabic vs. Chinese, Japanese, Thai |
+| __Grapheme Clusters__       | Indic, Thai, Khmer, Myanmar       | Thai, Tamil, Myanmar, Khmer                          |
+| __RTL Handling__            | Arabic, Hebrew                    | Arabic, Hebrew, Persian                              |
 
-**Bicameral scripts** with various case folding rules:
+__Bicameral scripts__ with various case folding rules:
 
 ```bash
 curl -fL https://data.statmt.org/cc-100/en.txt.xz | xz -d > cc100_en.txt      # 82 GB - English
@@ -379,7 +406,7 @@ curl -fL https://data.statmt.org/cc-100/pt.txt.xz | xz -d > cc100_pt.txt      # 
 curl -fL https://data.statmt.org/cc-100/it.txt.xz | xz -d > cc100_it.txt      # 7.8 GB - Italian
 ```
 
-**Unicameral scripts** without case folding, but with other normalization/segmentation challenges:
+__Unicameral scripts__ without case folding, but with other normalization/segmentation challenges:
 
 ```bash
 curl -fL https://data.statmt.org/cc-100/ar.txt.xz | xz -d > cc100_ar.txt      # 5.4 GB - Arabic (RTL)
@@ -406,7 +433,7 @@ The [Leipzig Corpora Collection](https://wortschatz.uni-leipzig.de/en/download/)
 Each tar.gz contains `*-sentences.txt` (tab-separated `id\tsentence`), `*-words.txt` (frequencies), and co-occurrence files.
 Standard sizes: 10K, 30K, 100K, 300K, 1M sentences. Check for newer years at the download page.
 
-**Bicameral scripts** with various case folding rules:
+__Bicameral scripts__ with various case folding rules:
 
 ```bash
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/eng_wikipedia_2016_1M.tar.gz | tar -xzf - -O 'eng_wikipedia_2016_1M/eng_wikipedia_2016_1M-sentences.txt' | cut -f2 > leipzig1M_en.txt
@@ -427,7 +454,7 @@ curl -fL https://downloads.wortschatz-leipzig.de/corpora/ita_wikipedia_2021_1M.t
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/lit_wikipedia_2021_300K.tar.gz | tar -xzf - -O 'lit_wikipedia_2021_300K/lit_wikipedia_2021_300K-sentences.txt' | cut -f2 > leipzig300K_lt.txt
 ```
 
-**Unicameral scripts** without case folding, but with other normalization/segmentation challenges:
+__Unicameral scripts__ without case folding, but with other normalization/segmentation challenges:
 
 ```bash
 curl -fL https://downloads.wortschatz-leipzig.de/corpora/ara_wikipedia_2021_1M.tar.gz | tar -xzf - -O 'ara_wikipedia_2021_1M/ara_wikipedia_2021_1M-sentences.txt' | cut -f2 > leipzig1M_ar.txt
