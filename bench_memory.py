@@ -224,7 +224,7 @@ def main() -> int:
     # Dataset
     text = load_dataset(args.dataset, as_bytes=False, size_limit=args.dataset_limit)
     data = text.encode("utf-8", errors="ignore")
-    tokens_b = tokenize_dataset(data, args.tokens)
+    tokens_b = tokenize_dataset(data, args.tokens, unique=False)
     if not tokens_b:
         print("No tokens found in dataset")
         return 1

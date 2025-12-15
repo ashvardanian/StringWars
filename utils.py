@@ -209,8 +209,8 @@ def add_common_args(parser):
     parser.add_argument(
         "--time-limit",
         type=float,
-        default=10.0,
-        help="Time limit per benchmark function in seconds (default: 10.0)",
+        default=30.0,
+        help="Time limit per benchmark function in seconds (default: 30.0)",
     )
     parser.add_argument(
         "--dataset-limit",
