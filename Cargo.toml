@@ -12,10 +12,9 @@ keywords = ["string", "benchmark", "simd", "gpu", "stringzilla"]
 categories = ["text-processing", "development-tools::profiling"]
 
 [dependencies]
-criterion = "0.8.0"
+criterion = "0.8.1"
 stringtape = "2.4.1"
-stringzilla = { path = "../StringZilla/" }
-# stringzilla = { version = "4.4.0", default-features = false }
+stringzilla = { version = "4.5.0", default-features = false }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
@@ -31,13 +30,14 @@ bench_find = [
     "aho-corasick", # Byteset search
 ]
 bench_unicode = [
-    "icu",                  # Unicode properties and TR29 word segmentation
+    "icu",                  # Unicode properties, TR29 word segmentation, case mapping
     "simdutf",              # SIMD UTF-8 validation and transcoding
     "unicase",              # Case-insensitive string wrapper
     "focaccia",             # Unicode case folding
     "rand",                 # Random needle sampling
     "unicode-segmentation", # UAX#29 word/grapheme segmentation
     "pcre2",                # Full Unicode case folding in regex (unlike `regex` crate)
+    "memchr",               # Fast SIMD substring search (for ICU fold + search baseline)
 ]
 bench_hash = [
     "bit-set",      # for collision counting
