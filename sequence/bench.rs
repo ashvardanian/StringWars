@@ -42,6 +42,7 @@ use polars::prelude::*;
 use rayon::prelude::*;
 use stringzilla::sz;
 
+#[path = "../utils.rs"]
 mod utils;
 use utils::{
     install_panic_hook, load_dataset, reclaim_memory, should_run, ComparisonsWallTime, ResultExt,

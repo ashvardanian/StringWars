@@ -56,6 +56,7 @@ use stringzilla::szs::{
     LevenshteinDistancesUtf8, NeedlemanWunschScores, SmithWatermanScores, UnifiedAlloc, UnifiedVec,
 };
 
+#[path = "../utils.rs"]
 mod utils;
 use utils::{install_panic_hook, load_dataset, should_run, CupsWallTime, ResultExt};
 

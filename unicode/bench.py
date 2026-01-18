@@ -18,9 +18,9 @@ Environment variables:
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
 Examples:
-  uv run bench_unicode.py --dataset README.md --tokens lines
-  uv run bench_unicode.py --dataset xlsum.csv --tokens words -k "casefold"
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run bench_unicode.py
+  uv run unicode/bench.py --dataset README.md --tokens lines
+  uv run unicode/bench.py --dataset xlsum.csv --tokens words -k "casefold"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run unicode/bench.py
 
 Timing via time.monotonic_ns; throughput in decimal GB/s. Filter with -k/--filter.
 """

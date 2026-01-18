@@ -43,6 +43,7 @@ use rand_xoshiro;
 use stringzilla::sz;
 use zeroize::Zeroize;
 
+#[path = "../utils.rs"]
 mod utils;
 use utils::{install_panic_hook, should_run, ResultExt};
 

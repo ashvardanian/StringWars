@@ -14,8 +14,8 @@ Includes two groups:
 - Random byte generation: NumPy PCG64, NumPy Philox, and PyCryptodome AES-CTR
 
 Examples:
-  uv run bench_memory.py --dataset README.md --tokens lines
-  uv run bench_memory.py --dataset README.md --tokens words -k "translate|LUT|AES-CTR|PCG64|Philox"
+  uv run memory/bench.py --dataset README.md --tokens lines
+  uv run memory/bench.py --dataset README.md --tokens words -k "translate|LUT|AES-CTR|PCG64|Philox"
 """
 
 from __future__ import annotations

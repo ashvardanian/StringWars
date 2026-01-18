@@ -12,7 +12,7 @@
 Python hash function benchmarks comparing various implementations.
 
 Benchmarks hash function performance using consistent methodology with the Rust
-bench_hash.rs implementation, focusing on three categories of hashing patterns.
+hash/bench.rs implementation, focusing on three categories of hashing patterns.
 
 Benchmark categories:
 - Stateless: Hash each token independently (non-cryptographic)
@@ -31,9 +31,9 @@ Environment variables:
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
 Examples:
-  uv run bench_hash.py --dataset README.md --tokens lines
-  uv run bench_hash.py --dataset xlsum.csv --tokens words -k "xxhash"
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run bench_hash.py
+  uv run hash/bench.py --dataset README.md --tokens lines
+  uv run hash/bench.py --dataset xlsum.csv --tokens words -k "xxhash"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run hash/bench.py
 """
 
 import argparse

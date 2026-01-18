@@ -89,6 +89,7 @@ use cityhash;
 #[cfg(target_arch = "x86_64")]
 use gxhash;
 
+#[path = "../utils.rs"]
 mod utils;
 use utils::{get_env_bool, install_panic_hook, load_dataset, should_run, ResultExt};
 

@@ -29,9 +29,9 @@ Environment variables:
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
 
 Examples:
-  uv run --with stringzillas-cpus bench_similarities.py --dataset README.md --max-pairs 1000
-  uv run --with stringzillas-cpus bench_similarities.py --dataset xlsum.csv --bio -k "biopython"
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run --with stringzillas-cpus bench_similarities.py
+  uv run --with stringzillas-cpus similarities/bench.py --dataset README.md --max-pairs 1000
+  uv run --with stringzillas-cpus similarities/bench.py --dataset xlsum.csv --bio -k "biopython"
+  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run --with stringzillas-cpus similarities/bench.py
 """
 
 import os

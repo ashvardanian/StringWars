@@ -249,48 +249,48 @@ cityhash = { version = "0.1", optional = true }
 
 [[bench]]
 name = "bench_find"
-path = "bench_find.rs"
+path = "find/bench.rs"
 harness = false
 required-features = ["bench_find"]
 
 [[bench]]
 name = "bench_unicode"
-path = "bench_unicode.rs"
+path = "unicode/bench.rs"
 harness = false
 required-features = ["bench_unicode"]
 
 [[bench]]
 name = "bench_similarities"
-path = "bench_similarities.rs"
+path = "similarities/bench.rs"
 harness = false
 required-features = ["bench_similarities"]
 
 [[bench]]
 name = "bench_hash"
-path = "bench_hash.rs"
+path = "hash/bench.rs"
 harness = false
 required-features = ["bench_hash"]
 
 [[bench]]
 name = "bench_sequence"
-path = "bench_sequence.rs"
+path = "sequence/bench.rs"
 harness = false
 required-features = ["bench_sequence"]
 
 [[bench]]
 name = "bench_memory"
-path = "bench_memory.rs"
+path = "memory/bench.rs"
 harness = false
 required-features = ["bench_memory"]
 
 [[bench]]
 name = "bench_fingerprints"
-path = "bench_fingerprints.rs"
+path = "fingerprints/bench.rs"
 harness = false
 required-features = ["bench_fingerprints"]
 
 [[bench]]
 name = "bench_encryption"
-path = "bench_encryption.rs"
+path = "encryption/bench.rs"
 harness = false
 required-features = ["bench_encryption"]

@@ -57,6 +57,7 @@ use stringzilla::sz::dynamic_dispatch as sz_dynamic_dispatch;
 use stringzilla::szs::{capabilities as szs_capabilities, version as szs_version};
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
+#[path = "../utils.rs"]
 mod utils;
 use utils::{
     get_env_parsed, install_panic_hook, load_dataset, set_fingerprints_bytes_per_hash, should_run,

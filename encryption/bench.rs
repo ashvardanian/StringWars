@@ -77,6 +77,7 @@ use criterion::{Criterion, Throughput};
 use stringtape::BytesCowsAuto;
 use stringzilla::sz;
 
+#[path = "../utils.rs"]
 mod utils;
 use utils::{install_panic_hook, load_dataset, should_run, ResultExt};
 

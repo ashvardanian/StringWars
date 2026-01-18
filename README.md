@@ -48,7 +48,7 @@ hash                ██████████████████▌  0
 xxhash.xxh3_64      █████▋               0.04    █████████████▉        6.38 GB/s
 ```
 
-See [bench_hash.md](bench_hash.md) for details
+See [hash/README.md](hash/README.md) for details
 
 ### Case-Insensitive UTF-8 Search
 
@@ -75,7 +75,7 @@ stringzilla           ███████████████████�
 regex                 ████████              2.30   ████▋                 4.59 GB/s
 ```
 
-See [bench_unicode.md](bench_unicode.md) for details
+See [unicode/README.md](unicode/README.md) for details
 
 ### Exact Substring Search
 
@@ -94,7 +94,7 @@ stringzilla         ████████████████████
 str                 ██                    1.23   ██████▋               3.84 GB/s
 ```
 
-See [bench_find.md](bench_find.md) for details
+See [find/README.md](find/README.md) for details
 
 ### Byte-Set Search
 
@@ -112,7 +112,7 @@ stringzilla         ████████████████████
 re.finditer         ▍                      0.19 GB/s
 ```
 
-See [bench_find.md](bench_find.md) for details
+See [find/README.md](find/README.md) for details
 
 ### UTF-8 Processing
 
@@ -153,7 +153,7 @@ stringzilla           ███████████████████�
 stdlib                █████████████▏        265   █████▍                325 MB/s
 ```
 
-See [bench_unicode.md](bench_unicode.md) for details
+See [unicode/README.md](unicode/README.md) for details
 
 ### Sequence Operations
 
@@ -177,7 +177,7 @@ list.sort           ████▏                  47.06 M cmp/s
 
 GPU: `cudf` on H100 reaches __9,463 M cmp/s__ on short words.
 
-See [bench_sequence.md](bench_sequence.md) for details
+See [sequence/README.md](sequence/README.md) for details
 
 ### Random Generation
 
@@ -196,7 +196,7 @@ pycryptodome        ████████████▉         13.16 GB/s
 numpy.Philox        █▌                     1.59 GB/s
 ```
 
-See [bench_memory.md](bench_memory.md) for details
+See [memory/README.md](memory/README.md) for details
 
 ### Similarity Scoring
 
@@ -214,7 +214,7 @@ stringzilla (B200)                                   ██████▍      
 stringzilla (H100)                                   ██████                 925,890 MCUPS
 ```
 
-See [bench_similarities.md](bench_similarities.md) for details
+See [similarities/README.md](similarities/README.md) for details
 
 ### Fingerprinting
 
@@ -229,7 +229,7 @@ stringzilla (384x GNR)  ███▏                   0.51  ██████�
 stringzilla (H100)                                   ████████████████████  392.37 MB/s
 ```
 
-See [bench_fingerprints.md](bench_fingerprints.md) for details
+See [fingerprints/README.md](fingerprints/README.md) for details
 
 ### Encryption
 
@@ -242,7 +242,7 @@ ring::chacha20      ████████▏              1.19 GB/s
 libsodium::chacha20 █████                  0.71 GB/s
 ```
 
-See [bench_encryption.md](bench_encryption.md) for details
+See [encryption/README.md](encryption/README.md) for details
 
 ## Replicating the Results
 
@@ -278,7 +278,7 @@ Each of them accepts a few environment variables to control the dataset, the tok
 You can log those by printing file-level documentation using `awk` on Linux:
 
 ```bash
-awk '/^\/\/!/ { print } !/^\/\/!/ { exit }' bench_find.rs
+awk '/^\/\/!/ { print } !/^\/\/!/ { exit }' find/bench.rs
 ```
 
 Commonly used environment variables are:
@@ -324,12 +324,12 @@ uv pip install '.[find,hash,sequence,fingerprints,similarities]'
 To run individual benchmarks, you can call:
 
 ```sh
-uv run --no-project python bench_hash.py --help
-uv run --no-project python bench_find.py --help
-uv run --no-project python bench_memory.py --help
-uv run --no-project python bench_sequence.py --help
-uv run --no-project python bench_similarities.py --help
-uv run --no-project python bench_fingerprints.py --help
+uv run --no-project python hash/bench.py --help
+uv run --no-project python find/bench.py --help
+uv run --no-project python memory/bench.py --help
+uv run --no-project python sequence/bench.py --help
+uv run --no-project python similarities/bench.py --help
+uv run --no-project python fingerprints/bench.py --help
 ```
 
 ## Datasets

@@ -58,6 +58,7 @@ use stringzilla::sz::StringZillableUnary;
 use unicase::UniCase;
 use unicode_segmentation::UnicodeSegmentation;
 
+#[path = "../utils.rs"]
 mod utils;
 use utils::{install_panic_hook, load_dataset, should_run, ResultExt};
 

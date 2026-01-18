@@ -45,6 +45,7 @@ use memchr::memmem;
 use regex::bytes::Regex;
 use stringzilla::sz;
 
+#[path = "../utils.rs"]
 mod utils;
 use utils::{install_panic_hook, load_dataset, should_run, ResultExt};
 
