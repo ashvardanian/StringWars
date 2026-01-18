@@ -558,6 +558,29 @@ impl ValueFormatter for CupsFormatter {
                 };
                 format!("{:.2} {}", v, unit)
             }
+            Throughput::ElementsAndBytes { elements, bytes } => {
+                // Primary: elements/s
+                let elems_rate = (*elements as f64) / secs;
+                let (ev, ep) = scale_si(elems_rate);
+                let eunit = match ep {
+                    "G" => "GCUPS",
+                    "M" => "MCUPS",
+                    "k" => "kCUPS",
+                    _ => "CUPS",
+                };
+                // Secondary: bytes/s
+                let bytes_rate = (*bytes as f64) / secs;
+                let (bv, bunit) = if bytes_rate >= 1e9 {
+                    (bytes_rate / 1e9, "GB/s")
+                } else if bytes_rate >= 1e6 {
+                    (bytes_rate / 1e6, "MB/s")
+                } else if bytes_rate >= 1e3 {
+                    (bytes_rate / 1e3, "kB/s")
+                } else {
+                    (bytes_rate, "B/s")
+                };
+                format!("{:.2} {} | {:.2} {}", ev, eunit, bv, bunit)
+            }
             Throughput::Bits(bits) => {
                 let rate = (*bits as f64) / secs; // bits/s
                 let (v, p) = scale_si(rate);
@@ -652,6 +675,29 @@ impl ValueFormatter for HashesFormatter {
                 } else {
                     format!("{:.2} {}", hv, hunit)
                 }
+            }
+            Throughput::ElementsAndBytes { elements, bytes } => {
+                // Primary: hashes/s (elements)
+                let hashes_per_sec = (*elements as f64) / secs;
+                let (hv, hp) = scale_si(hashes_per_sec);
+                let hunit = match hp {
+                    "G" => "G hashes/s",
+                    "M" => "M hashes/s",
+                    "k" => "k hashes/s",
+                    _ => "hashes/s",
+                };
+                // Secondary: bytes/s
+                let bytes_per_sec = (*bytes as f64) / secs;
+                let (bv, bunit) = if bytes_per_sec >= 1e9 {
+                    (bytes_per_sec / 1e9, "GB/s")
+                } else if bytes_per_sec >= 1e6 {
+                    (bytes_per_sec / 1e6, "MB/s")
+                } else if bytes_per_sec >= 1e3 {
+                    (bytes_per_sec / 1e3, "kB/s")
+                } else {
+                    (bytes_per_sec, "B/s")
+                };
+                format!("{:.2} {} | {:.2} {}", hv, hunit, bv, bunit)
             }
             Throughput::Bits(bits) => {
                 let rate = (*bits as f64) / secs; // bits/s

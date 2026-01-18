@@ -303,7 +303,10 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
 
     // StringZilla: 1x CPU
     if should_run("fingerprinting/stringzillas/Fingerprints(1xCPU)") {
-        g.throughput(Throughput::Elements(per_batch_hash_ops));
+        g.throughput(Throughput::ElementsAndBytes {
+            elements: per_batch_hash_ops,
+            bytes: per_batch_bytes,
+        });
         g.bench_function("stringzillas/Fingerprints(1xCPU)", |b| {
             start_idx = 0;
             b.iter(|| {
@@ -341,7 +344,10 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
         "fingerprinting/stringzillas/Fingerprints({}xCPU)",
         num_cores
     )) {
-        g.throughput(Throughput::Elements(per_batch_hash_ops));
+        g.throughput(Throughput::ElementsAndBytes {
+            elements: per_batch_hash_ops,
+            bytes: per_batch_bytes,
+        });
         g.bench_function(
             &format!("stringzillas/Fingerprints({}xCPU)", num_cores),
             |b| {
@@ -396,7 +402,10 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     // StringZilla: 1x GPU (if available)
     if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sz_gpu.as_ref()) {
         if should_run("fingerprinting/stringzillas/Fingerprints(1xGPU)") {
-            g.throughput(Throughput::Elements(per_batch_hash_ops));
+            g.throughput(Throughput::ElementsAndBytes {
+            elements: per_batch_hash_ops,
+            bytes: per_batch_bytes,
+        });
             g.bench_function("stringzillas/Fingerprints(1xGPU)", |b| {
                 start_idx = 0;
                 b.iter(|| {
@@ -440,7 +449,10 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     let mut combined_signature = Vec::with_capacity(ndim);
 
     if should_run("fingerprinting/pc/MinHash<ByteGrams>()") {
-        g.throughput(Throughput::Elements(per_batch_hash_ops));
+        g.throughput(Throughput::ElementsAndBytes {
+            elements: per_batch_hash_ops,
+            bytes: per_batch_bytes,
+        });
         g.bench_function("pc/MinHash<ByteGrams>()", |b| {
             start_idx = 0;
             b.iter(|| {
@@ -489,7 +501,10 @@ fn bench_fingerprints(c: &mut Criterion<HashesWallTime>) {
     // Serial MinHash baseline implementing correct independent hash functions
     // This addresses the flaw in probabilistic_collections where hash function index is ignored
     if should_run("fingerprinting/serial/MinHash<ByteGrams>()") {
-        g.throughput(Throughput::Elements(per_batch_hash_ops));
+        g.throughput(Throughput::ElementsAndBytes {
+            elements: per_batch_hash_ops,
+            bytes: per_batch_bytes,
+        });
         g.bench_function("serial/MinHash<ByteGrams>()", |b| {
             // Pre-construct hash parameters for independent universal hash functions
             // Each hash function uses: hash_i(x) = (a_i * hash(x) + b_i) mod mersenne_prime
