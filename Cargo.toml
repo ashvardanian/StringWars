@@ -208,7 +208,7 @@ optional = true
 version = "0.52"
 optional = true
 default-features = false
-features = ["lazy", "strings", "parquet"]
+features = ["lazy", "strings", "parquet", "regex", "timezones", "temporal"]
 
 [dependencies.zeroize]
 version = "1.8.2"

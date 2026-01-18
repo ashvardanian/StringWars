@@ -856,6 +856,29 @@ impl ValueFormatter for ComparisonsFormatter {
                 };
                 format!("{:.2} {}", v, unit)
             }
+            Throughput::ElementsAndBytes { elements, bytes } => {
+                // Primary: comparisons/s
+                let cmps_per_sec = (*elements as f64) / secs;
+                let (cv, cp) = scale_si(cmps_per_sec);
+                let cunit = match cp {
+                    "G" => "G cmp/s",
+                    "M" => "M cmp/s",
+                    "k" => "k cmp/s",
+                    _ => "cmp/s",
+                };
+                // Secondary: bytes/s
+                let bytes_rate = (*bytes as f64) / secs;
+                let (bv, bunit) = if bytes_rate >= 1e9 {
+                    (bytes_rate / 1e9, "GB/s")
+                } else if bytes_rate >= 1e6 {
+                    (bytes_rate / 1e6, "MB/s")
+                } else if bytes_rate >= 1e3 {
+                    (bytes_rate / 1e3, "kB/s")
+                } else {
+                    (bytes_rate, "B/s")
+                };
+                format!("{:.2} {} | {:.2} {}", cv, cunit, bv, bunit)
+            }
             Throughput::Bits(bits) => {
                 let rate = (*bits as f64) / secs;
                 let (v, p) = scale_si(rate);
