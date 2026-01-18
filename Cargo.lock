@@ -4521,7 +4521,7 @@ dependencies = [
 
 [[package]]
 name = "stringwars"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "ahash",
  "aho-corasick",
