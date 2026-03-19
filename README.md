@@ -2,7 +2,7 @@
 
 ## Text Processing on CPUs & GPUs, in Python & Rust
 
-![StringWars Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWa.rs.jpg?raw=true)
+![StringWars Thumbnail](https://github.com/ashvardanian/ashvardanian/blob/master/repositories/StringWars-v2.png?raw=true)
 
 There are many __great__ libraries for string processing!
 Mostly, of course, written in Assembly, C, and C++, but some in Rust as well.
