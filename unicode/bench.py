@@ -1,4 +1,5 @@
 # /// script
+# requires-python = ">=3.13"
 # dependencies = [
 #   "stringzilla>=4.5.0",
 #   "regex",
@@ -26,18 +27,26 @@ Timing via time.monotonic_ns; throughput in decimal GB/s. Filter with -k/--filte
 """
 
 import argparse
+import itertools
 import random
 import re
 import sys
+from functools import partial
 from importlib.metadata import version as pkg_version
-from typing import List, Tuple, Optional
 
 import icu
 import regex
 import stringzilla as sz
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, should_run
-
+from utils import (
+    add_common_args,
+    load_dataset,
+    now_nanoseconds,
+    paced_items,
+    reduce_in_windows,
+    should_run,
+    tokenize_dataset,
+)
 
 
 def log_system_info():
@@ -49,7 +58,7 @@ def log_system_info():
     print()
 
 
-def make_pairs(tokens: List[str]) -> List[Tuple[str, str]]:
+def make_pairs(tokens: list[str]) -> list[tuple[str, str]]:
     """Create adjacent token pairs for comparison benchmarks."""
     if len(tokens) < 2:
         return []
@@ -58,8 +67,8 @@ def make_pairs(tokens: List[str]) -> List[Tuple[str, str]]:
 
 def bench_case_compare(
     name: str,
-    pairs: List[Tuple[str, str]],
-    compare_fn: callable,
+    pairs: list[tuple[str, str]],
+    compare_function: callable,
     time_limit_seconds: float = 10.0,
 ):
     """Benchmark case-insensitive comparison of string pairs."""
@@ -67,69 +76,79 @@ def bench_case_compare(
         print(f"{name:35s}: no pairs to compare")
         return
 
-    start_time = now_ns()
-    time_limit_ns = int(time_limit_seconds * 1e9)
+    # Encode once: byte length of every pair plus cumulative prefix sums, so the
+    # hot loop never re-encodes a string just to count throughput bytes.
+    cumulative_bytes = [0]
+    for first_string, second_string in pairs:
+        pair_bytes = len(first_string.encode("utf-8")) + len(second_string.encode("utf-8"))
+        cumulative_bytes.append(cumulative_bytes[-1] + pair_bytes)
+    bytes_per_pass = cumulative_bytes[-1]
+
+    start_time = now_nanoseconds()
+    deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
+
+    first_column = [first_string for first_string, _ in pairs]
+    second_column = [second_string for _, second_string in pairs]
 
     compared_pairs = 0
-    compared_bytes = 0
     matches_found = 0
 
-    while True:
-        for s1, s2 in pairs:
-            if compare_fn(s1, s2):
-                matches_found += 1
-            compared_pairs += 1
-            compared_bytes += len(s1.encode('utf-8')) + len(s2.encode('utf-8'))
+    # Cycle whole C-windowed passes over the dataset until the time limit; a pass that
+    # returns short means the deadline was hit mid-pass.
+    while now_nanoseconds() < deadline_nanoseconds:
+        pass_matches, pass_count = reduce_in_windows(
+            compare_function,
+            first_column,
+            second_column,
+            deadline_nanoseconds=deadline_nanoseconds,
+        )
+        matches_found += pass_matches
+        compared_pairs += pass_count
+        if pass_count < len(pairs):
+            break
 
-            if (now_ns() - start_time) >= time_limit_ns:
-                break
-        else:
-            # Completed full loop, check time
-            if (now_ns() - start_time) >= time_limit_ns:
-                break
-            continue
-        break
+    seconds = (now_nanoseconds() - start_time) / 1e9
+    full_passes, remainder = divmod(compared_pairs, len(pairs))
+    compared_bytes = full_passes * bytes_per_pass + cumulative_bytes[remainder]
 
-    end_time = now_ns()
-    secs = (end_time - start_time) / 1e9
-
-    pairs_per_sec = compared_pairs / secs if secs > 0 else 0.0
-    gb_per_sec = compared_bytes / secs / 1e9 if secs > 0 else 0.0
+    pairs_per_second = compared_pairs / seconds if seconds > 0 else 0.0
+    gigabytes_per_second = compared_bytes / seconds / 1e9 if seconds > 0 else 0.0
 
     print(
-        f"{name:35s}: {secs:8.3f}s ~ {gb_per_sec:8.3f} GB/s ~ {pairs_per_sec:10,.0f} pairs/s ~ {matches_found:,} matches"
+        f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ "
+        f"{pairs_per_second:10,.0f} pairs/s ~ {matches_found:,} matches"
     )
 
 
-def compare_casefold(s1: str, s2: str) -> bool:
+def compare_casefold(first_string: str, second_string: str) -> bool:
     """Compare using Python's str.casefold()."""
-    return s1.casefold() == s2.casefold()
+    return first_string.casefold() == second_string.casefold()
 
 
-def compare_regex_fullcase(s1: str, s2: str) -> bool:
+def compare_regex_fullcase(first_string: str, second_string: str) -> bool:
     """Compare using regex with IGNORECASE | FULLCASE."""
     # Escape special regex characters and do a full match
-    pattern = regex.compile(regex.escape(s1), regex.IGNORECASE | regex.FULLCASE)
-    return pattern.fullmatch(s2) is not None
+    pattern = regex.compile(regex.escape(first_string), regex.IGNORECASE | regex.FULLCASE)
+    return pattern.fullmatch(second_string) is not None
 
 
-def compare_icu(s1: str, s2: str) -> bool:
+def compare_icu(first_string: str, second_string: str) -> bool:
     """Compare using ICU case folding."""
-    folded1 = icu.UnicodeString(s1).foldCase()
-    folded2 = icu.UnicodeString(s2).foldCase()
-    return folded1 == folded2
+    first_folded = icu.UnicodeString(first_string).foldCase()
+    second_folded = icu.UnicodeString(second_string).foldCase()
+    return first_folded == second_folded
 
 
-def compare_stringzilla(s1: str, s2: str) -> bool:
+def compare_stringzilla(first_string: str, second_string: str) -> bool:
     """Compare using StringZilla's utf8_case_insensitive_order."""
-    return sz.utf8_case_insensitive_order(s1, s2) == 0
+    return sz.utf8_case_insensitive_order(first_string, second_string) == 0
 
 
 def bench_case_find(
     name: str,
     haystack: str,
-    needles: List[str],
-    find_fn: callable,
+    needles: list[str],
+    find_function: callable,
     time_limit_seconds: float = 10.0,
 ):
     """Benchmark case-insensitive substring search."""
@@ -137,35 +156,35 @@ def bench_case_find(
         print(f"{name:35s}: no needles to search")
         return
 
-    haystack_bytes = len(haystack.encode('utf-8'))
-    start_time = now_ns()
-    time_limit_ns = int(time_limit_seconds * 1e9)
+    haystack_bytes = len(haystack.encode("utf-8"))
+    start_time = now_nanoseconds()
+    deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
 
     queries_done = 0
     total_matches = 0
 
-    while True:
-        for needle in needles:
-            total_matches += find_fn(haystack, needle)
-            queries_done += 1
+    # Haystack is fixed, so bind it and cycle whole C-windowed passes over the needles.
+    search = partial(find_function, haystack)
+    while now_nanoseconds() < deadline_nanoseconds:
+        pass_matches, pass_count = reduce_in_windows(
+            search,
+            needles,
+            deadline_nanoseconds=deadline_nanoseconds,
+        )
+        total_matches += pass_matches
+        queries_done += pass_count
+        if pass_count < len(needles):
+            break
 
-            if (now_ns() - start_time) >= time_limit_ns:
-                break
-        else:
-            if (now_ns() - start_time) >= time_limit_ns:
-                break
-            continue
-        break
+    seconds = (now_nanoseconds() - start_time) / 1e9
 
-    end_time = now_ns()
-    secs = (end_time - start_time) / 1e9
-
-    queries_per_sec = queries_done / secs if secs > 0 else 0.0
+    queries_per_second = queries_done / seconds if seconds > 0 else 0.0
     # Throughput = haystack bytes searched per query
-    gb_per_sec = (haystack_bytes * queries_done) / secs / 1e9 if secs > 0 else 0.0
+    gigabytes_per_second = (haystack_bytes * queries_done) / seconds / 1e9 if seconds > 0 else 0.0
 
     print(
-        f"{name:35s}: {secs:8.3f}s ~ {gb_per_sec:8.3f} GB/s ~ {queries_per_sec:10,.2f} queries/s ~ {total_matches:,} matches"
+        f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ "
+        f"{queries_per_second:10,.0f} queries/s ~ {total_matches:,} matches"
     )
 
 
@@ -219,8 +238,8 @@ def find_stringzilla(haystack: str, needle: str) -> int:
 
 def bench_case_fold(
     name: str,
-    strings: List[str],
-    fold_fn: callable,
+    strings: list[str],
+    fold_function: callable,
     time_limit_seconds: float = 10.0,
 ):
     """Benchmark case folding transformation."""
@@ -228,33 +247,31 @@ def bench_case_fold(
         print(f"{name:35s}: no strings to fold")
         return
 
-    # Pre-calculate total bytes for throughput
-    total_bytes = sum(len(s.encode('utf-8')) for s in strings)
+    # Encode once: cumulative prefix sums of byte lengths for exact throughput
+    # accounting without re-encoding inside the hot loop.
+    cumulative_bytes = [0]
+    for string in strings:
+        cumulative_bytes.append(cumulative_bytes[-1] + len(string.encode("utf-8")))
+    bytes_per_pass = cumulative_bytes[-1]
 
-    start_time = now_ns()
-    time_limit_ns = int(time_limit_seconds * 1e9)
+    start_time = now_nanoseconds()
+    deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
 
-    iterations = 0
-    processed_bytes = 0
+    processed_strings = 0
 
-    while True:
-        for s in strings:
-            _ = fold_fn(s)
-        iterations += 1
-        processed_bytes += total_bytes
+    # Cycle the dataset until the time limit, one pair at a time.
+    for string in paced_items(itertools.cycle(strings), deadline_nanoseconds):
+        _ = fold_function(string)
+        processed_strings += 1
 
-        if (now_ns() - start_time) >= time_limit_ns:
-            break
+    seconds = (now_nanoseconds() - start_time) / 1e9
+    full_passes, remainder = divmod(processed_strings, len(strings))
+    processed_bytes = full_passes * bytes_per_pass + cumulative_bytes[remainder]
 
-    end_time = now_ns()
-    secs = (end_time - start_time) / 1e9
+    strings_per_second = processed_strings / seconds if seconds > 0 else 0.0
+    gigabytes_per_second = processed_bytes / seconds / 1e9 if seconds > 0 else 0.0
 
-    strings_per_sec = (iterations * len(strings)) / secs if secs > 0 else 0.0
-    gb_per_sec = processed_bytes / secs / 1e9 if secs > 0 else 0.0
-
-    print(
-        f"{name:35s}: {secs:8.3f}s ~ {gb_per_sec:8.3f} GB/s ~ {strings_per_sec:10,.0f} strings/s"
-    )
+    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {strings_per_second:10,.0f} strings/s")
 
 
 def fold_casefold(s: str) -> str:
@@ -299,7 +316,7 @@ def main():
     args = parser.parse_args()
 
     # Compile filter pattern
-    filter_pattern: Optional[re.Pattern] = None
+    filter_pattern: re.Pattern | None = None
     if args.filter:
         try:
             filter_pattern = re.compile(args.filter)
@@ -319,7 +336,7 @@ def main():
 
     # Select subset of tokens as needles for search benchmarks
     # Filter to needles with >= 3 UTF-8 bytes (matching Rust benchmark)
-    candidates = [t for t in tokens if len(t.encode('utf-8')) >= 3]
+    candidates = [t for t in tokens if len(t.encode("utf-8")) >= 3]
     # Random sample with fixed seed for reproducibility
     random.seed(42)
     search_needles = random.sample(candidates, min(1000, len(candidates))) if candidates else []
@@ -333,8 +350,8 @@ def main():
     print(f"Pairs: {total_pairs:,}, Search needles: {len(search_needles)}")
     log_system_info()
 
-    # === Case-Insensitive Comparison ===
-    print("=== Case-Insensitive Comparison ===")
+    # Case-insensitive comparison
+    print("Case-Insensitive Comparison")
     if should_run("case-insensitive-compare/stringzilla.utf8_case_insensitive_order()", filter_pattern):
         bench_case_compare("stringzilla.utf8_case_insensitive_order()", pairs, compare_stringzilla, args.time_limit)
     if should_run("case-insensitive-compare/std.casefold().eq()", filter_pattern):
@@ -344,10 +361,12 @@ def main():
     if should_run("case-insensitive-compare/icu.CaseMap.foldCase().eq()", filter_pattern):
         bench_case_compare("icu.CaseMap.foldCase().eq()", pairs, compare_icu, args.time_limit)
 
-    # === Case-Insensitive Substring Search ===
-    print("\n=== Case-Insensitive Substring Search ===")
+    # Case-insensitive substring search
+    print("\nCase-Insensitive Substring Search")
     if should_run("case-insensitive-find/stringzilla.utf8_case_insensitive_find()", filter_pattern):
-        bench_case_find("stringzilla.utf8_case_insensitive_find()", pythonic_str, search_needles, find_stringzilla, args.time_limit)
+        bench_case_find(
+            "stringzilla.utf8_case_insensitive_find()", pythonic_str, search_needles, find_stringzilla, args.time_limit
+        )
     if should_run("case-insensitive-find/std.casefold().find()", filter_pattern):
         bench_case_find("std.casefold().find()", pythonic_str, search_needles, find_casefold, args.time_limit)
     if should_run("case-insensitive-find/regex.search(FULLCASE)", filter_pattern):
@@ -355,8 +374,8 @@ def main():
     if should_run("case-insensitive-find/icu.StringSearch()", filter_pattern):
         bench_case_find("icu.StringSearch()", pythonic_str, search_needles, find_icu, args.time_limit)
 
-    # === Case Folding Transformation ===
-    print("\n=== Case Folding Transformation ===")
+    # Case folding transformation
+    print("\nCase Folding Transformation")
     if should_run("case-fold/stringzilla.utf8_case_fold()", filter_pattern):
         bench_case_fold("stringzilla.utf8_case_fold()", tokens, fold_stringzilla, args.time_limit)
     if should_run("case-fold/std.casefold()", filter_pattern):

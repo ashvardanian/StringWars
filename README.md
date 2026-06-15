@@ -512,3 +512,19 @@ Using `perf` on Linux to analyze the CPU-side performance of SIMD-accelerated su
 perf record -e cpu-clock -g graph,0x400000 -o perf.data -- cargo criterion --features "bench_similarities" bench_similarities --jobs 1
 perf report -i perf.data
 ```
+
+## Contributing
+
+After cloning, enable the repository's git hooks once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The `pre-commit` hook rejects banner marks (three or more consecutive `-` or `=`) in
+Python and Rust sources. Use plain text for section titles, and `# region:` /
+`# endregion:` at module scope for foldable sections.
+
+It also runs `ruff check` and `ruff format --check` on staged Python (the project
+requires Python 3.13). Fix issues with `ruff check --fix . && ruff format .` rather
+than silencing them with `# noqa`.

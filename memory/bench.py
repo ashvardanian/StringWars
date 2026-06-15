@@ -1,4 +1,5 @@
 # /// script
+# requires-python = ">=3.13"
 # dependencies = [
 #   "stringzilla",
 #   "numpy",
@@ -18,20 +19,26 @@ Examples:
   uv run memory/bench.py --dataset README.md --tokens words -k "translate|LUT|AES-CTR|PCG64|Philox"
 """
 
-from __future__ import annotations
-
 import argparse
 import re
 import sys
-from typing import Callable, Iterable, List, Optional
+from collections.abc import Callable, Iterable
 
-import stringzilla as sz
-import numpy as np
 import Crypto as pycryptodome
-from Crypto.Cipher import AES as PyCryptoDomeAES
 import cv2
+import numpy as np
+import stringzilla as sz
+from Crypto.Cipher import AES as PyCryptoDomeAES
 
-from utils import add_common_args, load_dataset, should_run, now_ns, tokenize_dataset
+from utils import (
+    add_common_args,
+    load_dataset,
+    now_nanoseconds,
+    paced_items,
+    reduce_in_windows,
+    should_run,
+    tokenize_dataset,
+)
 
 
 def log_system_info():
@@ -101,104 +108,96 @@ def bench_translate(
     name: str,
     tokens,
     table: bytes,
-    op: Callable[[object, bytes], int],
+    operation: Callable[[object, bytes], int],
     time_limit_seconds: float,
 ) -> None:
-    start_time = now_ns()
-    time_limit_ns = int(time_limit_seconds * 1e9)
+    start_time = now_nanoseconds()
+    deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
 
-    requested = 0
-    produced_bytes = 0
-    check_frequency = 100
+    # The table is fixed and trailing, so broadcast it as a constant column (a list of
+    # references to one object) and reduce the per-token byte counts in C windows.
+    tables = [table] * len(tokens)
+    produced_bytes, requested = reduce_in_windows(
+        operation,
+        tokens,
+        tables,
+        deadline_nanoseconds=deadline_nanoseconds,
+    )
 
-    for token in tokens:
-        produced_bytes += op(token, table)
-        requested += 1
-        check_frequency -= 1
-
-        if check_frequency == 0:
-            if (now_ns() - start_time) >= time_limit_ns:
-                break
-            check_frequency = 100
-
-    secs = (now_ns() - start_time) / 1e9
-    gbps = produced_bytes / (1e9 * secs) if secs > 0 else 0.0
-    qps = requested / secs if secs > 0 else 0.0
-    print(f"{name:35s}: {secs:8.3f}s ~ {gbps:8.3f} GB/s ~ {qps:10,.2f} ops/s")
+    seconds = (now_nanoseconds() - start_time) / 1e9
+    gigabytes_per_second = produced_bytes / (1e9 * seconds) if seconds > 0 else 0.0
+    ops_per_second = requested / seconds if seconds > 0 else 0.0
+    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {ops_per_second:10,.0f} ops/s")
 
 
-def sizes_from_tokens(tokens: Iterable[bytes]) -> List[int]:
+def sizes_from_tokens(tokens: Iterable[bytes]) -> list[int]:
     return [len(t) for t in tokens if len(t) > 0]
 
 
-def bench_generator(name: str, sizes: List[int], gen_bytes: Callable[[int], bytes], time_limit_seconds: float) -> None:
-    start = now_ns()
-    limit = int(time_limit_seconds * 1e9)
+def bench_generator(
+    name: str, sizes: list[int], generate_bytes: Callable[[int], bytes], time_limit_seconds: float
+) -> None:
+    start = now_nanoseconds()
+    deadline = start + int(time_limit_seconds * 1e9)
 
     processed = 0
     total_bytes = 0
-    next_check = 10_000
 
-    for n in sizes:
-        _ = gen_bytes(n)
+    for size in paced_items(sizes, deadline):
+        _ = generate_bytes(size)
         processed += 1
-        total_bytes += n
-        if processed >= next_check:
-            now = now_ns()
-            if now - start >= limit:
-                break
-            next_check += 10_000
+        total_bytes += size
 
-    elapsed = (now_ns() - start) / 1e9
-    if elapsed == 0:
-        elapsed = 1e-9
-    gbs = total_bytes / (1e9 * elapsed)
-    rate = processed / elapsed
-    print(f"{name:35s}: {elapsed:8.3f}s ~ {gbs:8.3f} GB/s ~ {rate:10,.0f} tokens/s")
+    seconds = (now_nanoseconds() - start) / 1e9
+    if seconds == 0:
+        seconds = 1e-9
+    gigabytes_per_second = total_bytes / (1e9 * seconds)
+    tokens_per_second = processed / seconds
+    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {tokens_per_second:10,.0f} tokens/s")
 
 
 def make_pycryptodome_aes_ctr():
     key = b"\x00" * 16
     cipher = PyCryptoDomeAES.new(key, PyCryptoDomeAES.MODE_CTR, nonce=b"")
 
-    def gen_bytes(n: int) -> bytes:
+    def generate_bytes(size: int) -> bytes:
         # Generate keystream by encrypting zero bytes
-        return cipher.encrypt(b"\x00" * n)
+        return cipher.encrypt(b"\x00" * size)
 
-    return gen_bytes
+    return generate_bytes
 
 
 def make_stringzilla_fill_random():
-    def gen_bytes(n: int):
-        buf = bytearray(n)
-        sz.fill_random(buf, 0)
-        return buf
+    def generate_bytes(size: int):
+        buffer = bytearray(size)
+        sz.fill_random(buffer, 0)
+        return buffer
 
-    return gen_bytes
+    return generate_bytes
 
 
 def make_numpy_pcg64():
-    gen = np.random.Generator(np.random.PCG64(0))
-    rr = gen.bit_generator.random_raw
+    generator = np.random.Generator(np.random.PCG64(0))
+    random_raw = generator.bit_generator.random_raw
 
-    def gen_bytes(n: int) -> bytes:
-        words = (n + 7) // 8
-        arr64 = rr(words)
-        return arr64.view(np.uint8)[:n].tobytes()
+    def generate_bytes(size: int) -> bytes:
+        words = (size + 7) // 8
+        raw_words = random_raw(words)
+        return raw_words.view(np.uint8)[:size].tobytes()
 
-    return gen_bytes
+    return generate_bytes
 
 
 def make_numpy_philox():
-    gen = np.random.Generator(np.random.Philox(0))
-    rr = gen.bit_generator.random_raw
+    generator = np.random.Generator(np.random.Philox(0))
+    random_raw = generator.bit_generator.random_raw
 
-    def gen_bytes(n: int) -> bytes:
-        words = (n + 7) // 8
-        arr64 = rr(words)
-        return arr64.view(np.uint8)[:n].tobytes()
+    def generate_bytes(size: int) -> bytes:
+        words = (size + 7) // 8
+        raw_words = random_raw(words)
+        return raw_words.view(np.uint8)[:size].tobytes()
 
-    return gen_bytes
+    return generate_bytes
 
 
 _main_epilog = """
@@ -235,7 +234,7 @@ def main() -> int:
     log_system_info()
 
     # Compile filter
-    pattern: Optional[re.Pattern[str]] = None
+    pattern: re.Pattern[str] | None = None
     if args.filter:
         try:
             pattern = re.compile(args.filter)
@@ -245,9 +244,9 @@ def main() -> int:
     # Disable OpenCV multithreading for more consistent results
     cv2.setNumThreads(1)
 
-    # ---------------- Lookup-table transforms ----------------
+    # Lookup-table transforms
     print()
-    print("--- LUT Transforms ---")
+    print("LUT Transforms")
 
     # Create reverse LUT
     reverse = bytes(reversed(range(256)))
@@ -293,9 +292,9 @@ def main() -> int:
     if should_run("lookup-table/stringzilla.translate(inplace)", pattern):
         bench_translate("stringzilla.translate(inplace)", tokens_mv, reverse, sz_translate_inplace, args.time_limit)
 
-    # ---------------- Random byte generation ----------------
+    # Random byte generation
     print()
-    print("--- Random Byte Generation ---")
+    print("Random Byte Generation")
     sizes = sizes_from_tokens(tokens_b)
 
     if should_run("generate-random/pycryptodome.AES-CTR()", pattern):

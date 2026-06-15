@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # /// script
+# requires-python = ">=3.13"
 # dependencies = [
 #   "stringzilla",
 #   "pandas",
@@ -21,21 +22,17 @@ Examples:
   uv run sequence/bench.py --dataset xlsum.csv --tokens words -k "list.sort"
   STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run sequence/bench.py
 """
-import os
-
 
 import argparse
 import math
 import re
 import sys
-from typing import List, Optional
-
 
 # Assume core deps are present; only cuDF is optional
 import pandas as pd
+import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
-import polars as pl
 import stringzilla as sz
 
 try:
@@ -49,7 +46,7 @@ else:
     # cuDF sorts run on GPU; nothing to set for CPU threads here
     pass
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, should_run
+from utils import add_common_args, load_dataset, now_nanoseconds, should_run, tokenize_dataset
 
 
 def log_system_info():
@@ -67,17 +64,17 @@ def log_system_info():
 
 def bench_sort_operation(name: str, operation: callable, n_items: int):
     """Timing wrapper for sorting operations"""
-    start = now_ns()
+    start = now_nanoseconds()
     result = operation()
-    end = now_ns()
+    end = now_nanoseconds()
 
-    secs = (end - start) / 1e9
+    seconds = (end - start) / 1e9
     # For sorting operations: estimate comparisons as n*log2(n)
     comparisons = n_items * math.log2(max(n_items, 2))
-    cmp_per_sec = comparisons / secs if secs > 0 else 0.0
-    gb_per_sec = (n_items * 10) / (1e9 * secs) if secs > 0 else 0.0
+    comparisons_per_second = comparisons / seconds if seconds > 0 else 0.0
+    gigabytes_per_second = (n_items * 10) / (1e9 * seconds) if seconds > 0 else 0.0
 
-    print(f"{name:35s}: {secs:8.3f}s ~ {gb_per_sec:8.3f} GB/s ~ {cmp_per_sec:10,.0f} cmp/s")
+    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {comparisons_per_second:10,.0f} cmp/s")
     return result
 
 
@@ -131,7 +128,7 @@ def main():
     print(f"Dataset: {len(tokens):,} tokens, {total_chars:,} chars, {avg_token_length:.1f} avg token length")
     log_system_info()
 
-    print("\n=== Sort Benchmarks ===")
+    print("\nSort Benchmarks")
 
     # Python list.sort
     if should_run("argsort/std.list.sort()", filter_pattern):

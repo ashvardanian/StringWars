@@ -1,4 +1,5 @@
 # /// script
+# requires-python = ">=3.13"
 # dependencies = [
 #   "stringzilla",
 #   "pyahocorasick",
@@ -26,13 +27,13 @@ Timing via time.monotonic_ns.; throughput in decimal GB/s. Filter with -k/--filt
 import argparse
 import re
 import sys
+from functools import partial
 from importlib.metadata import version as pkg_version
 
-
-import stringzilla as sz
 import ahocorasick as ahoc
+import stringzilla as sz
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, should_run
+from utils import add_common_args, load_dataset, now_nanoseconds, reduce_in_windows, should_run, tokenize_dataset
 
 
 def log_system_info():
@@ -43,33 +44,30 @@ def log_system_info():
     print()  # Add blank line
 
 
-def bench_op(name: str, haystack, patterns, op: callable, time_limit_seconds: float = 10.0):
-    start_time = now_ns()
-    time_limit_ns = int(time_limit_seconds * 1e9)
+def bench_op(name: str, haystack, patterns, operation: callable, time_limit_seconds: float = 10.0):
+    start_time = now_nanoseconds()
+    deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
 
-    requested_queries = 0
-    received_results = 0
-    received_bytes = 0
+    haystack_length = len(haystack)
 
-    for pattern in patterns:
-        received_results += op(haystack, pattern)
-        requested_queries += 1
-        received_bytes += len(haystack)
+    # Haystack is fixed per call, so bind it with a (C-level) partial and reduce the
+    # per-pattern results in C windows.
+    received_results, requested_queries = reduce_in_windows(
+        partial(operation, haystack),
+        patterns,
+        deadline_nanoseconds=deadline_nanoseconds,
+    )
 
-        # Check time limit every 10 iterations (since patterns might be fewer than tokens)
-        current_time = now_ns()
-        if (current_time - start_time) >= time_limit_ns:
-            break
+    end_time = now_nanoseconds()
+    seconds = (end_time - start_time) / 1e9
 
-    end_time = now_ns()
-    secs = (end_time - start_time) / 1e9
-
-    queries_per_sec = requested_queries / secs if secs > 0 else 0.0
-    results_per_sec = received_results / secs if secs > 0 else 0.0
-    gb_per_sec = len(haystack) * queries_per_sec / 1e9
+    queries_per_second = requested_queries / seconds if seconds > 0 else 0.0
+    results_per_second = received_results / seconds if seconds > 0 else 0.0
+    gigabytes_per_second = haystack_length * queries_per_second / 1e9
 
     print(
-        f"{name:35s}: {secs:8.3f}s ~ {gb_per_sec:8.3f} GB/s ~ {queries_per_sec:10,.2f} queries/s ~ {results_per_sec:10,.0f} results/s"
+        f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ "
+        f"{queries_per_second:10,.0f} queries/s ~ {results_per_second:10,.0f} results/s"
     )
 
 
@@ -172,7 +170,7 @@ def main():
     print(f"Dataset: {total_tokens:,} tokens, {len(pythonic_str):,} bytes, {mean_token_length:.1f} avg token length")
     log_system_info()
 
-    print("\n=== Substring Search Benchmarks ===")
+    print("\nSubstring Search Benchmarks")
     if should_run("substring-forward/std.str.find()", filter_pattern):
         bench_op("std.str.find()", pythonic_str, tokens[::-1], count_find, args.time_limit)
     if should_run("substring-forward/stringzilla.Str.find()", filter_pattern):
@@ -184,7 +182,7 @@ def main():
     if should_run("substring-forward/pyahocorasick.iter()", filter_pattern):
         bench_op("pyahocorasick.iter()", pythonic_str, tokens[::-1], count_aho, args.time_limit)
 
-    print("\n=== Character Set Search ===")
+    print("\nCharacter Set Search")
     if args.tokens == "lines":
         re_chars = re.compile(r"[\n\r]")  # newlines: LF, CR
         sz_chars = "\n\r"

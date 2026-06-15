@@ -1,4 +1,5 @@
 # /// script
+# requires-python = ">=3.13"
 # dependencies = [
 #   "stringzilla",
 #   "stringzillas-cpus",
@@ -23,21 +24,18 @@ Examples:
   STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=lines uv run --with stringzillas-cpus fingerprints/bench.py
 """
 
-import os
 import argparse
-import itertools
+import os
 import re
 import sys
-from typing import Callable, Any, List, Optional, Iterable
 
-from tqdm import tqdm
 import numpy as np
-
-from datasketch import MinHash
-import stringzillas as szs
 import stringzilla as sz
+import stringzillas as szs
+from datasketch import MinHash
+from tqdm import tqdm
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, should_run
+from utils import add_common_args, clamped_subranges, load_dataset, now_nanoseconds, should_run, tokenize_dataset
 
 # For RAPIDS cuDF GPU-accelerated MinHash
 try:
@@ -61,6 +59,114 @@ def log_system_info():
     if CUDF_AVAILABLE:
         print(f"- CuDF: {cudf.__version__}")
     print()  # Add blank line
+
+
+def bench_fingerprint(name, documents, kernel, doc_bytes, time_limit_seconds, batch_size):
+    """Time kernel over documents in batches until the deadline; report docs/s and GB/s."""
+    count = len(documents)
+    deadline_nanoseconds = now_nanoseconds() + int(time_limit_seconds * 1e9)
+    start_time = now_nanoseconds()
+    processed = 0
+    bar = tqdm(total=count, desc=name, unit="docs", leave=False)
+    try:
+        for low, high in clamped_subranges(count, batch_size):
+            if now_nanoseconds() >= deadline_nanoseconds:
+                break
+            kernel(documents[low:high])
+            processed = high
+            bar.update(high - low)
+    finally:
+        bar.close()
+
+    seconds = (now_nanoseconds() - start_time) / 1e9
+    processed_bytes = int(doc_bytes[:processed].sum())
+    gigabytes_per_second = processed_bytes / (1e9 * seconds) if seconds > 0 else 0.0
+    docs_per_second = processed / seconds if seconds > 0 else 0.0
+    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {docs_per_second:10,.0f} docs/s")
+
+
+def document_byte_lengths(documents):
+    return np.fromiter((len(document.encode("utf-8")) for document in documents), dtype=np.int64, count=len(documents))
+
+
+def benchmark_stringzillas(documents, dimensions, batch_size, time_limit_seconds, filter_pattern):
+    """StringZilla Fingerprints on 1 core, all cores, and the GPU (if present)."""
+    cpu_cores = os.cpu_count()
+    default_scope = szs.DeviceScope()
+    cpu_scope = szs.DeviceScope(cpu_cores=cpu_cores)
+    try:
+        gpu_scope = szs.DeviceScope(gpu_device=0)
+    except Exception:
+        gpu_scope = None
+
+    moved = sz.Strs(documents)
+    doc_bytes = document_byte_lengths(documents)
+
+    def run_variant(suffix, scope, variant_batch_size):
+        engine = szs.Fingerprints(ndim=dimensions, window_widths=NGRAM_WIDTHS_ARRAY, capabilities=scope)
+
+        def kernel(strs_slice):
+            engine(strs_slice, device=scope)  # returns (hashes, counts); discarded for throughput
+
+        bench_fingerprint(
+            f"stringzillas.Fingerprints{suffix}", moved, kernel, doc_bytes, time_limit_seconds, variant_batch_size
+        )
+
+    if should_run("minhash/stringzillas.Fingerprints(1xCPU)", filter_pattern):
+        run_variant("(1xCPU)", default_scope, 1)
+    if should_run(f"minhash/stringzillas.Fingerprints({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
+        run_variant(f"({cpu_cores}xCPU,batch={batch_size})", cpu_scope, batch_size)
+    if gpu_scope is not None and should_run(
+        f"minhash/stringzillas.Fingerprints(1xGPU,batch={batch_size})", filter_pattern
+    ):
+        run_variant(f"(1xGPU,batch={batch_size})", gpu_scope, batch_size)
+
+
+def benchmark_datasketch(documents, dimensions, batch_size, time_limit_seconds, filter_pattern):
+    """datasketch MinHash on CPU: the common data-science baseline, n-grams built in Python."""
+    if not should_run("minhash/datasketch.MinHash()", filter_pattern):
+        return
+    per_width = max(1, dimensions // len(NGRAM_WIDTHS))
+    doc_bytes = document_byte_lengths(documents)
+
+    def kernel(slice_of_documents):
+        for document in slice_of_documents:
+            data = document.encode("utf-8")
+            for width in NGRAM_WIDTHS:
+                signature = MinHash(num_perm=per_width)
+                for offset in range(len(data) - width + 1):
+                    signature.update(data[offset : offset + width])
+                _ = signature.hashvalues  # force materialization
+
+    bench_fingerprint("datasketch.MinHash()", documents, kernel, doc_bytes, time_limit_seconds, batch_size)
+
+
+def benchmark_cudf(documents, dimensions, batch_size, time_limit_seconds, filter_pattern):
+    """cuDF MinHash on the GPU: the CUDA first-party comparison (optional, best-effort)."""
+    if not should_run(f"minhash/cudf.minhash(1xGPU,batch={batch_size})", filter_pattern):
+        return
+    try:
+        import cupy as cp
+    except ImportError:
+        print("cudf.minhash(1xGPU): SKIPPED (cupy not available)")
+        return
+
+    per_width = max(1, dimensions // len(NGRAM_WIDTHS))
+    parameters_a = cp.arange(1, per_width + 1, dtype=cp.uint32)
+    parameters_b = cp.arange(1, per_width + 1, dtype=cp.uint32)
+    doc_bytes = document_byte_lengths(documents)
+    series = cudf.Series(documents)
+
+    def kernel(series_slice):
+        for width in NGRAM_WIDTHS:
+            series_slice.str.minhash(seed=0, a=parameters_a, b=parameters_b, width=width)
+
+    try:
+        bench_fingerprint(
+            f"cudf.minhash(1xGPU,batch={batch_size})", series, kernel, doc_bytes, time_limit_seconds, batch_size
+        )
+    except Exception as error:
+        print(f"cudf.minhash(1xGPU): SKIPPED ({type(error).__name__}: {error})")
 
 
 _main_epilog = """
@@ -137,12 +243,12 @@ def main():
     print(f"Dataset: {len(tokens):,} docs, {total_bytes:,} bytes, {avg_doc_length:.1f} avg doc length")
     log_system_info()
 
-    # Pre-allocated matrices for quality analysis: N_docs × N_dims (engine-specific types)
-    total_documents = len(tokens)
-    datasketch_matrix = np.zeros((total_documents, args.dimensions), dtype=np.uint32)
-    cudf_matrix = np.zeros((total_documents, args.dimensions), dtype=np.uint32)
-    szs_matrix = np.zeros((total_documents, args.dimensions), dtype=np.uint32)
-    return 1
+    print("\nMinHash Throughput")
+    benchmark_stringzillas(tokens, args.dimensions, args.batch_size, args.time_limit, filter_pattern)
+    benchmark_datasketch(tokens, args.dimensions, args.batch_size, args.time_limit, filter_pattern)
+    if CUDF_AVAILABLE:
+        benchmark_cudf(tokens, args.dimensions, args.batch_size, args.time_limit, filter_pattern)
+    return 0
 
 
 if __name__ == "__main__":

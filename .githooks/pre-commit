@@ -1,0 +1,53 @@
+#!/bin/sh
+# Reject banner marks (3+ consecutive "-" or "=") in staged Python/Rust source.
+# Use plain text for section titles and "# region:" / "# endregion:" (module scope
+# only) for foldable sections instead. Markdown files and the PEP-723 "# ///" and
+# Rust "///" doc markers are never matched, so they are unaffected.
+
+status=0
+files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py|rs)$')
+
+for file in $files; do
+    hits=$(git show ":$file" | grep -nE '(-{3,}|={3,})')
+    if [ -n "$hits" ]; then
+        if [ "$status" -eq 0 ]; then
+            echo "Banned banner marks (--- / ===) in staged source:"
+            echo
+        fi
+        printf '%s\n' "$hits" | sed "s|^|  $file:|"
+        status=1
+    fi
+done
+
+if [ "$status" -ne 0 ]; then
+    echo
+    echo "Remove the --- / === runs. Use plain text titles, or '# region:' / '# endregion:'"
+    echo "at module scope for foldable sections."
+fi
+
+# Keep the Python suite conformant to [tool.ruff] in pyproject.toml.
+# Fix issues for real with `ruff check --fix . && ruff format .` rather than
+# silencing them with `# noqa`.
+py_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$')
+if [ -n "$py_files" ]; then
+    if command -v ruff >/dev/null 2>&1; then
+        RUFF="ruff"
+    elif command -v uvx >/dev/null 2>&1; then
+        RUFF="uvx ruff"
+    elif command -v uv >/dev/null 2>&1; then
+        RUFF="uv run --no-project --with ruff ruff"
+    else
+        echo "warning: ruff not found; skipping Python lint check"
+        RUFF=""
+    fi
+    if [ -n "$RUFF" ]; then
+        if ! $RUFF check $py_files || ! $RUFF format --check $py_files; then
+            echo
+            echo "ruff found issues. Fix with:  ruff check --fix . && ruff format ."
+            echo "Do NOT silence with '# noqa' — the suite must stay conformant."
+            status=1
+        fi
+    fi
+fi
+
+exit $status

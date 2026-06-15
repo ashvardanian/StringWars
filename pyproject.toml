@@ -3,7 +3,7 @@ name = "stringwars"
 version = "1.8.2"
 description = "Comparing performance-oriented string-processing libraries for substring search, multi-pattern matching, hashing, edit-distances, sketching, and sorting across CPUs and GPUs in Python 🐍"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 authors = [
   { name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com" },
 ]
@@ -62,7 +62,7 @@ memory = ["stringzilla>=4.5.0", "numpy", "pycryptodome", "opencv-python"]
 [tool.ruff]
 # Enforce 120-column lines across formatting and linting
 line-length = 120
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = [
@@ -78,6 +78,10 @@ ignore = [
   "T201",
 ]
 
+[tool.ruff.lint.isort]
+# Group the local `utils` module into its own final import block
+known-first-party = ["utils"]
+
 [tool.ruff.format]
 quote-style = "preserve"
 indent-style = "space"
@@ -87,7 +91,7 @@ line-ending = "auto"
 # If you prefer Black interoperability, mirror line length
 [tool.black]
 line-length = 120
-target-version = ["py312"]
+target-version = ["py313"]
 
 [build-system]
 requires = ["hatchling>=1.21.1"]

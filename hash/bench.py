@@ -1,4 +1,5 @@
 # /// script
+# requires-python = ">=3.13"
 # dependencies = [
 #   "stringzilla",
 #   "xxhash",
@@ -40,17 +41,18 @@ import argparse
 import hashlib
 import re
 import sys
-from typing import List, Optional, Callable, Any
+from collections.abc import Callable
 from importlib.metadata import version as pkg_version
+from typing import Any
 
 import blake3
-import stringzilla as sz
-import xxhash
+import cityhash
 import google_crc32c
 import mmh3
-import cityhash
+import stringzilla as sz
+import xxhash
 
-from utils import load_dataset, tokenize_dataset, add_common_args, now_ns, should_run
+from utils import add_common_args, load_dataset, now_nanoseconds, paced_items, should_run, tokenize_dataset
 
 
 def log_system_info():
@@ -67,7 +69,7 @@ def log_system_info():
 
 def bench_hash_function(
     name: str,
-    tokens: List[bytes],
+    tokens: list[bytes],
     hash_func: Callable[[bytes], Any],
     time_limit_seconds: float = 10.0,
 ) -> None:
@@ -76,42 +78,34 @@ def bench_hash_function(
 
     Processes tokens until time limit is reached, then reports results.
     """
-    start_time = now_ns()
-    time_limit_ns = int(time_limit_seconds * 1e9)
+    start_time = now_nanoseconds()
+    deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
 
     processed_tokens = 0
     processed_bytes = 0
 
-    # Stateless: hash each token independently
-    next_check = 10_000
-    for token in tokens:
+    # Stateless: hash each token independently.
+    for token in paced_items(tokens, deadline_nanoseconds):
         _ = hash_func(token)
         processed_tokens += 1
         processed_bytes += len(token)
 
-        # Check time limit every 10,000 tokens
-        if processed_tokens >= next_check:
-            current_time = now_ns()
-            if current_time >= start_time + time_limit_ns:
-                break
-            next_check += 10_000
+    end_time = now_nanoseconds()
 
-    end_time = now_ns()
+    seconds = (end_time - start_time) / 1e9
+    gigabytes_per_second = processed_bytes / (1e9 * seconds)
+    tokens_per_second = processed_tokens / seconds
 
-    duration_secs = (end_time - start_time) / 1e9
-    throughput_gbs = processed_bytes / (1e9 * duration_secs)
-    tokens_per_sec = processed_tokens / duration_secs
-
-    print(f"{name:35s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
+    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {tokens_per_second:10,.0f} tokens/s")
 
 
 def run_stateless_benchmarks(
-    tokens: List[bytes],
-    filter_pattern: Optional[re.Pattern] = None,
+    tokens: list[bytes],
+    filter_pattern: re.Pattern | None = None,
     time_limit_seconds: float = 10.0,
 ):
     """Run stateless hash benchmarks (hash each token independently)."""
-    print("\n=== Stateless Hash Benchmarks ===")
+    print("\nStateless Hash Benchmarks")
 
     # Python built-in hash
     if should_run("stateless/std.hash()", filter_pattern):
@@ -146,47 +140,39 @@ def run_stateless_benchmarks(
 
 def bench_stateful_hash(
     name: str,
-    tokens: List[bytes],
+    tokens: list[bytes],
     hasher_factory: Callable,
     time_limit_seconds: float = 10.0,
 ) -> None:
     """Benchmark a stateful hash function and report throughput."""
-    start_time = now_ns()
-    time_limit_ns = int(time_limit_seconds * 1e9)
+    start_time = now_nanoseconds()
+    deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
 
     processed_tokens = 0
     processed_bytes = 0
 
     hasher = hasher_factory()
-    next_check = 10_000
-    for token in tokens:
+    for token in paced_items(tokens, deadline_nanoseconds):
         hasher.update(token)
         processed_tokens += 1
         processed_bytes += len(token)
 
-        # Check time limit every 10,000 tokens
-        if processed_tokens >= next_check:
-            current_time = now_ns()
-            if current_time >= start_time + time_limit_ns:
-                break
-            next_check += 10_000
+    _ = hasher.digest() if hasattr(hasher, "digest") else hasher.intdigest()
+    end_time = now_nanoseconds()
 
-    result = hasher.digest() if hasattr(hasher, "digest") else hasher.intdigest()
-    end_time = now_ns()
-
-    duration_secs = (end_time - start_time) / 1e9
-    throughput_gbs = processed_bytes / (1e9 * duration_secs)
-    tokens_per_sec = processed_tokens / duration_secs
-    print(f"{name:35s}: {duration_secs:8.3f}s ~ {throughput_gbs:8.3f} GB/s ~ {tokens_per_sec:10,.0f} tokens/s")
+    seconds = (end_time - start_time) / 1e9
+    gigabytes_per_second = processed_bytes / (1e9 * seconds)
+    tokens_per_second = processed_tokens / seconds
+    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {tokens_per_second:10,.0f} tokens/s")
 
 
 def run_stateful_benchmarks(
-    tokens: List[bytes],
-    filter_pattern: Optional[re.Pattern] = None,
+    tokens: list[bytes],
+    filter_pattern: re.Pattern | None = None,
     time_limit_seconds: float = 10.0,
 ):
     """Run stateful hash benchmarks (incremental/streaming hashing)."""
-    print("\n=== Stateful Hash Benchmarks ===")
+    print("\nStateful Hash Benchmarks")
 
     # xxHash stateful
     if should_run("stateful/xxhash.xxh3_64()", filter_pattern):
@@ -202,12 +188,12 @@ def run_stateful_benchmarks(
 
 
 def run_checksum_benchmarks(
-    tokens: List[bytes],
-    filter_pattern: Optional[re.Pattern] = None,
+    tokens: list[bytes],
+    filter_pattern: re.Pattern | None = None,
     time_limit_seconds: float = 10.0,
 ):
     """Run checksum/cryptographic hash benchmarks."""
-    print("\n=== Checksum Hash Benchmarks ===")
+    print("\nChecksum Hash Benchmarks")
 
     # StringZilla bytesum - reference lower bound
     if should_run("checksum/stringzilla.bytesum()", filter_pattern):
@@ -223,7 +209,9 @@ def run_checksum_benchmarks(
 
     # SHA256 via StringZilla
     if should_run("checksum/stringzilla.Sha256()", filter_pattern):
-        bench_hash_function("stringzilla.Sha256()", tokens, lambda x: sz.Sha256().update(x).digest(), time_limit_seconds)
+        bench_hash_function(
+            "stringzilla.Sha256()", tokens, lambda x: sz.Sha256().update(x).digest(), time_limit_seconds
+        )
 
 
 _main_epilog = """

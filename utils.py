@@ -8,19 +8,14 @@ used across bench_find.py, bench_hash.py, and other benchmarking scripts.
 import os
 import re
 import time
-from typing import Callable, List, Optional, TypeVar, Union
+from collections.abc import Callable
 
-T = TypeVar("T")
-
-
-# ============================================================================
-# Environment Variable Helpers
-# ============================================================================
+# region: Environment Variable Helpers
 # Standardized functions for fetching environment variables consistently.
 # Use these instead of raw os.environ.get() calls throughout the codebase.
 
 
-def get_env(name: str) -> Optional[str]:
+def get_env(name: str) -> str | None:
     """Get an optional environment variable, returning None if not set."""
     return os.environ.get(name)
 
@@ -30,7 +25,7 @@ def get_env_or_default(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-def get_env_parsed(name: str, default: T, parser: Callable[[str], T] = int) -> T:
+def get_env_parsed[T](name: str, default: T, parser: Callable[[str], T] = int) -> T:
     """
     Get an environment variable parsed to a type, with a default value.
     Returns the default if the variable is not set or cannot be parsed.
@@ -44,7 +39,7 @@ def get_env_parsed(name: str, default: T, parser: Callable[[str], T] = int) -> T
         return default
 
 
-def get_env_parsed_opt(name: str, parser: Callable[[str], T] = int) -> Optional[T]:
+def get_env_parsed_opt[T](name: str, parser: Callable[[str], T] = int) -> T | None:
     """
     Get an optional environment variable parsed to a type.
     Returns None if the variable is not set or cannot be parsed.
@@ -68,12 +63,97 @@ def get_env_bool(name: str) -> bool:
     return value in ("1", "true", "yes")
 
 
-# ============================================================================
+# endregion: Environment Variable Helpers
 
 
-def now_ns() -> int:
+def now_nanoseconds() -> int:
     """Get current time in nanoseconds for benchmarking."""
     return time.monotonic_ns()
+
+
+# region: Benchmark loop profile
+
+# Reporting stride: the smallest number of operations to run between progress logging
+# and clock reads, so the cost of terminal rendering and timer syscalls is amortized
+# away. This is independent of batch size. Benchmarks come in two shapes:
+#
+# - One item at a time: a single element per call, logged every LOGGING_STEP calls.
+# - Batched: many items per call, where one batch already spans many items.
+#
+# Batched benchmarks use clamped_subranges to slice the input and hand each slice to a
+# kernel that consumes a whole batch. One-at-a-time benchmarks use paced_items, which
+# walks a single iterator and checks the clock from inside the loop, so it never builds
+# a slice and works on any iterable.
+LOGGING_STEP = 1024
+
+
+def clamped_subranges(count: int, stride: int = LOGGING_STEP):
+    """Yield (low, high) index windows covering [0, count) in stride-sized steps.
+
+    Used by the batched benchmarks: slice the input with the returned indices, hand
+    each slice to a kernel, then read the clock and repaint progress once per window.
+    Pass stride explicitly to use the batch size as the window.
+    """
+    for low in range(0, count, stride):
+        yield low, min(low + stride, count)
+
+
+def paced_items(items, deadline_nanoseconds: int, step: int = LOGGING_STEP, progress=None):
+    """Yield items from a single iterator, checking the deadline from inside the loop.
+
+    The companion to clamped_subranges for one-at-a-time benchmarks. It walks one
+    iterator and, every step items, repaints progress (when given) and reads the
+    clock, stopping once the deadline passes. Works on any iterable, such as a list,
+    a zip of two lists, or an itertools.cycle, and never builds a slice.
+    """
+    countdown = step
+    for item in items:
+        yield item
+        countdown -= 1
+        if countdown == 0:
+            countdown = step
+            if progress is not None:
+                progress.update(step)
+            if now_nanoseconds() >= deadline_nanoseconds:
+                return
+
+
+def reduce_in_windows(
+    function,
+    *columns,
+    deadline_nanoseconds: int,
+    step: int = LOGGING_STEP,
+    combine=sum,
+    progress=None,
+):
+    """Apply function across the zipped columns one window at a time and reduce each window.
+
+    The shared home for the trick of pushing a per-item loop into C: every window is
+    handled by combine(map(...)), so the function calls and the reduction run in C with
+    no Python bytecode per item, and the deadline and optional progress are checked once
+    per window. This runs about 1.5 to 1.9 times faster than an explicit Python loop on
+    real kernels, but only when the body is "call a function on each item and reduce the
+    results" with no per-item side effect.
+
+    Pass several equal-length sequences to vary more than one argument, for example two
+    string columns. Pin a fixed argument with a leading functools.partial or a constant
+    column such as [fixed] * n. Returns (reduced_total, processed_count).
+    """
+    count = min((len(column) for column in columns), default=0)
+    total = 0
+    processed = 0
+    for low in range(0, count, step):
+        if now_nanoseconds() >= deadline_nanoseconds:
+            break
+        high = min(low + step, count)
+        total += combine(map(function, *(column[low:high] for column in columns)))
+        if progress is not None:
+            progress.update(high - low)
+        processed = high
+    return total, processed
+
+
+# endregion: Benchmark loop profile
 
 
 def parse_size(size_str: str) -> int:
@@ -107,10 +187,10 @@ def parse_size(size_str: str) -> int:
 
 
 def load_dataset(
-    dataset_path: Optional[str] = None,
+    dataset_path: str | None = None,
     as_bytes: bool = False,
-    size_limit: Optional[str] = None,
-) -> Union[str, bytes]:
+    size_limit: str | None = None,
+) -> str | bytes:
     """
     Load dataset from file path or environment variable.
 
@@ -139,7 +219,7 @@ def load_dataset(
             else:
                 return f.read()
     else:
-        with open(dataset_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(dataset_path, encoding="utf-8", errors="ignore") as f:
             if max_bytes is not None:
                 return f.read(max_bytes)
             else:
@@ -147,10 +227,10 @@ def load_dataset(
 
 
 def tokenize_dataset(
-    haystack: Union[str, bytes],
-    tokens_mode: Optional[str] = None,
-    unique: Optional[bool] = None,
-) -> Union[List[str], List[bytes]]:
+    haystack: str | bytes,
+    tokens_mode: str | None = None,
+    unique: bool | None = None,
+) -> list[str] | list[bytes]:
     """
     Tokenize haystack based on mode from argument or environment variable.
 
@@ -220,7 +300,7 @@ def add_common_args(parser):
     )
 
 
-def should_run(name: str, pattern: Optional[re.Pattern]) -> bool:
+def should_run(name: str, pattern: re.Pattern | None) -> bool:
     """Check if benchmark should run based on filter pattern."""
     if pattern is None:
         return True
