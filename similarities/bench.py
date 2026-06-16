@@ -8,7 +8,6 @@
 #   "levenshtein",
 #   "jellyfish",
 #   "editdistance",
-#   "distance",
 #   "polyleven",
 #   "edlib",
 #   "nltk",
