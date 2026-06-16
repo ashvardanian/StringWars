@@ -4558,6 +4558,7 @@ dependencies = [
  "unicase",
  "unicode-normalization",
  "unicode-segmentation",
+ "wyhash",
  "xxhash-rust",
  "zeroize",
 ]
@@ -5488,6 +5489,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 dependencies = [
  "either",
+]
+
+[[package]]
+name = "wyhash"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baf6e163c25e3fac820b4b453185ea2dea3b6a3e0a721d4d23d75bd33734c295"
+dependencies = [
+ "rand_core 0.6.4",
 ]
 
 [[package]]

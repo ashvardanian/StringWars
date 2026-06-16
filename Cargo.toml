@@ -46,6 +46,7 @@ bench_hash = [
     "bit-set",      # for collision counting
     "ahash",        # aHash
     "xxhash-rust",  # xxHash
+    "wyhash",       # wyhash
     "blake3",       # Blake3
     "crc32fast",    # CRC32
     "murmurhash32", # MurmurHash32
@@ -194,6 +195,10 @@ optional = true
 version = "0.8"
 optional = true
 features = ["xxh3", "const_xxh3"]
+
+[dependencies.wyhash]
+version = "0.5"
+optional = true
 
 [dependencies.twox-hash]
 version = "2.1.2"

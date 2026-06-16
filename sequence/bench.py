@@ -3,6 +3,7 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #   "stringzilla",
+#   "numpy",
 #   "pandas",
 #   "pyarrow",
 #   "polars",
@@ -11,7 +12,7 @@
 """
 Sort benchmarks in Python: cmp/s for sort operations.
 
-- Sort: list.sort, stringzilla.Strs.sort, pandas, pyarrow, polars, cuDF (optional)
+- Sort: list.sort, stringzilla.Strs.sort, numpy, pandas, pyarrow, polars, cuDF (optional)
 
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
@@ -27,8 +28,10 @@ import argparse
 import math
 import re
 import sys
+from collections.abc import Callable
 
 # Assume core deps are present; only cuDF is optional
+import numpy as np
 import pandas as pd
 import polars as pl
 import pyarrow as pa
@@ -62,7 +65,7 @@ def log_system_info():
     print()  # Add blank line
 
 
-def bench_sort_operation(name: str, operation: callable, n_items: int):
+def bench_sort_operation(name: str, operation: Callable[[], object], n_items: int):
     """Timing wrapper for sorting operations"""
     start = now_nanoseconds()
     result = operation()
@@ -139,6 +142,11 @@ def main():
     if should_run("argsort/stringzilla.Strs.sorted()", filter_pattern):
         sz_strs = sz.Strs(tokens)
         bench_sort_operation("stringzilla.Strs.sorted()", lambda: sz_strs.sorted(), len(tokens))
+
+    # NumPy (object-dtype array; the most familiar Python baseline)
+    if should_run("argsort/numpy.argsort()", filter_pattern):
+        np_array = np.array(tokens, dtype=object)
+        bench_sort_operation("numpy.argsort()", lambda: np.argsort(np_array, kind="stable"), len(tokens))
 
     # Pandas
     if should_run("argsort/pandas.Series.sort_values()", filter_pattern):
