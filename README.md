@@ -75,7 +75,7 @@ stringzilla           ███████████████████�
 regex                 ████████              2.30   ████▋                 4.59 GB/s
 ```
 
-See [unicode/README.md](unicode/README.md) for details
+See [normalization/README.md](normalization/README.md) for details
 
 ### Exact Substring Search
 
@@ -153,7 +153,7 @@ stringzilla           ███████████████████�
 stdlib                █████████████▏        265   █████▍                325 MB/s
 ```
 
-See [unicode/README.md](unicode/README.md) for details
+See [tokenization/README.md](tokenization/README.md) and [normalization/README.md](normalization/README.md) for details
 
 ### Sequence Operations
 

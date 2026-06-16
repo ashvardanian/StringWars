@@ -8,12 +8,6 @@ use std::path::Path;
 use std::str::FromStr;
 use stringtape::BytesCowsAuto;
 
-// ============================================================================
-// Environment Variable Helpers
-// ============================================================================
-// Standardized functions for fetching environment variables consistently.
-// Use these instead of raw env::var() calls throughout the codebase.
-
 /// Get an optional environment variable, returning None if not set.
 #[allow(dead_code)]
 pub fn get_env(name: &str) -> Option<String> {
@@ -32,7 +26,7 @@ pub fn get_env_or_default(name: &str, default: &str) -> String {
 pub fn get_env_parsed<T: FromStr>(name: &str, default: T) -> T {
     env::var(name)
         .ok()
-        .and_then(|v| v.parse().ok())
+        .and_then(|value| value.parse().ok())
         .unwrap_or(default)
 }
 
@@ -40,7 +34,7 @@ pub fn get_env_parsed<T: FromStr>(name: &str, default: T) -> T {
 /// Returns None if the variable is not set or cannot be parsed.
 #[allow(dead_code)]
 pub fn get_env_parsed_opt<T: FromStr>(name: &str) -> Option<T> {
-    env::var(name).ok().and_then(|v| v.parse().ok())
+    env::var(name).ok().and_then(|value| value.parse().ok())
 }
 
 /// Get a boolean environment variable.
@@ -49,35 +43,67 @@ pub fn get_env_parsed_opt<T: FromStr>(name: &str) -> Option<T> {
 #[allow(dead_code)]
 pub fn get_env_bool(name: &str) -> bool {
     env::var(name)
-        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .map(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
 }
-
-// ============================================================================
 
 /// Installs a custom panic hook that formats errors cleanly for CLI usage.
 /// Call this at the start of main() before any potential panics.
 #[allow(dead_code)]
 pub fn install_panic_hook() {
     panic::set_hook(Box::new(|info| {
-        let message = if let Some(s) = info.payload().downcast_ref::<&str>() {
-            s.to_string()
-        } else if let Some(s) = info.payload().downcast_ref::<String>() {
-            s.clone()
+        let message = if let Some(payload_text) = info.payload().downcast_ref::<&str>() {
+            payload_text.to_string()
+        } else if let Some(payload_text) = info.payload().downcast_ref::<String>() {
+            payload_text.clone()
         } else {
             "Unknown error".to_string()
         };
 
-        // Print clean error message
         eprintln!("\nError: {}", message);
 
-        // Only show location in debug builds or if RUST_BACKTRACE is set
+        // Location only in debug/RUST_BACKTRACE mode, not for CLI users.
         if cfg!(debug_assertions) || get_env("RUST_BACKTRACE").is_some() {
             if let Some(location) = info.location() {
                 eprintln!("  at {}:{}", location.file(), location.line());
             }
         }
     }));
+}
+
+/// Prints the StringZilla version, dispatch mode, and detected SIMD capabilities.
+#[allow(dead_code)]
+pub fn log_stringzilla_metadata() {
+    let version = stringzilla::sz::version();
+    println!(
+        "StringZilla v{}.{}.{}",
+        version.major, version.minor, version.patch
+    );
+    println!(
+        "- uses dynamic dispatch: {}",
+        stringzilla::sz::dynamic_dispatch()
+    );
+    println!(
+        "- capabilities: {}",
+        stringzilla::sz::capabilities().as_str()
+    );
+}
+
+/// Builds a Criterion with the project's shared sampling policy (sample size 10, overridable
+/// from the command line) and the given warm-up / measurement durations in seconds, on the
+/// chosen measurement backend.
+#[allow(dead_code)]
+pub fn configure_bench<MeasurementBackend: criterion::measurement::Measurement + 'static>(
+    measurement: MeasurementBackend,
+    warm_up_seconds: u64,
+    measurement_seconds: u64,
+) -> criterion::Criterion<MeasurementBackend> {
+    criterion::Criterion::default()
+        .with_measurement(measurement)
+        .configure_from_args()
+        .sample_size(10)
+        .warm_up_time(std::time::Duration::from_secs(warm_up_seconds))
+        .measurement_time(std::time::Duration::from_secs(measurement_seconds))
 }
 
 /// Extension trait for Result that provides clean panic-on-error semantics.
@@ -98,16 +124,16 @@ impl<T, E: fmt::Display> ResultExt<T> for Result<T, E> {
     #[track_caller]
     fn unwrap_nice(self) -> T {
         match self {
-            Ok(v) => v,
-            Err(e) => panic!("{}", e),
+            Ok(value) => value,
+            Err(error) => panic!("{}", error),
         }
     }
 
     #[track_caller]
     fn expect_nice(self, msg: &str) -> T {
         match self {
-            Ok(v) => v,
-            Err(e) => panic!("{}: {}", msg, e),
+            Ok(value) => value,
+            Err(error) => panic!("{}: {}", msg, error),
         }
     }
 }
@@ -123,7 +149,7 @@ impl<T> OptionExt<T> for Option<T> {
     #[track_caller]
     fn expect_nice(self, msg: &str) -> T {
         match self {
-            Some(v) => v,
+            Some(value) => value,
             None => panic!("{}", msg),
         }
     }
@@ -270,9 +296,9 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
     }
 
     // Read the file content
-    let content = fs::read(&dataset_path).map_err(|e| DatasetError::ReadError {
+    let content = fs::read(&dataset_path).map_err(|error| DatasetError::ReadError {
         path: dataset_path.clone(),
-        source: e,
+        source: error,
     })?;
 
     // Check for empty file
@@ -288,12 +314,13 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
     let tape = match mode.as_str() {
         "lines" => {
             let iter = content_static
-                .split(|&b| b == b'\n')
-                .filter(|s| !s.is_empty())
+                .split(|&byte| byte == b'\n')
+                .filter(|slice| !slice.is_empty())
                 .take(limit);
             if unique {
                 let mut seen: HashSet<&'static [u8]> = HashSet::new();
-                let unique_tokens: Vec<&'static [u8]> = iter.filter(|t| seen.insert(*t)).collect();
+                let unique_tokens: Vec<&'static [u8]> =
+                    iter.filter(|token| seen.insert(*token)).collect();
                 BytesCowsAuto::from_iter_and_data(
                     unique_tokens.into_iter(),
                     Cow::Borrowed(content_static),
@@ -304,12 +331,13 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
         }
         "words" => {
             let iter = content_static
-                .split(|&b| b == b' ' || b == b'\n')
-                .filter(|s| !s.is_empty())
+                .split(|&byte| byte == b' ' || byte == b'\n')
+                .filter(|slice| !slice.is_empty())
                 .take(limit);
             if unique {
                 let mut seen: HashSet<&'static [u8]> = HashSet::new();
-                let unique_tokens: Vec<&'static [u8]> = iter.filter(|t| seen.insert(*t)).collect();
+                let unique_tokens: Vec<&'static [u8]> =
+                    iter.filter(|token| seen.insert(*token)).collect();
                 BytesCowsAuto::from_iter_and_data(
                     unique_tokens.into_iter(),
                     Cow::Borrowed(content_static),
@@ -329,7 +357,7 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
         }
     };
 
-    let tape = tape.map_err(|_| DatasetError::TapeCreationFailed {
+    let tape = tape.map_err(|_error| DatasetError::TapeCreationFailed {
         path: dataset_path.clone(),
     })?;
 
@@ -343,7 +371,7 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
 
     // Streaming statistics with log-scale histogram (O(1) memory)
     let count = tape.len();
-    let total_bytes: usize = tape.iter().map(|s: &[u8]| s.len()).sum();
+    let total_bytes: usize = tape.iter().map(|slice: &[u8]| slice.len()).sum();
     let mean_len = total_bytes as f64 / count as f64;
 
     // Log-scale buckets: 0, 1, 2-3, 4-7, 8-15, 16-31, ... 32K-64K, 64K+
@@ -394,15 +422,15 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
         "0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64-127", "128-255", "256-511", "512-1K",
         "1K-2K", "2K-4K", "4K-8K", "8K-16K", "16K-32K", "32K-64K", "64K+",
     ];
-    for (i, &cnt) in buckets.iter().enumerate() {
-        if cnt > 0 {
-            let pct = (cnt as f64 / count as f64) * 100.0;
-            let label = if i < bucket_ranges.len() {
-                bucket_ranges[i]
+    for (index, &bucket_count) in buckets.iter().enumerate() {
+        if bucket_count > 0 {
+            let percent = (bucket_count as f64 / count as f64) * 100.0;
+            let label = if index < bucket_ranges.len() {
+                bucket_ranges[index]
             } else {
                 "64K+"
             };
-            eprintln!("    {:>10} bytes: {:>6.2}%", label, pct);
+            eprintln!("    {:>10} bytes: {:>6.2}%", label, percent);
         }
     }
 
@@ -412,13 +440,13 @@ pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
 /// Format large numbers with thousand separators for readability
 #[allow(dead_code)]
 fn format_number(n: u64) -> String {
-    let s = n.to_string();
+    let digits = n.to_string();
     let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
+    for (index, digit) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
             result.insert(0, ',');
         }
-        result.insert(0, c);
+        result.insert(0, digit);
     }
     result
 }
@@ -459,8 +487,8 @@ pub fn should_run(name: &str) -> bool {
             eprintln!("STRINGWARS_FILTER active: '{}'", filter);
         });
 
-        if let Ok(re) = regex::Regex::new(&filter) {
-            let matches = re.is_match(name);
+        if let Ok(regex) = regex::Regex::new(&filter) {
+            let matches = regex.is_match(name);
             if !matches {
                 eprintln!("  Skipping: {}", name);
             }
@@ -536,7 +564,7 @@ impl ValueFormatter for CupsFormatter {
         match throughput {
             Throughput::Bytes(bytes) | Throughput::BytesDecimal(bytes) => {
                 let rate = (*bytes as f64) / secs; // bytes/s
-                let (v, unit) = if rate >= 1e9 {
+                let (value, unit) = if rate >= 1e9 {
                     (rate / 1e9, "GB/s")
                 } else if rate >= 1e6 {
                     (rate / 1e6, "MB/s")
@@ -545,24 +573,24 @@ impl ValueFormatter for CupsFormatter {
                 } else {
                     (rate, "B/s")
                 };
-                format!("{:.2} {}", v, unit)
+                format!("{:.2} {}", value, unit)
             }
             Throughput::Elements(elems) => {
                 let cups = (*elems as f64) / secs; // elements/s
-                let (v, p) = scale_si(cups);
-                let unit = match p {
+                let (value, prefix) = scale_si(cups);
+                let unit = match prefix {
                     "G" => "GCUPS",
                     "M" => "MCUPS",
                     "k" => "kCUPS",
                     _ => "CUPS",
                 };
-                format!("{:.2} {}", v, unit)
+                format!("{:.2} {}", value, unit)
             }
             Throughput::ElementsAndBytes { elements, bytes } => {
                 // Primary: elements/s
                 let elems_rate = (*elements as f64) / secs;
-                let (ev, ep) = scale_si(elems_rate);
-                let eunit = match ep {
+                let (elements_value, elements_prefix) = scale_si(elems_rate);
+                let elements_unit = match elements_prefix {
                     "G" => "GCUPS",
                     "M" => "MCUPS",
                     "k" => "kCUPS",
@@ -570,7 +598,7 @@ impl ValueFormatter for CupsFormatter {
                 };
                 // Secondary: bytes/s
                 let bytes_rate = (*bytes as f64) / secs;
-                let (bv, bunit) = if bytes_rate >= 1e9 {
+                let (bytes_value, bytes_unit) = if bytes_rate >= 1e9 {
                     (bytes_rate / 1e9, "GB/s")
                 } else if bytes_rate >= 1e6 {
                     (bytes_rate / 1e6, "MB/s")
@@ -579,18 +607,21 @@ impl ValueFormatter for CupsFormatter {
                 } else {
                     (bytes_rate, "B/s")
                 };
-                format!("{:.2} {} | {:.2} {}", ev, eunit, bv, bunit)
+                format!(
+                    "{:.2} {} | {:.2} {}",
+                    elements_value, elements_unit, bytes_value, bytes_unit
+                )
             }
             Throughput::Bits(bits) => {
                 let rate = (*bits as f64) / secs; // bits/s
-                let (v, p) = scale_si(rate);
-                let unit = match p {
+                let (value, prefix) = scale_si(rate);
+                let unit = match prefix {
                     "G" => "Gb/s",
                     "M" => "Mb/s",
                     "k" => "kb/s",
                     _ => "b/s",
                 };
-                format!("{:.2} {}", v, unit)
+                format!("{:.2} {}", value, unit)
             }
         }
     }
@@ -624,7 +655,7 @@ impl ValueFormatter for HashesFormatter {
         match throughput {
             Throughput::Bytes(bytes) | Throughput::BytesDecimal(bytes) => {
                 let bytes_per_sec = (*bytes as f64) / secs;
-                let (bv, bunit) = if bytes_per_sec >= 1e9 {
+                let (bytes_value, bytes_unit) = if bytes_per_sec >= 1e9 {
                     (bytes_per_sec / 1e9, "GB/s")
                 } else if bytes_per_sec >= 1e6 {
                     (bytes_per_sec / 1e6, "MB/s")
@@ -634,35 +665,38 @@ impl ValueFormatter for HashesFormatter {
                     (bytes_per_sec, "B/s")
                 };
                 // If a bytes-per-hash ratio is set, also render hashes/s
-                let bph = get_bytes_per_hash();
-                if bph > 0.0 {
-                    let hashes_per_sec = bytes_per_sec / bph;
-                    let (hv, hp) = scale_si(hashes_per_sec);
-                    let hunit = match hp {
+                let bytes_per_hash = get_bytes_per_hash();
+                if bytes_per_hash > 0.0 {
+                    let hashes_per_sec = bytes_per_sec / bytes_per_hash;
+                    let (hashes_value, hashes_prefix) = scale_si(hashes_per_sec);
+                    let hashes_unit = match hashes_prefix {
                         "G" => "G hashes/s",
                         "M" => "M hashes/s",
                         "k" => "k hashes/s",
                         _ => "hashes/s",
                     };
-                    format!("{:.2} {} | {:.2} {}", bv, bunit, hv, hunit)
+                    format!(
+                        "{:.2} {} | {:.2} {}",
+                        bytes_value, bytes_unit, hashes_value, hashes_unit
+                    )
                 } else {
-                    format!("{:.2} {}", bv, bunit)
+                    format!("{:.2} {}", bytes_value, bytes_unit)
                 }
             }
             Throughput::Elements(elems) => {
                 let hashes_per_sec = (*elems as f64) / secs;
-                let (hv, hp) = scale_si(hashes_per_sec);
-                let hunit = match hp {
+                let (hashes_value, hashes_prefix) = scale_si(hashes_per_sec);
+                let hashes_unit = match hashes_prefix {
                     "G" => "G hashes/s",
                     "M" => "M hashes/s",
                     "k" => "k hashes/s",
                     _ => "hashes/s",
                 };
                 // Also compute bytes/s if ratio present
-                let bph = get_bytes_per_hash();
-                if bph > 0.0 {
-                    let bytes_per_sec = hashes_per_sec * bph;
-                    let (bv, bunit) = if bytes_per_sec >= 1e9 {
+                let bytes_per_hash = get_bytes_per_hash();
+                if bytes_per_hash > 0.0 {
+                    let bytes_per_sec = hashes_per_sec * bytes_per_hash;
+                    let (bytes_value, bytes_unit) = if bytes_per_sec >= 1e9 {
                         (bytes_per_sec / 1e9, "GB/s")
                     } else if bytes_per_sec >= 1e6 {
                         (bytes_per_sec / 1e6, "MB/s")
@@ -671,16 +705,19 @@ impl ValueFormatter for HashesFormatter {
                     } else {
                         (bytes_per_sec, "B/s")
                     };
-                    format!("{:.2} {} | {:.2} {}", hv, hunit, bv, bunit)
+                    format!(
+                        "{:.2} {} | {:.2} {}",
+                        hashes_value, hashes_unit, bytes_value, bytes_unit
+                    )
                 } else {
-                    format!("{:.2} {}", hv, hunit)
+                    format!("{:.2} {}", hashes_value, hashes_unit)
                 }
             }
             Throughput::ElementsAndBytes { elements, bytes } => {
                 // Primary: hashes/s (elements)
                 let hashes_per_sec = (*elements as f64) / secs;
-                let (hv, hp) = scale_si(hashes_per_sec);
-                let hunit = match hp {
+                let (hashes_value, hashes_prefix) = scale_si(hashes_per_sec);
+                let hashes_unit = match hashes_prefix {
                     "G" => "G hashes/s",
                     "M" => "M hashes/s",
                     "k" => "k hashes/s",
@@ -688,7 +725,7 @@ impl ValueFormatter for HashesFormatter {
                 };
                 // Secondary: bytes/s
                 let bytes_per_sec = (*bytes as f64) / secs;
-                let (bv, bunit) = if bytes_per_sec >= 1e9 {
+                let (bytes_value, bytes_unit) = if bytes_per_sec >= 1e9 {
                     (bytes_per_sec / 1e9, "GB/s")
                 } else if bytes_per_sec >= 1e6 {
                     (bytes_per_sec / 1e6, "MB/s")
@@ -697,18 +734,21 @@ impl ValueFormatter for HashesFormatter {
                 } else {
                     (bytes_per_sec, "B/s")
                 };
-                format!("{:.2} {} | {:.2} {}", hv, hunit, bv, bunit)
+                format!(
+                    "{:.2} {} | {:.2} {}",
+                    hashes_value, hashes_unit, bytes_value, bytes_unit
+                )
             }
             Throughput::Bits(bits) => {
                 let rate = (*bits as f64) / secs; // bits/s
-                let (v, p) = scale_si(rate);
-                let unit = match p {
+                let (value, prefix) = scale_si(rate);
+                let unit = match prefix {
                     "G" => "Gb/s",
                     "M" => "Mb/s",
                     "k" => "kb/s",
                     _ => "b/s",
                 };
-                format!("{:.2} {}", v, unit)
+                format!("{:.2} {}", value, unit)
             }
         }
     }
@@ -834,7 +874,7 @@ impl ValueFormatter for ComparisonsFormatter {
         match throughput {
             Throughput::Bytes(bytes_per_iter) | Throughput::BytesDecimal(bytes_per_iter) => {
                 let rate = (*bytes_per_iter as f64) / secs; // bytes/s
-                let (v, unit) = if rate >= 1e9 {
+                let (value, unit) = if rate >= 1e9 {
                     (rate / 1e9, "GB/s")
                 } else if rate >= 1e6 {
                     (rate / 1e6, "MB/s")
@@ -843,24 +883,24 @@ impl ValueFormatter for ComparisonsFormatter {
                 } else {
                     (rate, "B/s")
                 };
-                format!("{:.2} {}", v, unit)
+                format!("{:.2} {}", value, unit)
             }
             Throughput::Elements(elems_per_iter) => {
                 let cmps_per_sec = (*elems_per_iter as f64) / secs;
-                let (v, p) = scale_si(cmps_per_sec);
-                let unit = match p {
+                let (value, prefix) = scale_si(cmps_per_sec);
+                let unit = match prefix {
                     "G" => "G cmp/s",
                     "M" => "M cmp/s",
                     "k" => "k cmp/s",
                     _ => "cmp/s",
                 };
-                format!("{:.2} {}", v, unit)
+                format!("{:.2} {}", value, unit)
             }
             Throughput::ElementsAndBytes { elements, bytes } => {
                 // Primary: comparisons/s
                 let cmps_per_sec = (*elements as f64) / secs;
-                let (cv, cp) = scale_si(cmps_per_sec);
-                let cunit = match cp {
+                let (comparisons_value, comparisons_prefix) = scale_si(cmps_per_sec);
+                let comparisons_unit = match comparisons_prefix {
                     "G" => "G cmp/s",
                     "M" => "M cmp/s",
                     "k" => "k cmp/s",
@@ -868,7 +908,7 @@ impl ValueFormatter for ComparisonsFormatter {
                 };
                 // Secondary: bytes/s
                 let bytes_rate = (*bytes as f64) / secs;
-                let (bv, bunit) = if bytes_rate >= 1e9 {
+                let (bytes_value, bytes_unit) = if bytes_rate >= 1e9 {
                     (bytes_rate / 1e9, "GB/s")
                 } else if bytes_rate >= 1e6 {
                     (bytes_rate / 1e6, "MB/s")
@@ -877,18 +917,21 @@ impl ValueFormatter for ComparisonsFormatter {
                 } else {
                     (bytes_rate, "B/s")
                 };
-                format!("{:.2} {} | {:.2} {}", cv, cunit, bv, bunit)
+                format!(
+                    "{:.2} {} | {:.2} {}",
+                    comparisons_value, comparisons_unit, bytes_value, bytes_unit
+                )
             }
             Throughput::Bits(bits) => {
                 let rate = (*bits as f64) / secs;
-                let (v, p) = scale_si(rate);
-                let unit = match p {
+                let (value, prefix) = scale_si(rate);
+                let unit = match prefix {
                     "G" => "Gb/s",
                     "M" => "Mb/s",
                     "k" => "kb/s",
                     _ => "b/s",
                 };
-                format!("{:.2} {}", v, unit)
+                format!("{:.2} {}", value, unit)
             }
         }
     }
@@ -1025,12 +1068,16 @@ impl PerfSection {
     /// Helper to build and enable a hardware counter
     #[allow(dead_code)]
     fn build_counter(kind: Hardware) -> Option<Counter> {
-        Builder::new().kind(kind).build().ok().and_then(|mut c| {
-            if c.enable().is_err() {
-                eprintln!("Warning: Failed to enable counter {:?}", kind);
-            }
-            Some(c)
-        })
+        Builder::new()
+            .kind(kind)
+            .build()
+            .ok()
+            .and_then(|mut counter| {
+                if counter.enable().is_err() {
+                    eprintln!("Warning: Failed to enable counter {:?}", kind);
+                }
+                Some(counter)
+            })
     }
 
     /// Helper to build and enable a cache counter
@@ -1045,17 +1092,17 @@ impl PerfSection {
             })
             .build()
             .ok()
-            .and_then(|mut c| {
-                c.enable().ok()?;
-                Some(c)
+            .and_then(|mut counter| {
+                counter.enable().ok()?;
+                Some(counter)
             })
     }
 
     /// Disable and read a counter
     fn read_counter(counter: &mut Option<Counter>) -> Option<u64> {
-        counter.as_mut().and_then(|c| {
-            c.disable().ok()?;
-            c.read().ok()
+        counter.as_mut().and_then(|counter_handle| {
+            counter_handle.disable().ok()?;
+            counter_handle.read().ok()
         })
     }
 }
@@ -1089,32 +1136,36 @@ impl Drop for PerfSection {
         eprintln!("[perf] {}", self.name);
 
         // Core performance
-        if let (Some(c), Some(i)) = (cycles, instructions) {
-            let ipc = i as f64 / c as f64;
+        if let (Some(cycle_count), Some(instruction_count)) = (cycles, instructions) {
+            let instructions_per_cycle = instruction_count as f64 / cycle_count as f64;
             eprintln!(
                 "  cycles: {}, instructions: {}, IPC: {:.2}",
-                format_perf_number(c),
-                format_perf_number(i),
-                ipc
+                format_perf_number(cycle_count),
+                format_perf_number(instruction_count),
+                instructions_per_cycle
             );
-        } else if let Some(c) = cycles {
-            eprintln!("  cycles: {}", format_perf_number(c));
-        } else if let Some(i) = instructions {
-            eprintln!("  instructions: {}", format_perf_number(i));
+        } else if let Some(cycle_count) = cycles {
+            eprintln!("  cycles: {}", format_perf_number(cycle_count));
+        } else if let Some(instruction_count) = instructions {
+            eprintln!("  instructions: {}", format_perf_number(instruction_count));
         }
 
         // Stalls
-        if let (Some(sf), Some(c)) = (stall_frontend, cycles) {
-            let pct = (sf as f64 / c as f64) * 100.0;
+        if let (Some(stall_frontend_count), Some(cycle_count)) = (stall_frontend, cycles) {
+            let percent = (stall_frontend_count as f64 / cycle_count as f64) * 100.0;
             eprintln!(
                 "  frontend stalls: {} ({:.1}%)",
-                format_perf_number(sf),
-                pct
+                format_perf_number(stall_frontend_count),
+                percent
             );
         }
-        if let (Some(sb), Some(c)) = (stall_backend, cycles) {
-            let pct = (sb as f64 / c as f64) * 100.0;
-            eprintln!("  backend stalls: {} ({:.1}%)", format_perf_number(sb), pct);
+        if let (Some(stall_backend_count), Some(cycle_count)) = (stall_backend, cycles) {
+            let percent = (stall_backend_count as f64 / cycle_count as f64) * 100.0;
+            eprintln!(
+                "  backend stalls: {} ({:.1}%)",
+                format_perf_number(stall_backend_count),
+                percent
+            );
         }
 
         // Memory hierarchy
@@ -1143,13 +1194,13 @@ impl Drop for PerfSection {
 #[allow(dead_code)]
 #[cfg(target_os = "linux")]
 fn format_perf_number(n: u64) -> String {
-    let s = n.to_string();
+    let digits = n.to_string();
     let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
+    for (index, digit) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
             result.insert(0, ',');
         }
-        result.insert(0, c);
+        result.insert(0, digit);
     }
     result
 }

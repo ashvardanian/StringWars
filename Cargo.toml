@@ -14,11 +14,11 @@ categories = ["text-processing", "development-tools::profiling"]
 [dependencies]
 criterion = "0.8.1"
 stringtape = "2.4.1"
-stringzilla = { version = "4.5.0", default-features = false }
+# stringzilla = { version = "4.5.0", default-features = false }
 
 # To use a local version of StringZilla, set the path:
 # stringzilla = { path = "../StringZilla/", features = ["cpus"] }
-# stringzilla = { path = "../StringZilla/", features = ["cuda"] }
+stringzilla = { path = "../StringZilla/", features = ["cpus"] }
 
 # Feature-based dependencies for benchmarks
 [features]
@@ -29,15 +29,18 @@ bench_find = [
     "bstr",         # Byteset search
     "aho-corasick", # Byteset search
 ]
-bench_unicode = [
-    "icu",                  # Unicode properties, TR29 word segmentation, case mapping
+bench_tokenization = [
+    "icu",                  # Unicode properties, TR29 word segmentation
     "simdutf",              # SIMD UTF-8 validation and transcoding
-    "unicase",              # Case-insensitive string wrapper
-    "focaccia",             # Unicode case folding
-    "rand",                 # Random needle sampling
     "unicode-segmentation", # UAX#29 word/grapheme segmentation
-    "pcre2",                # Full Unicode case folding in regex (unlike `regex` crate)
-    "memchr",               # Fast SIMD substring search (for ICU fold + search baseline)
+]
+bench_normalization = [
+    "icu",                   # Case mapping + NFC/NFD/NFKC/NFKD normalizers
+    "unicase",               # Case-insensitive string wrapper
+    "rand",                  # Random needle sampling
+    "unicode-normalization", # NFC/NFD/NFKC/NFKD normalization baseline
+    "pcre2",                 # Full Unicode case folding in regex (unlike `regex` crate)
+    "memchr",                # Fast SIMD substring search (for ICU fold + search baseline)
 ]
 bench_hash = [
     "bit-set",      # for collision counting
@@ -119,12 +122,12 @@ optional = true
 version = "2.7"
 optional = true
 
-[dependencies.focaccia]
-version = "2.0"
-optional = true
-
 [dependencies.unicode-segmentation]
 version = "1.12"
+optional = true
+
+[dependencies.unicode-normalization]
+version = "0.1"
 optional = true
 
 [dependencies.regex]
@@ -254,10 +257,16 @@ harness = false
 required-features = ["bench_find"]
 
 [[bench]]
-name = "bench_unicode"
-path = "unicode/bench.rs"
+name = "bench_tokenization"
+path = "tokenization/bench.rs"
 harness = false
-required-features = ["bench_unicode"]
+required-features = ["bench_tokenization"]
+
+[[bench]]
+name = "bench_normalization"
+path = "normalization/bench.rs"
+harness = false
+required-features = ["bench_normalization"]
 
 [[bench]]
 name = "bench_similarities"

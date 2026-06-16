@@ -3,7 +3,7 @@
 This file benchmarks various libraries for processing string-identifiable collections.
 Including sorting arrays of strings:
 
-- StringZilla's `sz::argsort_permutation`
+- StringZilla's `sz::argsort`
 - The standard library's `sort_unstable`
 - Rayon's parallel `par_sort_unstable`
 
@@ -41,43 +41,21 @@ use arrow::compute::{lexsort_to_indices, SortColumn};
 use polars::prelude::*;
 use rayon::prelude::*;
 use stringzilla::sz;
+use stringzilla::sz::ArgsortOptions;
 
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    install_panic_hook, load_dataset, reclaim_memory, should_run, ComparisonsWallTime, ResultExt,
+    configure_bench, install_panic_hook, load_dataset, log_stringzilla_metadata, reclaim_memory,
+    should_run, ComparisonsWallTime, ResultExt,
 };
-
-fn log_stringzilla_metadata() {
-    let v = sz::version();
-    eprintln!(
-        "StringZilla: v{}.{}.{}, dispatch: {}, capabilities: {}",
-        v.major,
-        v.minor,
-        v.patch,
-        if sz::dynamic_dispatch() {
-            "dynamic"
-        } else {
-            "static"
-        },
-        sz::capabilities().as_str()
-    );
-}
-
-fn configure_bench() -> Criterion<ComparisonsWallTime> {
-    Criterion::default()
-        .with_measurement(ComparisonsWallTime::default())
-        .sample_size(10) // Each loop processes the whole dataset.
-        .warm_up_time(std::time::Duration::from_secs(5)) // Let CPU frequencies settle.
-        .measurement_time(std::time::Duration::from_secs(10)) // Actual measurement time.
-}
 
 fn bench_argsort(
     group: &mut criterion::BenchmarkGroup<'_, ComparisonsWallTime>,
     unsorted: &CharsCowsAuto<'static>,
 ) {
-    // ? We have a very long benchmark, flat sampling is what we need.
-    // ? https://bheisler.github.io/criterion.rs/book/user_guide/advanced_configuration.html#sampling-mode
+    // NOTE: a long benchmark, so flat sampling is what we need.
+    // https://bheisler.github.io/criterion.rs/book/user_guide/advanced_configuration.html#sampling-mode
     group.sampling_mode(SamplingMode::Flat);
     // ? For comparison-based sorting algorithms, we can report throughput in terms of comparisons,
     // ? which is proportional to the number of elements in the array multiplied by the logarithm of
@@ -103,21 +81,25 @@ fn bench_argsort(
     const COLUMN_NAME: &str = "strings";
 
     // Benchmark: StringZilla's argsort
-    if should_run("argsort/stringzilla::argsort_permutation") {
+    if should_run("argsort/stringzilla::argsort") {
         // Collect StringTape into Vec<&str> for StringZilla (zero-copy, just references)
-        let unsorted_refs: Vec<&str> = unsorted.iter().collect();
+        let unsorted_references: Vec<&str> = unsorted.iter().collect();
 
-        group.bench_function("stringzilla::argsort_permutation", |b| {
-            b.iter(|| {
+        group.bench_function("stringzilla::argsort", |bencher| {
+            bencher.iter(|| {
                 reusable_indices.clear();
                 reusable_indices.extend(0..count);
-                sz::argsort_permutation(&unsorted_refs, &mut reusable_indices)
-                    .expect("StringZilla argsort failed");
+                sz::argsort(
+                    &unsorted_references,
+                    &mut reusable_indices,
+                    ArgsortOptions::default(),
+                )
+                .expect("StringZilla argsort failed");
                 black_box(&reusable_indices);
             })
         });
 
-        drop(unsorted_refs);
+        drop(unsorted_references);
         reclaim_memory();
     }
 
@@ -131,8 +113,8 @@ fn bench_argsort(
         // Use from_iter_values to directly iterate from StringTape
         let array = Arc::new(LargeStringArray::from_iter_values(unsorted.iter())) as ArrayRef;
 
-        group.bench_function("arrow::lexsort_to_indices", |b| {
-            b.iter(|| {
+        group.bench_function("arrow::lexsort_to_indices", |bencher| {
+            bencher.iter(|| {
                 let column_to_sort = SortColumn {
                     values: array.clone(),
                     options: Some(arrow::compute::SortOptions {
@@ -142,7 +124,7 @@ fn bench_argsort(
                 };
                 match lexsort_to_indices(&[column_to_sort], None) {
                     Ok(indices) => black_box(indices),
-                    Err(e) => panic!("Arrow lexsort failed: {:?}", e),
+                    Err(error) => panic!("Arrow lexsort failed: {:?}", error),
                 }
             })
         });
@@ -155,36 +137,36 @@ fn bench_argsort(
     // Benchmark: Standard library argsort using `sort_unstable_by_key`
     if should_run("argsort/std::sort_unstable_by_key") {
         // Collect StringTape into Vec<&str> for indexing
-        let unsorted_refs: Vec<&str> = unsorted.iter().collect();
+        let unsorted_references: Vec<&str> = unsorted.iter().collect();
 
-        group.bench_function("std::sort_unstable_by_key", |b| {
-            b.iter(|| {
+        group.bench_function("std::sort_unstable_by_key", |bencher| {
+            bencher.iter(|| {
                 reusable_indices.clear();
                 reusable_indices.extend(0..count);
-                reusable_indices.sort_unstable_by_key(|&i| unsorted_refs[i]);
+                reusable_indices.sort_unstable_by_key(|&index| unsorted_references[index]);
                 black_box(&reusable_indices);
             })
         });
 
-        drop(unsorted_refs);
+        drop(unsorted_references);
         reclaim_memory();
     }
 
     // Benchmark: Parallel argsort using Rayon
     if should_run("argsort/rayon::par_sort_unstable_by_key") {
         // Collect StringTape into Vec<&str> for indexing
-        let unsorted_refs: Vec<&str> = unsorted.iter().collect();
+        let unsorted_references: Vec<&str> = unsorted.iter().collect();
 
-        group.bench_function("rayon::par_sort_unstable_by_key", |b| {
-            b.iter(|| {
+        group.bench_function("rayon::par_sort_unstable_by_key", |bencher| {
+            bencher.iter(|| {
                 reusable_indices.clear();
                 reusable_indices.extend(0..count);
-                reusable_indices.par_sort_unstable_by_key(|&i| unsorted_refs[i]);
+                reusable_indices.par_sort_unstable_by_key(|&index| unsorted_references[index]);
                 black_box(&reusable_indices);
             })
         });
 
-        drop(unsorted_refs);
+        drop(unsorted_references);
         reclaim_memory();
     }
 
@@ -192,8 +174,8 @@ fn bench_argsort(
     if should_run("argsort/polars::Series::sort") {
         // Polars can create Series from an iterator of &str
         let polars_series = Series::new(COLUMN_NAME.into(), unsorted.iter().collect::<Vec<&str>>());
-        group.bench_function("polars::Series::sort", |b| {
-            b.iter(|| {
+        group.bench_function("polars::Series::sort", |bencher| {
+            bencher.iter(|| {
                 let sorted = polars_series.sort(POLARS_SORT_OPTIONS).unwrap();
                 let _ = black_box(sorted);
             })
@@ -205,8 +187,8 @@ fn bench_argsort(
     // Benchmark: Polars Series argsort (returning indices)
     if should_run("argsort/polars::Series::arg_sort") {
         let polars_series = Series::new(COLUMN_NAME.into(), unsorted.iter().collect::<Vec<&str>>());
-        group.bench_function("polars::Series::arg_sort", |b| {
-            b.iter(|| {
+        group.bench_function("polars::Series::arg_sort", |bencher| {
+            bencher.iter(|| {
                 let indices = polars_series.arg_sort(POLARS_SORT_OPTIONS);
                 black_box(indices);
             })
@@ -226,8 +208,8 @@ fn bench_argsort(
         .into()])
         .unwrap();
 
-        group.bench_function("polars::DataFrame::sort", |b| {
-            b.iter(|| {
+        group.bench_function("polars::DataFrame::sort", |bencher| {
+            bencher.iter(|| {
                 let sorted = polars_dataframe
                     .sort([COLUMN_NAME], polars_sort_multiple_options.clone())
                     .unwrap();
@@ -253,7 +235,7 @@ fn main() {
         .as_chars()
         .expect("Dataset must be valid UTF-8");
 
-    let mut criterion = configure_bench();
+    let mut criterion = configure_bench(ComparisonsWallTime::default(), 5, 10);
 
     let mut group = criterion.benchmark_group("argsort");
     bench_argsort(&mut group, &tokens);

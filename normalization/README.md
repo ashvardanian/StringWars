@@ -1,44 +1,8 @@
-# UTF-8 Processing Benchmarks
+# Case Folding & Normalization Benchmarks
 
-Benchmarks for UTF-8 text processing, including whitespace and newline splitting across different languages and hardware platforms.
-
-## Tokenization
-
-Different scripts stress UTF-8 processing in different ways:
-
-- **Korean**: 3-byte Hangul syllables with single-byte whitespace between words - representative for tokenization workloads
-- **Chinese**: 3-byte CJK characters with rare whitespace - tests raw byte throughput
-- **Arabic**: 2-byte Arabic script with regular punctuation - good for newline splitting benchmarks
-- **French**: Mixed 1-2 byte Latin with high diacritic density
-- **English**: Mostly 1-byte ASCII baseline
-
-### AMD Zen5 Turin
-
-On AMD Zen5 Turin CPUs on different datasets, StringZilla provides the following throughput for splitting around whitespace and newline characters on 5 vastly different languages.
-
-| Library                                   |    English |    Chinese |     Arabic |     French |     Korean |
-| ----------------------------------------- | ---------: | ---------: | ---------: | ---------: | ---------: |
-| Split around 25 whitespace characters:    |            |            |            |            |            |
-| `stringzilla::utf8_whitespace_splits`     |  0.82 GB/s |  2.40 GB/s |  2.40 GB/s |  0.92 GB/s |  1.88 GB/s |
-| `stdlib::split(char::is_whitespace)`      |  0.77 GB/s |  1.87 GB/s |  1.04 GB/s |  0.72 GB/s |  0.98 GB/s |
-| `icu::WhiteSpace`                         |  0.11 GB/s |  0.16 GB/s |  0.15 GB/s |  0.12 GB/s |  0.15 GB/s |
-|                                           |            |            |            |            |            |
-| Split around 8 newline combinations:      |            |            |            |            |            |
-| `stringzilla::utf8_newline_splits`        | 15.45 GB/s | 16.65 GB/s | 18.34 GB/s | 14.52 GB/s | 16.71 GB/s |
-| `stdlib::split(char::is_unicode_newline)` |  1.90 GB/s |  1.93 GB/s |  1.82 GB/s |  1.78 GB/s |  1.81 GB/s |
-
-### Apple M2 Pro
-
-| Library                                   |   English |   Chinese |    Arabic |    French |    Korean |
-| ----------------------------------------- | --------: | --------: | --------: | --------: | --------: |
-| Split around 25 whitespace characters:    |           |           |           |           |           |
-| `stringzilla::utf8_whitespace_splits`     | 0.57 GB/s | 2.45 GB/s | 1.18 GB/s | 0.61 GB/s | 0.92 GB/s |
-| `stdlib::split(char::is_whitespace)`      | 0.59 GB/s | 1.16 GB/s | 0.99 GB/s | 0.63 GB/s | 0.89 GB/s |
-| `icu::WhiteSpace`                         | 0.10 GB/s | 0.16 GB/s | 0.14 GB/s | 0.11 GB/s | 0.14 GB/s |
-|                                           |           |           |           |           |           |
-| Split around 8 newline combinations:      |           |           |           |           |           |
-| `stringzilla::utf8_newline_splits`        | 5.69 GB/s | 6.24 GB/s | 6.58 GB/s | 6.70 GB/s | 6.29 GB/s |
-| `stdlib::split(char::is_unicode_newline)` | 1.12 GB/s | 1.11 GB/s | 1.11 GB/s | 1.11 GB/s | 1.13 GB/s |
+Benchmarks for Unicode case-insensitive operations and normalization — case folding,
+case-insensitive comparison and substring search, and NFC/NFD/NFKC/NFKD normalization — across
+different languages and hardware platforms.
 
 ## Case Folding
 
@@ -75,14 +39,14 @@ On AMD Zen5 Turin CPUs on different datasets, StringZilla provides the following
 To rerun the benchmarks for all languages:
 
 ```bash
-RUSTFLAGS="-C target-cpu=native" cargo build --release --bench bench_unicode --features bench_unicode
-bin=$(find target/release/deps -name 'bench_unicode-*' -executable -type f | head -1)
+RUSTFLAGS="-C target-cpu=native" cargo build --release --bench bench_normalization --features bench_normalization
+bin=$(find target/release/deps -name 'bench_normalization-*' -executable -type f | head -1)
 
 for f in leipzig*.txt; do
   [ -f "$f" ] || continue
   echo "=== $f ==="
   STRINGWARS_DATASET="$f" STRINGWARS_TOKENS=file STRINGWARS_FILTER="case-fold" "$bin"
-  STRINGWARS_DATASET="$f" STRINGWARS_TOKENS=file STRINGWARS_FILTER="case-fold/" uv run bench_unicode.py
+  STRINGWARS_DATASET="$f" STRINGWARS_TOKENS=file STRINGWARS_FILTER="case-fold/" uv run normalization/bench.py
 done
 ```
 
@@ -127,4 +91,4 @@ done
 
 ---
 
-See [README.md](README.md) for dataset information and replication instructions.
+See [README.md](../README.md) for dataset information and replication instructions.

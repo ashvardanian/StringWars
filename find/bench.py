@@ -27,6 +27,7 @@ Timing via time.monotonic_ns.; throughput in decimal GB/s. Filter with -k/--filt
 import argparse
 import re
 import sys
+from collections.abc import Callable
 from functools import partial
 from importlib.metadata import version as pkg_version
 
@@ -44,7 +45,7 @@ def log_system_info():
     print()  # Add blank line
 
 
-def bench_op(name: str, haystack, patterns, operation: callable, time_limit_seconds: float = 10.0):
+def bench_op(name: str, haystack, patterns, operation: Callable[..., int], time_limit_seconds: float = 10.0):
     start_time = now_nanoseconds()
     deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
 

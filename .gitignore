@@ -1,6 +1,6 @@
 # Builds
+__pycache__
 /target
-/__pycache__
 
 # Datasets
 /xlsum.csv
