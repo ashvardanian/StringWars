@@ -89,8 +89,8 @@ use cityhash;
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    get_env_bool, install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput,
-    should_run, BenchBudget, ReportAs, ResultExt, WorkUnits,
+    get_env_bool, install_panic_hook, load_dataset_with_default_mode, log_stringzilla_metadata,
+    measure_throughput, should_run, BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
 
 /// Time one stateless hash over the dataset by cycling tokens for the budget. The kernel
@@ -471,7 +471,7 @@ fn main() {
     log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables.
-    let tape = load_dataset().unwrap_nice();
+    let tape = load_dataset_with_default_mode("words").unwrap_nice();
 
     let budget = BenchBudget::from_env(2.0, 10.0);
 

@@ -46,8 +46,8 @@ use stringzilla::sz;
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput, BenchBudget,
-    ReportAs, ResultExt, WorkUnits,
+    install_panic_hook, load_dataset_with_default_mode, log_stringzilla_metadata,
+    measure_throughput, BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
 
 /// Benchmarks forward substring search using "StringZilla", "MemMem", and standard strings.
@@ -347,7 +347,7 @@ fn main() {
     log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables
-    let tape = load_dataset().unwrap_nice();
+    let tape = load_dataset_with_default_mode("words").unwrap_nice();
 
     // Get the parent data directly from the tape (zero-copy)
     let haystack = tape.parent();

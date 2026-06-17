@@ -187,25 +187,26 @@ def reduce_in_windows(
     return total, low
 
 
-def items_per_core(base: int | None = None) -> int:
+def items_per_core(base: int | None = None, default_base: int = 128) -> int:
     """Items processed per core — one CPU core, or on the GPU one streaming multiprocessor (SM).
-    "Core" here means an SM, not an individual warp or CUDA core. The single knob that scales
-    batches to the device; `STRINGWARS_BATCH_PER_CORE` (or the explicit `base` argument) overrides
-    the default of 128.
+    "Core" here means an SM, not an individual warp or CUDA core. Precedence: an explicit `base`
+    (e.g. a --batch-size CLI flag) wins, then `STRINGWARS_BATCH_PER_CORE`, then the bench's own
+    `default_base` (the saturating batch differs by kernel — short-string similarity peaks at a
+    different per-core batch than document fingerprinting).
     """
-    if base is None:
-        base = get_env_parsed("STRINGWARS_BATCH_PER_CORE", 128)
-    return max(1, base)
+    if base is not None:
+        return max(1, base)
+    return max(1, get_env_parsed("STRINGWARS_BATCH_PER_CORE", default_base))
 
 
-def auto_batch_size(cores: int, base: int | None = None) -> int:
-    """Batch size for a backend with `cores` parallel cores. A CPU core counts as one core and a
-    GPU streaming multiprocessor counts as one core, so the batch scales automatically with the
-    hardware instead of a fixed CPU/GPU multiplier: a 1-core scope gets `items_per_core`, an
-    N-core scope `N * items_per_core`, and a GPU `streaming_multiprocessors * items_per_core`.
-    Mirrors the Rust `auto_batch_size`.
+def auto_batch_size(cores: int, base: int | None = None, default_base: int = 128) -> int:
+    """Batch size for a backend with `cores` parallel cores, scaling the bench's `default_base` by
+    the hardware. A CPU core counts as one core and a GPU streaming multiprocessor counts as one
+    core, so the batch scales automatically: a 1-core scope gets `items_per_core`, an N-core scope
+    `N * items_per_core`, and a GPU `streaming_multiprocessors * items_per_core`. Mirrors the Rust
+    `auto_batch_size`.
     """
-    return max(1, items_per_core(base) * max(1, cores))
+    return max(1, items_per_core(base, default_base) * max(1, cores))
 
 
 def gpu_multiprocessor_count(device_index: int = 0) -> int | None:
@@ -423,7 +424,7 @@ def tokenize_dataset(
         List of tokens in the same type as input (List[str] or List[bytes])
     """
     if tokens_mode is None:
-        tokens_mode = get_env_or_default("STRINGWARS_TOKENS", "words")
+        tokens_mode = get_env_or_default("STRINGWARS_TOKENS", "lines")
 
     is_bytes = isinstance(haystack, bytes)
 
@@ -446,6 +447,17 @@ def tokenize_dataset(
         tokens = list(dict.fromkeys(tokens))
 
     return tokens
+
+
+def resolve_tokens(cli_value: str | None, default: str) -> str:
+    """Resolve the token granularity with precedence: an explicit --tokens flag wins, then the
+    STRINGWARS_TOKENS environment variable, then the bench's own default. Each bench passes the
+    granularity its kernel measures (e.g. "words" for hashing/similarity, "lines" for
+    normalization/fingerprinting), matching the Rust `load_dataset_with_default_mode`.
+    """
+    if cli_value is not None:
+        return cli_value
+    return get_env_or_default("STRINGWARS_TOKENS", default)
 
 
 def add_common_args(parser):

@@ -70,6 +70,10 @@ use utils::{
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
 
+/// Per-core batch size for fingerprint benchmarks. 128 already saturates fingerprinting;
+/// `auto_batch_size` scales it by each variant's core count.
+const DEFAULT_BATCH_PER_CORE: usize = 128;
+
 /// Calculate bit entropy (how well distributed the bits are) - generic
 fn bit_entropy<T>(hash_matrix: &[Vec<T>]) -> f64
 where
@@ -173,9 +177,12 @@ fn bench_fingerprints(budget: &BenchBudget) {
     // Core-aware batch sizing: each variant scales `STRINGWARS_BATCH_PER_CORE` by its own core count.
     // A CPU core is one core; a GPU streaming multiprocessor (SM) is one core.
     let num_cores = count_logical_cores();
-    let batch_single_cpu = auto_batch_size(1);
-    let batch_multi_cpu = auto_batch_size(num_cores);
-    let batch_gpu = auto_batch_size(gpu_multiprocessor_count(0).unwrap_or(64));
+    let batch_single_cpu = auto_batch_size(1, DEFAULT_BATCH_PER_CORE);
+    let batch_multi_cpu = auto_batch_size(num_cores, DEFAULT_BATCH_PER_CORE);
+    let batch_gpu = auto_batch_size(
+        gpu_multiprocessor_count(0).unwrap_or(64),
+        DEFAULT_BATCH_PER_CORE,
+    );
 
     // STRINGWARS_NDIM forces a single scale; otherwise sweep STRINGWARS_NDIM_SCALES.
     let scales: Vec<usize> = match get_env("STRINGWARS_NDIM") {

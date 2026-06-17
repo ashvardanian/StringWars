@@ -263,8 +263,18 @@ pub fn reclaim_memory() {
 /// - Unknown tokenization mode is specified
 #[allow(dead_code)]
 pub fn load_dataset() -> Result<BytesCowsAuto<'static>, DatasetError> {
+    load_dataset_with_default_mode("lines")
+}
+
+/// Like [`load_dataset`], but with a caller-chosen default token mode used when `STRINGWARS_TOKENS`
+/// is unset. Each benchmark passes the granularity its kernel measures (e.g. `words` for hashing
+/// and similarity, `lines` for normalization and fingerprinting); the env variable still overrides.
+#[allow(dead_code)]
+pub fn load_dataset_with_default_mode(
+    default_mode: &str,
+) -> Result<BytesCowsAuto<'static>, DatasetError> {
     let dataset_path = get_env("STRINGWARS_DATASET").ok_or(DatasetError::EnvVarNotSet)?;
-    let mode = get_env_or_default("STRINGWARS_TOKENS", "lines");
+    let mode = get_env_or_default("STRINGWARS_TOKENS", default_mode);
     let max_tokens: Option<usize> = get_env_parsed_opt("STRINGWARS_MAX_TOKENS");
     let unique = get_env_bool("STRINGWARS_UNIQUE");
 
@@ -786,20 +796,23 @@ pub fn measure_throughput<Routine: FnMut() -> WorkUnits>(
 }
 
 /// Items processed per core — one CPU core, or on the GPU one streaming multiprocessor (SM).
-/// "Core" here means an SM, not an individual warp or CUDA core. This is the single knob that
-/// scales batches to the device; `STRINGWARS_BATCH_PER_CORE` overrides it.
+/// "Core" here means an SM, not an individual warp or CUDA core. `default_base` is the bench's own
+/// per-core default (the right value differs by kernel — short-string similarity saturates the GPU
+/// at a different batch than document fingerprinting); `STRINGWARS_BATCH_PER_CORE` overrides it.
 #[allow(dead_code)]
-fn items_per_core() -> usize {
-    get_env_parsed("STRINGWARS_BATCH_PER_CORE", 128).max(1)
+fn items_per_core(default_base: usize) -> usize {
+    get_env_parsed("STRINGWARS_BATCH_PER_CORE", default_base).max(1)
 }
 
-/// Batch size for a backend with `cores` parallel cores. A CPU core counts as one core and a GPU
-/// streaming multiprocessor counts as one core, so the batch scales automatically with the
-/// hardware instead of a fixed CPU/GPU multiplier: a 1-core scope gets `items_per_core`, an
-/// N-core scope `N * items_per_core`, and a GPU `streaming_multiprocessors * items_per_core`.
+/// Batch size for a backend with `cores` parallel cores, scaling the bench's `default_base` by the
+/// hardware. A CPU core counts as one core and a GPU streaming multiprocessor counts as one core,
+/// so the batch scales automatically instead of a fixed CPU/GPU multiplier: a 1-core scope gets
+/// `items_per_core`, an N-core scope `N * items_per_core`, and a GPU `SMs * items_per_core`.
 #[allow(dead_code)]
-pub fn auto_batch_size(cores: usize) -> usize {
-    items_per_core().saturating_mul(cores.max(1)).max(1)
+pub fn auto_batch_size(cores: usize, default_base: usize) -> usize {
+    items_per_core(default_base)
+        .saturating_mul(cores.max(1))
+        .max(1)
 }
 
 /// Number of streaming multiprocessors on the given CUDA device, queried from the CUDA runtime.

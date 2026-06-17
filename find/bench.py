@@ -40,6 +40,7 @@ from utils import (
     now_nanoseconds,
     reduce_in_windows,
     report_stats,
+    resolve_tokens,
     should_run,
     tokenize_dataset,
 )
@@ -169,7 +170,8 @@ def main():
 
     # Load and tokenize dataset
     pythonic_str = load_dataset(args.dataset, as_bytes=False, size_limit=args.dataset_limit)
-    tokens = tokenize_dataset(pythonic_str, args.tokens)
+    tokens_mode = resolve_tokens(args.tokens, "words")
+    tokens = tokenize_dataset(pythonic_str, tokens_mode)
 
     if not tokens:
         print("No tokens found in dataset")

@@ -45,8 +45,8 @@ use stringzilla::sz::ArgsortOptions;
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput, reclaim_memory,
-    should_run, BenchBudget, ReportAs, ResultExt, WorkUnits,
+    install_panic_hook, load_dataset_with_default_mode, log_stringzilla_metadata,
+    measure_throughput, reclaim_memory, should_run, BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
 
 fn bench_argsort(budget: &BenchBudget, unsorted: &CharsCowsAuto<'static>) {
@@ -253,7 +253,7 @@ fn main() {
     log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables
-    let tokens_bytes = load_dataset().unwrap_nice();
+    let tokens_bytes = load_dataset_with_default_mode("words").unwrap_nice();
     // Leak BytesCowsAuto to get 'static lifetime, then cast to CharsCowsAuto for UTF-8 string benchmarks
     let tokens_bytes_static: &'static _ = Box::leak(Box::new(tokens_bytes));
     let tokens = tokens_bytes_static

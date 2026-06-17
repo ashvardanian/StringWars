@@ -49,7 +49,15 @@ else:
     # cuDF sorts run on GPU; nothing to set for CPU threads here
     pass
 
-from utils import add_common_args, load_dataset, now_nanoseconds, report_stats, should_run, tokenize_dataset
+from utils import (
+    add_common_args,
+    load_dataset,
+    now_nanoseconds,
+    report_stats,
+    resolve_tokens,
+    should_run,
+    tokenize_dataset,
+)
 
 
 def log_system_info():
@@ -141,7 +149,8 @@ def main():
 
     # Load and tokenize dataset
     dataset = load_dataset(args.dataset, size_limit=args.dataset_limit)
-    tokens = tokenize_dataset(dataset, args.tokens)
+    tokens_mode = resolve_tokens(args.tokens, "words")
+    tokens = tokenize_dataset(dataset, tokens_mode)
 
     if not tokens:
         print("No tokens found in dataset")

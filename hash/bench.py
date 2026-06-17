@@ -58,6 +58,7 @@ from utils import (
     now_nanoseconds,
     paced_items,
     report_stats,
+    resolve_tokens,
     should_run,
     tokenize_dataset,
 )
@@ -256,7 +257,8 @@ def main():
 
     # Load and tokenize dataset
     dataset = load_dataset(args.dataset, as_bytes=True, size_limit=args.dataset_limit)
-    tokens = tokenize_dataset(dataset, args.tokens)
+    tokens_mode = resolve_tokens(args.tokens, "words")
+    tokens = tokenize_dataset(dataset, tokens_mode)
 
     if not tokens:
         print("No tokens found in dataset")

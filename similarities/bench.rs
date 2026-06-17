@@ -21,7 +21,7 @@ The benchmarks use environment variables to control the input dataset and mode:
 - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
   - `lines`: Process the dataset line by line.
   - `words`: Process the dataset word by word.
-- `STRINGWARS_BATCH_PER_CORE`: Number of pairs processed per core (default: 128). A CPU core is one
+- `STRINGWARS_BATCH_PER_CORE`: Number of pairs processed per core (default: 256). A CPU core is one
   core and a GPU streaming multiprocessor (SM) is one core, so the actual batch is auto-derived as
   `STRINGWARS_BATCH_PER_CORE * cores`: `cores` is 1 for the single-core variant, the logical core
   count for the multi-core variant, and the device's SM count for the GPU variant.
@@ -61,9 +61,13 @@ use stringzilla::szs::{
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    auto_batch_size, gpu_multiprocessor_count, install_panic_hook, load_dataset,
+    auto_batch_size, gpu_multiprocessor_count, install_panic_hook, load_dataset_with_default_mode,
     log_stringzilla_metadata, measure_throughput, BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
+
+/// Per-core batch size for similarity benchmarks. 256 is the measured GPU saturation knee
+/// for short-word edit distance; `auto_batch_size` scales it by each variant's core count.
+const DEFAULT_BATCH_PER_CORE: usize = 256;
 
 /// Builds a substitution table for classic unary scoring: `match_cost` on the diagonal,
 /// `mismatch_cost` everywhere else. Bytes are folded into 32 classes via `i % 32`, which keeps
@@ -146,7 +150,7 @@ fn chars_tape_slice<'a>(
 
 fn bench_similarities(budget: &BenchBudget) {
     // Load dataset using unified loader
-    let tape_bytes = load_dataset().unwrap_nice();
+    let tape_bytes = load_dataset_with_default_mode("words").unwrap_nice();
     let tape = tape_bytes
         .as_chars()
         .expect("Dataset must be valid UTF-8 for similarities");
@@ -158,9 +162,12 @@ fn bench_similarities(budget: &BenchBudget) {
     // Core-aware batch sizing: each variant scales `STRINGWARS_BATCH_PER_CORE` by its own core count.
     // A CPU core is one core; a GPU streaming multiprocessor (SM) is one core.
     let num_cores = count_logical_cores();
-    let batch_single_cpu = auto_batch_size(1);
-    let batch_multi_cpu = auto_batch_size(num_cores);
-    let batch_gpu = auto_batch_size(gpu_multiprocessor_count(0).unwrap_or(64));
+    let batch_single_cpu = auto_batch_size(1, DEFAULT_BATCH_PER_CORE);
+    let batch_multi_cpu = auto_batch_size(num_cores, DEFAULT_BATCH_PER_CORE);
+    let batch_gpu = auto_batch_size(
+        gpu_multiprocessor_count(0).unwrap_or(64),
+        DEFAULT_BATCH_PER_CORE,
+    );
 
     // Log benchmark-specific configuration
     println!("Benchmark configuration:");

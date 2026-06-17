@@ -9,18 +9,21 @@
 """
 Python UTF-8 tokenization and iteration benchmarks.
 
-Benchmarks segmentation and codepoint operations over a whole document:
-- TR29 word segmentation (lazy iterators)
-- Unicode whitespace and newline splitting
-- UTF-8 codepoint counting
+Benchmarks segmentation and codepoint operations:
+- TR29 word segmentation (lazy iterators), per document line
+- Unicode whitespace and newline splitting, per document line
+- UTF-8 codepoint counting, over the whole document
+
+The splitter benches process one document line per call, cycling through the lines (default
+tokenization mode is 'lines'); the codepoint counter scans the whole document buffer.
 
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
-- STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
+- STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file'); defaults to 'lines'
 
 Examples:
-  uv run tokenization/bench.py --dataset README.md --tokens file
-  STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=file uv run tokenization/bench.py
+  uv run tokenization/bench.py --dataset README.md
+  STRINGWARS_DATASET=data.txt uv run tokenization/bench.py
 
 Timing via time.monotonic_ns; throughput in decimal GB/s. Filter with -k/--filter.
 """
@@ -42,6 +45,7 @@ from utils import (
     now_nanoseconds,
     paced_items,
     report_stats,
+    resolve_tokens,
     should_run,
     tokenize_dataset,
 )
@@ -88,6 +92,44 @@ def bench_tokenize(
 
     print(f"{name}: {tokens_per_pass:,} tokens per pass over {passes:,} passes", file=sys.stderr)
     report_stats(name, "bytes", seconds, passes, text_byte_length * passes)
+
+
+def bench_split_lines(
+    name: str,
+    lines: list[str],
+    count_function: Callable[[str], int],
+    time_limit_seconds: float = 10.0,
+):
+    """Benchmark a splitter by processing one document line per call, cycling the lines.
+
+    Unlike the whole-text `bench_tokenize`, each call splits a single line, so the working set
+    is one line rather than the entire file. Splitting is compute-bound, so the per-byte rate
+    still mirrors a whole-file pass; only the working set changes. Throughput is reported as the
+    sum of the byte lengths of every line processed.
+    """
+    line_byte_lengths = [len(line.encode("utf-8")) for line in lines]
+
+    start_time = now_nanoseconds()
+    deadline_nanoseconds = start_time + int(time_limit_seconds * 1e9)
+
+    lines_processed = 0
+    token_total = 0
+    bytes_total = 0
+    for line, line_byte_length in paced_items(
+        itertools.cycle(zip(lines, line_byte_lengths, strict=True)), deadline_nanoseconds
+    ):
+        token_total += count_function(line)
+        bytes_total += line_byte_length
+        lines_processed += 1
+
+    seconds = (now_nanoseconds() - start_time) / 1e9
+    tokens_per_line = token_total / lines_processed if lines_processed else 0
+
+    print(
+        f"{name}: {tokens_per_line:,.1f} tokens per line over {lines_processed:,} lines",
+        file=sys.stderr,
+    )
+    report_stats(name, "bytes", seconds, lines_processed, bytes_total)
 
 
 def count_words_stringzilla(text: str) -> int:
@@ -185,45 +227,46 @@ def main():
         except re.error as e:
             parser.error(f"Invalid regex for --filter: {e}")
 
-    # Load and tokenize dataset
+    # Load the dataset and tokenize it into document lines (the per-line splitter work items).
+    tokens_mode = resolve_tokens(args.tokens, "lines")
     pythonic_str = load_dataset(args.dataset, as_bytes=False, size_limit=args.dataset_limit)
-    tokens = tokenize_dataset(pythonic_str, args.tokens)
+    lines = tokenize_dataset(pythonic_str, tokens_mode)
 
-    if not tokens:
+    if not lines:
         print("No tokens found in dataset")
         return 1
 
-    total_tokens = len(tokens)
-    mean_token_length = sum(len(t) for t in tokens) / total_tokens
+    total_tokens = len(lines)
+    mean_token_length = sum(len(t) for t in lines) / total_tokens
     total_bytes = len(pythonic_str)
 
     print(f"Dataset: {total_tokens:,} tokens, {total_bytes:,} bytes, {mean_token_length:.1f} avg token length")
     log_system_info()
 
-    # UTF-8 word segmentation (TR29) over the whole document
+    # UTF-8 word segmentation (TR29) per document line, cycling the lines.
     print("Word Segmentation (TR29)")
     if should_run("tokenize-words/stringzilla.utf8_word_iter()", filter_pattern):
-        bench_tokenize("stringzilla.utf8_word_iter()", pythonic_str, count_words_stringzilla, args.time_limit)
+        bench_split_lines("stringzilla.utf8_word_iter()", lines, count_words_stringzilla, args.time_limit)
     if should_run("tokenize-words/regex.finditer(\\w+)", filter_pattern):
-        bench_tokenize("regex.finditer(\\w+)", pythonic_str, count_words_regex, args.time_limit)
+        bench_split_lines("regex.finditer(\\w+)", lines, count_words_regex, args.time_limit)
     if should_run("tokenize-words/icu.BreakIterator()", filter_pattern):
-        bench_tokenize("icu.BreakIterator()", pythonic_str, make_count_words_icu(), args.time_limit)
+        bench_split_lines("icu.BreakIterator()", lines, make_count_words_icu(), args.time_limit)
     if should_run("tokenize-words/std.str.split()", filter_pattern):
-        bench_tokenize("std.str.split()", pythonic_str, count_words_split, args.time_limit)
+        bench_split_lines("std.str.split()", lines, count_words_split, args.time_limit)
 
-    # UTF-8 whitespace splitting over the whole document
+    # UTF-8 whitespace splitting per document line, cycling the lines.
     print("\nWhitespace Splitting")
     if should_run("tokenize-whitespace/stringzilla.utf8_split_iter()", filter_pattern):
-        bench_tokenize("stringzilla.utf8_split_iter()", pythonic_str, count_whitespace_stringzilla, args.time_limit)
+        bench_split_lines("stringzilla.utf8_split_iter()", lines, count_whitespace_stringzilla, args.time_limit)
     if should_run("tokenize-whitespace/std.str.split()", filter_pattern):
-        bench_tokenize("std.str.split()", pythonic_str, count_whitespace_split, args.time_limit)
+        bench_split_lines("std.str.split()", lines, count_whitespace_split, args.time_limit)
 
-    # UTF-8 newline splitting over the whole document
+    # UTF-8 newline splitting per document line, cycling the lines.
     print("\nNewline Splitting")
     if should_run("tokenize-newlines/stringzilla.utf8_splitlines_iter()", filter_pattern):
-        bench_tokenize("stringzilla.utf8_splitlines_iter()", pythonic_str, count_newlines_stringzilla, args.time_limit)
+        bench_split_lines("stringzilla.utf8_splitlines_iter()", lines, count_newlines_stringzilla, args.time_limit)
     if should_run("tokenize-newlines/std.str.splitlines()", filter_pattern):
-        bench_tokenize("std.str.splitlines()", pythonic_str, count_newlines_splitlines, args.time_limit)
+        bench_split_lines("std.str.splitlines()", lines, count_newlines_splitlines, args.time_limit)
 
     # UTF-8 codepoint counting over the raw bytes (fair O(n)-from-bytes comparison;
     # `len(str)` is O(1) in CPython, so we decode-and-count as the stdlib baseline).

@@ -27,7 +27,7 @@ Similarity benchmarks in Python: MCUPS for string similarity operations.
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
-- STRINGWARS_BATCH_PER_CORE: Items processed per core (default: 128)
+- STRINGWARS_BATCH_PER_CORE: Items processed per core (default: 256)
 
 The only batch knob is STRINGWARS_BATCH_PER_CORE (items per core); the per-device batch is
 auto-derived from the hardware core count — one CPU core is a core, one GPU streaming
@@ -70,6 +70,7 @@ from utils import (
     now_nanoseconds,
     reduce_in_windows,
     report_stats,
+    resolve_tokens,
     should_run,
     tokenize_dataset,
 )
@@ -97,6 +98,10 @@ try:
     CUDF_AVAILABLE = True
 except ImportError:
     CUDF_AVAILABLE = False
+
+# Default per-core batch base for similarity benchmarks (items processed per core).
+# 256 is the measured GPU knee for short-word edit distance.
+DEFAULT_BATCH_PER_CORE = 256
 
 
 def _report(
@@ -325,7 +330,9 @@ def benchmark_third_party_edit_distances(
         )
 
     # cuDF edit_distance
-    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+    gpu_batch_size = auto_batch_size(
+        gpu_multiprocessor_count(0) or 64, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE
+    )
     if should_run(f"levenshtein/cudf.edit_distance(1xGPU,batch={gpu_batch_size})", filter_pattern) and CUDF_AVAILABLE:
 
         def cudf_kernel(first_slice: Sequence, second_slice: Sequence) -> list[int]:
@@ -368,9 +375,11 @@ def benchmark_stringzillas_edit_distances(
     first_strings = sz.Strs(string_pairs[0])
     second_strings = sz.Strs(string_pairs[1])
 
-    one_cpu_batch_size = auto_batch_size(1, base=batch_size)
-    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size)
-    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+    one_cpu_batch_size = auto_batch_size(1, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE)
+    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE)
+    gpu_batch_size = auto_batch_size(
+        gpu_multiprocessor_count(0) or 64, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE
+    )
 
     def run_variant(label_suffix: str, scope, variant_batch_size: int):
         engine = szs_class(capabilities=scope)
@@ -486,9 +495,11 @@ def benchmark_stringzillas_similarity_scores(
     first_strings = sz.Strs(string_pairs[0])
     second_strings = sz.Strs(string_pairs[1])
 
-    one_cpu_batch_size = auto_batch_size(1, base=batch_size)
-    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size)
-    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+    one_cpu_batch_size = auto_batch_size(1, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE)
+    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE)
+    gpu_batch_size = auto_batch_size(
+        gpu_multiprocessor_count(0) or 64, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE
+    )
 
     def run_variant(label_suffix: str, scope, variant_batch_size: int):
         engine = szs_class(
@@ -576,7 +587,7 @@ def main():
         "--batch-size",
         type=int,
         default=None,
-        help="Items processed per core (overrides STRINGWARS_BATCH_PER_CORE, default: 128)",
+        help="Items processed per core (overrides STRINGWARS_BATCH_PER_CORE, default: 256)",
     )
 
     args = parser.parse_args()
@@ -594,7 +605,7 @@ def main():
 
     # Load dataset and generate pairs
     dataset = load_dataset(args.dataset, size_limit=args.dataset_limit)
-    strings = tokenize_dataset(dataset, tokens_mode=args.tokens)
+    strings = tokenize_dataset(dataset, tokens_mode=resolve_tokens(args.tokens, "words"))
 
     # Generate random pairs
     num_pairs = args.max_pairs or min(100_000, len(strings))

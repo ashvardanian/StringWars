@@ -49,6 +49,7 @@ from utils import (
     load_dataset,
     now_nanoseconds,
     report_stats,
+    resolve_tokens,
     should_run,
     tokenize_dataset,
 )
@@ -64,6 +65,9 @@ except ImportError:
 # Fixed n-gram widths for multi-scale fingerprinting (matching Rust benchmark)
 NGRAM_WIDTHS = [5, 9, 17, 33]
 NGRAM_WIDTHS_ARRAY = np.array(NGRAM_WIDTHS, dtype=np.uint64)
+
+# Default per-core batch base for fingerprinting (items processed per core).
+DEFAULT_BATCH_PER_CORE = 128
 
 
 def log_system_info():
@@ -119,8 +123,10 @@ def benchmark_stringzillas(documents, dimensions, batch_size, time_limit_seconds
     moved = sz.Strs(documents)
     doc_bytes = document_byte_lengths(documents)
 
-    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size)
-    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE)
+    gpu_batch_size = auto_batch_size(
+        gpu_multiprocessor_count(0) or 64, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE
+    )
 
     def run_variant(suffix, scope, variant_batch_size):
         engine = szs.Fingerprints(ndim=dimensions, window_widths=NGRAM_WIDTHS_ARRAY, capabilities=scope)
@@ -152,7 +158,7 @@ def benchmark_datasketch(documents, dimensions, batch_size, time_limit_seconds, 
     """datasketch MinHash on CPU: the common data-science baseline, n-grams built in Python."""
     if not should_run("minhash/datasketch.MinHash()", filter_pattern):
         return
-    cpu_batch_size = auto_batch_size(1, base=batch_size)
+    cpu_batch_size = auto_batch_size(1, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE)
     per_width = max(1, dimensions // len(NGRAM_WIDTHS))
     doc_bytes = document_byte_lengths(documents)
 
@@ -172,7 +178,9 @@ def benchmark_datasketch(documents, dimensions, batch_size, time_limit_seconds, 
 
 def benchmark_cudf(documents, dimensions, batch_size, time_limit_seconds, filter_pattern):
     """cuDF MinHash on the GPU: the CUDA first-party comparison (optional, best-effort)."""
-    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+    gpu_batch_size = auto_batch_size(
+        gpu_multiprocessor_count(0) or 64, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE
+    )
     if not should_run(f"minhash/cudf.minhash(1xGPU,batch={gpu_batch_size})", filter_pattern):
         return
     try:
@@ -262,7 +270,7 @@ def main():
 
     # Load and tokenize dataset
     dataset = load_dataset(args.dataset, size_limit=args.dataset_limit)
-    tokens = tokenize_dataset(dataset, args.tokens)
+    tokens = tokenize_dataset(dataset, resolve_tokens(args.tokens, "lines"))
 
     if not tokens:
         print("No tokens found in dataset")
