@@ -432,31 +432,37 @@ def benchmark_stringzillas_similarity_scores(
     except Exception:
         gpu_scope = None
 
-    # Build BLOSUM matrix if BioPython is available
-    blosum = None
+    # StringZilla v5 scores alignments from a 256-byte -> class map plus a 32x32 cost matrix
+    # between classes (max 32 classes). With BioPython we mirror BLOSUM62 — each amino-acid
+    # letter is its own class, every other byte falls into a shared "other" class — so the
+    # comparison against `biopython.PairwiseAligner` stays apples-to-apples. Without BioPython
+    # we fall back to unary match=+2 / mismatch=-1 scoring (matching the Rust bench).
     if BIOPYTHON_AVAILABLE:
         aligner = Align.PairwiseAligner()
         aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
-
         subs_packed = np.array(aligner.substitution_matrix).astype(np.int8)
-        blosum = np.zeros((256, 256), dtype=np.int8)
-        blosum.fill(127)  # Large penalty for invalid characters
-
-        for packed_row, packed_row_aminoacid in enumerate(aligner.substitution_matrix.alphabet):
-            for packed_column, packed_column_aminoacid in enumerate(aligner.substitution_matrix.alphabet):
-                reconstructed_row = ord(packed_row_aminoacid)
-                reconstructed_column = ord(packed_column_aminoacid)
-                blosum[reconstructed_row, reconstructed_column] = subs_packed[packed_row, packed_column]
+        alphabet = aligner.substitution_matrix.alphabet
+        num_classes = len(alphabet)
+        byte_to_class = np.full(256, num_classes, dtype=np.uint8)
+        for class_index, letter in enumerate(alphabet):
+            byte_to_class[ord(letter)] = class_index
+        class_substitution_costs = np.full((32, 32), 127, dtype=np.int8)
+        class_substitution_costs[:num_classes, :num_classes] = subs_packed[:num_classes, :num_classes]
+    else:
+        byte_to_class = np.array([byte % 32 for byte in range(256)], dtype=np.uint8)
+        class_substitution_costs = np.full((32, 32), -1, dtype=np.int8)
+        np.fill_diagonal(class_substitution_costs, 2)
 
     first_strings = sz.Strs(string_pairs[0])
     second_strings = sz.Strs(string_pairs[1])
 
     def run_variant(label_suffix: str, scope, variant_batch_size: int):
         engine = szs_class(
-            capabilities=scope,
-            substitution_matrix=blosum,
+            byte_to_class,
+            class_substitution_costs,
             open=gap_open,
             extend=gap_extend,
+            capabilities=scope,
         )
 
         def kernel(first_slice: Sequence, second_slice: Sequence) -> list[int]:
