@@ -12,17 +12,19 @@ That's true not only for strings but for any data type, and StringZilla has been
 | Library                        |   Short Words |     Long Lines |
 | ------------------------------ | ------------: | -------------: |
 | Rust                           |               |                |
-| `getrandom::fill`              |     0.18 GB/s |      0.45 GB/s |
-| `rand_chacha::ChaCha20Rng`     |     0.62 GB/s |      1.85 GB/s |
-| `rand_xoshiro::Xoshiro128Plus` |     0.83 GB/s |      3.85 GB/s |
-| `zeroize::zeroize`             |     0.66 GB/s |      4.73 GB/s |
-| `stringzilla::fill_random`     | **2.47 GB/s** | **10.57 GB/s** |
+| `getrandom::fill`              |     0.03 GB/s |      0.46 GB/s |
+| `rand_chacha::ChaCha20Rng`     |     0.06 GB/s |      2.00 GB/s |
+| `rand_xoshiro::Xoshiro128Plus` |     0.40 GB/s |      4.03 GB/s |
+| `zeroize::zeroize`             |     0.46 GB/s |      4.98 GB/s |
+| `stringzilla::fill_random`     | __1.01 GB/s__ |  __8.58 GB/s__ |
 |                                |               |                |
 | Python                         |               |                |
-| `numpy.PCG64`                  |     0.01 GB/s |      1.28 GB/s |
-| `numpy.Philox`                 |     0.01 GB/s |      1.59 GB/s |
-| `pycryptodome.AES-CTR`         |     0.01 GB/s |     13.16 GB/s |
-| `stringzilla.random`           | **0.11 GB/s** | **20.37 GB/s** |
+| `numpy.PCG64`                  |     0.01 GB/s |      1.87 GB/s |
+| `numpy.Philox`                 |     0.01 GB/s |      1.45 GB/s |
+| `pycryptodome.AES-CTR`         |     0.01 GB/s |      0.37 GB/s |
+| `stringzilla.random`           | __0.11 GB/s__ | __18.46 GB/s__ |
+
+> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
 
 ## Lookup Tables
 
@@ -31,16 +33,18 @@ Performing in-place lookups in a precomputed table of 256 bytes:
 | Library                         |   Short Words |    Long Lines |
 | ------------------------------- | ------------: | ------------: |
 | Rust                            |               |               |
-| serial code                     | **0.61 GB/s** |     1.49 GB/s |
-| `stringzilla::lookup_inplace`   |     0.54 GB/s | **9.90 GB/s** |
+| serial code                     | __0.47 GB/s__ |     4.06 GB/s |
+| `stringzilla::lookup_inplace`   |     0.42 GB/s | __10.22 GB/s__|
 |                                 |               |               |
 | Python                          |               |               |
-| `bytes.translate`               |     0.05 GB/s |     1.92 GB/s |
-| `numpy.take`                    |     0.01 GB/s |     0.85 GB/s |
-| `opencv.LUT`                    |     0.01 GB/s |     1.95 GB/s |
+| `bytes.translate`               |     0.12 GB/s |     2.68 GB/s |
+| `numpy.take`                    |     0.01 GB/s |     0.86 GB/s |
+| `opencv.LUT`                    |     0.01 GB/s |     2.00 GB/s |
 | `opencv.LUT` inplace            |     0.01 GB/s |     2.16 GB/s |
-| `stringzilla.translate`         |     0.07 GB/s |     7.92 GB/s |
-| `stringzilla.translate` inplace | **0.06 GB/s** | **8.14 GB/s** |
+| `stringzilla.translate`         |     0.09 GB/s |     7.94 GB/s |
+| `stringzilla.translate` inplace | __0.07 GB/s__ |  __8.02 GB/s__|
+
+> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
 
 ---
 

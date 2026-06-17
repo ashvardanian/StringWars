@@ -17,21 +17,25 @@ Adjusting all implementations to the same tokenization scheme, one may experienc
 
 ## Performance and Quality Metrics
 
+Fingerprint throughput is measured at __512 dimensions__.
+
 | Library                                 |  ~100 bytes lines | ~1,000 bytes lines |
 | --------------------------------------- | ----------------: | -----------------: |
-| serial `<ByteGrams>` on 1x SPR          |         0.43 MB/s |          0.39 MB/s |
-|                                         | 91.25% collisions |  94.70% collisions |
-|                                         |    0.8529 entropy |     0.7980 entropy |
+| serial `<ByteGrams>` on 1x SPR          |         0.23 MB/s |          0.20 MB/s |
+|                                         | 54.72% collisions |  30.03% collisions |
+|                                         |    0.8530 entropy |     0.7916 entropy |
 |                                         |                   |                    |
-| `pc::MinHash<ByteGrams>` on 1x SPR      |         3.12 MB/s |          2.62 MB/s |
-|                                         | 88.82% collisions |  93.05% collisions |
-|                                         |    0.9346 entropy |     0.8775 entropy |
+| `pc::MinHash<ByteGrams>` on 1x SPR      |         1.58 MB/s |          2.04 MB/s |
+|                                         | 63.68% collisions |  46.80% collisions |
+|                                         |    0.9343 entropy |     0.8704 entropy |
 |                                         |                   |                    |
-| `stringzillas::Fingerprints` on 1x SPR  |         0.57 MB/s |          0.52 MB/s |
-| `stringzillas::Fingerprints` on 16x SPR |         7.32 MB/s |          7.66 MB/s |
-| `stringzillas::Fingerprints` on H100    |   **632.41 MB/s** |   **2630.00 MB/s** |
-|                                         | 86.08% collisions |  90.12% collisions |
-|                                         |    0.9978 entropy |     0.9968 entropy |
+| `stringzillas::Fingerprints` on 1x SPR  |         0.31 MB/s |          0.26 MB/s |
+| `stringzillas::Fingerprints` on 16x SPR |         4.02 MB/s |          4.07 MB/s |
+| `stringzillas::Fingerprints` on H100    |    __98.54 MB/s__ |   __706.64 MB/s__  |
+|                                         | 64.64% collisions |  48.30% collisions |
+|                                         |    0.9980 entropy |     0.9977 entropy |
+
+> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids) with an NVIDIA H100.
 
 ## Quality Analysis
 

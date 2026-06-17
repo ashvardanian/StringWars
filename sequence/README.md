@@ -18,20 +18,22 @@ Those are directly compatible with arbitrary string-comparable collection types 
 | Library                                     |               Short Words |              Long Lines |
 | ------------------------------------------- | ------------------------: | ----------------------: |
 | Rust                                        |                           |                         |
-| `std::sort_unstable_by_key`                 |        54.35 M compares/s |      57.70 M compares/s |
-| `rayon::par_sort_unstable_by_key` on 1x SPR |        47.08 M compares/s |      50.35 M compares/s |
-| `polars::Series::sort`                      |       200.34 M compares/s |      65.44 M compares/s |
-| `polars::Series::arg_sort`                  |        25.01 M compares/s |      14.05 M compares/s |
-| `arrow::lexsort_to_indices`                 |       122.20 M compares/s |  __84.73 M compares/s__ |
-| `stringzilla::argsort_permutation`          |   __213.73 M compares/s__ |      74.64 M compares/s |
+| `std::sort_unstable_by_key`                 |        71.30 M compares/s |     106.49 M compares/s |
+| `rayon::par_sort_unstable_by_key` on 1x SPR |       392.73 M compares/s |     254.81 M compares/s |
+| `polars::Series::sort`                      |   __711.06 M compares/s__ | __264.07 M compares/s__ |
+| `polars::Series::arg_sort`                  |       223.34 M compares/s |     168.70 M compares/s |
+| `arrow::lexsort_to_indices`                 |       112.81 M compares/s |     145.98 M compares/s |
+| `stringzilla::argsort_permutation`          |       204.64 M compares/s |     136.18 M compares/s |
 |                                             |                           |                         |
 | Python                                      |                           |                         |
-| `list.sort` on 1x SPR                       |        47.06 M compares/s |      22.36 M compares/s |
-| `pandas.Series.sort_values` on 1x SPR       |         9.39 M compares/s |      11.93 M compares/s |
-| `pyarrow.compute.sort_indices` on 1x SPR    |        62.17 M compares/s |       5.53 M compares/s |
-| `polars.Series.sort` on 1x SPR              |       223.38 M compares/s | __181.60 M compares/s__ |
+| `list.sort` on 1x SPR                       |        50.69 M compares/s |      30.27 M compares/s |
+| `pandas.Series.sort_values` on 1x SPR       |        58.72 M compares/s |      12.62 M compares/s |
+| `pyarrow.compute.sort_indices` on 1x SPR    |        63.04 M compares/s |      13.17 M compares/s |
+| `polars.Series.sort` on 1x SPR              |       998.24 M compares/s | __300.14 M compares/s__ |
 | `cudf.Series.sort_values` on H100           | __9'463.59 M compares/s__ |      66.44 M compares/s |
-| `stringzilla.Strs.sorted` on 1x SPR         |       171.13 M compares/s |      77.88 M compares/s |
+| `stringzilla.Strs.sorted` on 1x SPR         |       191.79 M compares/s |      41.33 M compares/s |
+
+> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
 
 ---
 

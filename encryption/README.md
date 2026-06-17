@@ -11,18 +11,22 @@ These benchmarks compare ChaCha20 and AES256 encryption/decryption throughput ac
 | Library               | ~100 bytes lines | ~1,000 bytes lines |
 | --------------------- | ---------------: | -----------------: |
 | Rust                  |                  |                    |
-| `libsodium::chacha20` |        0.20 GB/s |          0.71 GB/s |
-| `ring::chacha20`      |        0.39 GB/s |          1.19 GB/s |
-| `ring::aes256`        |        0.61 GB/s |          2.89 GB/s |
+| `libsodium::chacha20` |        0.16 GB/s |          0.53 GB/s |
+| `ring::chacha20`      |        0.27 GB/s |          0.80 GB/s |
+| `ring::aes256`        |        0.39 GB/s |          2.20 GB/s |
+
+> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
 
 ## Decryption
 
 | Library               | ~100 bytes lines | ~1,000 bytes lines |
 | --------------------- | ---------------: | -----------------: |
 | Rust                  |                  |                    |
-| `libsodium::chacha20` |        0.20 GB/s |          0.69 GB/s |
-| `ring::chacha20`      |        0.42 GB/s |          1.08 GB/s |
-| `ring::aes256`        |        0.85 GB/s |          2.48 GB/s |
+| `libsodium::chacha20` |        0.29 GB/s |          1.13 GB/s |
+| `ring::chacha20`      |        0.34 GB/s |          0.74 GB/s |
+| `ring::aes256`        |        0.65 GB/s |          2.11 GB/s |
+
+> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
 
 ---
 

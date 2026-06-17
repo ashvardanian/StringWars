@@ -11,30 +11,32 @@ Measured on the full Leipzig corpora (`STRINGWARS_TOKENS=file`), single-threaded
 
 | Language     | Standard 🦀 | StringZilla 🦀 |      | Standard 🐍 | StringZilla 🐍 |      |
 | :----------- | ---------: | ------------: | ---: | ---------: | ------------: | ---: |
-| Arabic 🇸🇦     |   115 MB/s |     3.39 GB/s |  29x |   318 MB/s |     1.51 GB/s |   5x |
-| Armenian 🇦🇲   |   112 MB/s |      551 MB/s |   5x |   320 MB/s |      543 MB/s |   2x |
-| Bengali 🇧🇩    |   155 MB/s |     3.23 GB/s |  21x |   464 MB/s |     1.47 GB/s |   3x |
-| Chinese 🇨🇳    |   163 MB/s |      622 MB/s |   4x |   464 MB/s |      452 MB/s |   1x |
-| Czech 🇨🇿      |   137 MB/s |     1.87 GB/s |  14x |   196 MB/s |     1.11 GB/s |   6x |
-| Dutch 🇳🇱      |   223 MB/s |     5.09 GB/s |  23x |   174 MB/s |     1.74 GB/s |  10x |
-| English 🇬🇧    |   219 MB/s |     4.72 GB/s |  22x |   178 MB/s |     1.85 GB/s |  10x |
-| Farsi 🇮🇷      |   116 MB/s |     1.62 GB/s |  14x |   317 MB/s |      933 MB/s |   3x |
-| French 🇫🇷     |   194 MB/s |     2.45 GB/s |  13x |   182 MB/s |     1.23 GB/s |   7x |
-| German 🇩🇪     |   207 MB/s |     2.99 GB/s |  14x |   179 MB/s |     1.34 GB/s |   7x |
-| Greek 🇬🇷      |   112 MB/s |     2.05 GB/s |  18x |   293 MB/s |     1.22 GB/s |   4x |
-| Hebrew 🇮🇱     |   115 MB/s |     3.52 GB/s |  31x |   309 MB/s |     1.49 GB/s |   5x |
-| Hindi 🇮🇳      |   150 MB/s |     3.26 GB/s |  22x |   453 MB/s |     1.48 GB/s |   3x |
-| Italian 🇮🇹    |   214 MB/s |     4.19 GB/s |  20x |   184 MB/s |     1.62 GB/s |   9x |
-| Japanese 🇯🇵   |   163 MB/s |     1.70 GB/s |  10x |   491 MB/s |     1.05 GB/s |   2x |
-| Korean 🇰🇷     |   155 MB/s |     2.27 GB/s |  15x |   429 MB/s |     1.44 GB/s |   3x |
-| Polish 🇵🇱     |   178 MB/s |     1.72 GB/s |  10x |   186 MB/s |     1.01 GB/s |   5x |
-| Portuguese 🇧🇷 |   199 MB/s |     3.22 GB/s |  16x |   182 MB/s |     1.32 GB/s |   7x |
-| Russian 🇷🇺    |   110 MB/s |     1.87 GB/s |  17x |   313 MB/s |     1.06 GB/s |   3x |
-| Spanish 🇪🇸    |   205 MB/s |     3.07 GB/s |  15x |   180 MB/s |     1.35 GB/s |   7x |
-| Tamil 🇮🇳      |   157 MB/s |     3.32 GB/s |  21x |   467 MB/s |     1.35 GB/s |   3x |
-| Turkish 🇹🇷    |   153 MB/s |     1.69 GB/s |  11x |   193 MB/s |      979 MB/s |   5x |
-| Ukrainian 🇺🇦  |   110 MB/s |     1.77 GB/s |  16x |   316 MB/s |      996 MB/s |   3x |
-| Vietnamese 🇻🇳 |   135 MB/s |     2.00 GB/s |  15x |   227 MB/s |     1.12 GB/s |   5x |
+| Arabic 🇸🇦     |    88 MB/s |     2.25 GB/s |  26x |   188 MB/s |      302 MB/s |   2x |
+| Armenian 🇦🇲   |    72 MB/s |      373 MB/s |   5x |   209 MB/s |      180 MB/s |   1x |
+| Bengali 🇧🇩    |    99 MB/s |     2.42 GB/s |  24x |   303 MB/s |      380 MB/s |   1x |
+| Chinese 🇨🇳    |    96 MB/s |      414 MB/s |   4x |   239 MB/s |      190 MB/s |   1x |
+| Czech 🇨🇿      |    96 MB/s |     1.41 GB/s |  15x |   125 MB/s |      228 MB/s |   2x |
+| Dutch 🇳🇱      |   136 MB/s |     4.71 GB/s |  35x |   303 MB/s |      331 MB/s |   1x |
+| English 🇬🇧    |   135 MB/s |     5.07 GB/s |  37x |   361 MB/s |      393 MB/s |   1x |
+| Farsi 🇮🇷      |    84 MB/s |     1.15 GB/s |  14x |   219 MB/s |      271 MB/s |   1x |
+| French 🇫🇷     |   125 MB/s |     1.71 GB/s |  14x |   122 MB/s |      238 MB/s |   2x |
+| German 🇩🇪     |   133 MB/s |     2.05 GB/s |  15x |   124 MB/s |      281 MB/s |   2x |
+| Greek 🇬🇷      |    69 MB/s |     1.26 GB/s |  18x |   194 MB/s |      275 MB/s |   1x |
+| Hebrew 🇮🇱     |    74 MB/s |     2.37 GB/s |  32x |   180 MB/s |      260 MB/s |   1x |
+| Hindi 🇮🇳      |    98 MB/s |     2.45 GB/s |  25x |   291 MB/s |      367 MB/s |   1x |
+| Italian 🇮🇹    |   140 MB/s |     3.07 GB/s |  22x |   152 MB/s |      343 MB/s |   2x |
+| Japanese 🇯🇵   |    97 MB/s |     1.17 GB/s |  12x |   242 MB/s |      267 MB/s |   1x |
+| Korean 🇰🇷     |   149 MB/s |     2.24 GB/s |  15x |   241 MB/s |      286 MB/s |   1x |
+| Polish 🇵🇱     |   117 MB/s |     1.12 GB/s |  10x |   110 MB/s |      195 MB/s |   2x |
+| Portuguese 🇧🇷 |   133 MB/s |     2.30 GB/s |  17x |   114 MB/s |      265 MB/s |   2x |
+| Russian 🇷🇺    |    69 MB/s |     1.31 GB/s |  19x |   199 MB/s |      288 MB/s |   1x |
+| Spanish 🇪🇸    |   130 MB/s |     2.17 GB/s |  17x |   109 MB/s |      280 MB/s |   3x |
+| Tamil 🇮🇳      |   113 MB/s |     2.40 GB/s |  21x |   319 MB/s |      394 MB/s |   1x |
+| Turkish 🇹🇷    |   106 MB/s |     1.12 GB/s |  11x |   124 MB/s |      228 MB/s |   2x |
+| Ukrainian 🇺🇦  |    69 MB/s |     1.23 GB/s |  18x |   203 MB/s |      283 MB/s |   1x |
+| Vietnamese 🇻🇳 |    86 MB/s |     1.25 GB/s |  15x |   155 MB/s |      255 MB/s |   2x |
+
+> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
 
 ### AMD Zen5 Turin
 
@@ -85,30 +87,32 @@ done
 
 | Language     | Standard 🦀 | StringZilla 🦀 |      | Standard 🐍 | StringZilla 🐍 |      |
 | :----------- | ---------: | ------------: | ---: | ---------: | ------------: | ---: |
-| Arabic 🇸🇦     |   200 MB/s |    38.55 GB/s | 193x |  3.01 GB/s |    14.78 GB/s |   5x |
-| Armenian 🇦🇲   |   190 MB/s |      980 MB/s |   5x |  2.07 GB/s |      860 MB/s |   0x |
-| Bengali 🇧🇩    |   300 MB/s |    28.20 GB/s |  94x |  4.51 GB/s |    21.19 GB/s |   5x |
-| Chinese 🇨🇳    |   240 MB/s |    25.65 GB/s | 107x |  5.40 GB/s |    13.94 GB/s |   3x |
-| Czech 🇨🇿      |    90 MB/s |     7.41 GB/s |  82x |  1.38 GB/s |     6.36 GB/s |   5x |
-| Dutch 🇳🇱      |    90 MB/s |    12.61 GB/s | 140x |   860 MB/s |     7.99 GB/s |   9x |
-| English 🇬🇧    |    80 MB/s |    12.79 GB/s | 160x |   770 MB/s |     5.61 GB/s |   7x |
-| Farsi 🇮🇷      |   190 MB/s |    26.22 GB/s | 138x |  2.36 GB/s |    10.70 GB/s |   5x |
-| French 🇫🇷     |    90 MB/s |    10.77 GB/s | 120x |  1.10 GB/s |     6.83 GB/s |   6x |
+| Arabic 🇸🇦     |   103 MB/s |     7.24 GB/s |  70x |  3.01 GB/s |    14.78 GB/s |   5x |
+| Armenian 🇦🇲   |   135 MB/s |      272 MB/s |   2x |  2.07 GB/s |      860 MB/s |   0x |
+| Bengali 🇧🇩    |   191 MB/s |     6.97 GB/s |  37x |  4.51 GB/s |    21.19 GB/s |   5x |
+| Chinese 🇨🇳    |   104 MB/s |     8.72 GB/s |  84x |  5.40 GB/s |    13.94 GB/s |   3x |
+| Czech 🇨🇿      |    40 MB/s |     5.33 GB/s | 132x |  1.38 GB/s |     6.36 GB/s |   5x |
+| Dutch 🇳🇱      |    41 MB/s |     4.33 GB/s | 107x |   860 MB/s |     7.99 GB/s |   9x |
+| English 🇬🇧    |    43 MB/s |     4.91 GB/s | 115x |   770 MB/s |     5.61 GB/s |   7x |
+| Farsi 🇮🇷      |   127 MB/s |     6.63 GB/s |  52x |  2.36 GB/s |    10.70 GB/s |   5x |
+| French 🇫🇷     |    62 MB/s |     5.36 GB/s |  86x |  1.10 GB/s |     6.83 GB/s |   6x |
 | Georgian 🇬🇪   |   190 MB/s |     1.03 GB/s |   5x |  3.20 GB/s |      620 MB/s |   0x |
-| German 🇩🇪     |    80 MB/s |    10.67 GB/s | 133x |   900 MB/s |     6.08 GB/s |   7x |
-| Greek 🇬🇷      |   130 MB/s |     2.57 GB/s |  20x |  1.38 GB/s |     2.48 GB/s |   2x |
-| Hebrew 🇮🇱     |   190 MB/s |    34.54 GB/s | 182x |  2.92 GB/s |    15.72 GB/s |   5x |
-| Italian 🇮🇹    |    80 MB/s |    12.99 GB/s | 162x |   970 MB/s |     8.87 GB/s |   9x |
-| Japanese 🇯🇵   |   220 MB/s |    21.71 GB/s |  99x |  4.88 GB/s |    13.17 GB/s |   3x |
-| Korean 🇰🇷     |   230 MB/s |    35.10 GB/s | 153x |  4.59 GB/s |    20.05 GB/s |   4x |
-| Polish 🇵🇱     |    90 MB/s |    10.50 GB/s | 117x |  1.29 GB/s |     8.02 GB/s |   6x |
-| Portuguese 🇧🇷 |    90 MB/s |    10.72 GB/s | 119x |  1.10 GB/s |     8.12 GB/s |   7x |
-| Russian 🇷🇺    |   140 MB/s |     7.12 GB/s |  51x |  2.30 GB/s |     5.70 GB/s |   2x |
-| Spanish 🇪🇸    |    90 MB/s |    11.62 GB/s | 129x |  1.02 GB/s |     6.33 GB/s |   6x |
-| Tamil 🇮🇳      |   270 MB/s |    29.53 GB/s | 109x |  5.81 GB/s |    23.11 GB/s |   4x |
-| Turkish 🇹🇷    |    90 MB/s |     8.18 GB/s |  91x |  1.49 GB/s |     5.25 GB/s |   4x |
-| Ukrainian 🇺🇦  |   140 MB/s |     8.88 GB/s |  63x |  2.26 GB/s |     5.35 GB/s |   2x |
-| Vietnamese 🇻🇳 |   110 MB/s |     4.25 GB/s |  39x |  1.07 GB/s |     1.12 GB/s |   1x |
+| German 🇩🇪     |    47 MB/s |     4.47 GB/s |  95x |   900 MB/s |     6.08 GB/s |   7x |
+| Greek 🇬🇷      |    56 MB/s |     1.66 GB/s |  30x |  1.38 GB/s |     2.48 GB/s |   2x |
+| Hebrew 🇮🇱     |    77 MB/s |     6.86 GB/s |  89x |  2.92 GB/s |    15.72 GB/s |   5x |
+| Italian 🇮🇹    |    62 MB/s |     5.03 GB/s |  81x |   970 MB/s |     8.87 GB/s |   9x |
+| Japanese 🇯🇵   |   106 MB/s |     9.41 GB/s |  89x |  4.88 GB/s |    13.17 GB/s |   3x |
+| Korean 🇰🇷     |   154 MB/s |     9.94 GB/s |  65x |  4.59 GB/s |    20.05 GB/s |   4x |
+| Polish 🇵🇱     |    42 MB/s |     4.43 GB/s | 105x |  1.29 GB/s |     8.02 GB/s |   6x |
+| Portuguese 🇧🇷 |    41 MB/s |     4.93 GB/s | 121x |  1.10 GB/s |     8.12 GB/s |   7x |
+| Russian 🇷🇺    |    60 MB/s |     3.54 GB/s |  59x |  2.30 GB/s |     5.70 GB/s |   2x |
+| Spanish 🇪🇸    |    64 MB/s |     4.88 GB/s |  76x |  1.02 GB/s |     6.33 GB/s |   6x |
+| Tamil 🇮🇳      |   116 MB/s |     6.98 GB/s |  60x |  5.81 GB/s |    23.11 GB/s |   4x |
+| Turkish 🇹🇷    |    62 MB/s |     4.12 GB/s |  66x |  1.49 GB/s |     5.25 GB/s |   4x |
+| Ukrainian 🇺🇦  |    97 MB/s |     2.97 GB/s |  31x |  2.26 GB/s |     5.35 GB/s |   2x |
+| Vietnamese 🇻🇳 |    76 MB/s |     5.06 GB/s |  67x |  1.07 GB/s |     1.12 GB/s |   1x |
+
+> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
 
 To rerun the benchmarks for all languages:
 
