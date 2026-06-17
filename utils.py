@@ -98,24 +98,46 @@ def clamped_subranges(count: int, stride: int = LOGGING_STEP):
         yield low, min(low + stride, count)
 
 
+# Target wall-time between deadline clock reads in paced_items. The clock read costs tens of
+# nanoseconds, so reading it once per ~1 ms of work keeps its overhead negligible (~0.01%).
+PACING_TARGET_BETWEEN_CHECKS_NS = 1_000_000
+
+
 def paced_items(items, deadline_nanoseconds: int, step: int = LOGGING_STEP, progress=None):
     """Yield items from a single iterator, checking the deadline from inside the loop.
 
     The companion to clamped_subranges for one-at-a-time benchmarks. It walks one
-    iterator and, every step items, repaints progress (when given) and reads the
-    clock, stopping once the deadline passes. Works on any iterable, such as a list,
-    a zip of two lists, or an itertools.cycle, and never builds a slice.
+    iterator, repainting progress every step items, and stops once the deadline passes.
+    Works on any iterable, such as a list, a zip of two lists, or an itertools.cycle,
+    and never builds a slice.
+
+    The cadence is *adaptive* rather than a fixed step. A fixed step would either read the
+    clock too often on fine-grained items (e.g. hashing words) or overshoot the time limit
+    on few-but-huge items (e.g. one whole file in `file` tokenization mode, where there is a
+    single item). So `stride` — the number of items between checkpoints — starts at 1 and
+    doubles toward `step` whenever a stride ran faster than `PACING_TARGET_BETWEEN_CHECKS_NS`:
+    cheap items climb to the fully-amortized `step`, while a slow item leaves `stride` at 1
+    and is checked every iteration, so the deadline cannot overshoot by more than one item.
+    Progress repaint and the deadline check share the checkpoint, so the hot path is a single
+    countdown — the same per-item cost as a non-adaptive loop.
     """
-    countdown = step
+    stride = 1  # items between checkpoints; doubles toward `step` for cheap items
+    countdown = 1
+    last_check_nanoseconds = now_nanoseconds()
     for item in items:
         yield item
         countdown -= 1
-        if countdown == 0:
-            countdown = step
-            if progress is not None:
-                progress.update(step)
-            if now_nanoseconds() >= deadline_nanoseconds:
-                return
+        if countdown:
+            continue
+        current_nanoseconds = now_nanoseconds()
+        if progress is not None:
+            progress.update(stride)
+        if current_nanoseconds >= deadline_nanoseconds:
+            return
+        if current_nanoseconds - last_check_nanoseconds < PACING_TARGET_BETWEEN_CHECKS_NS and stride < step:
+            stride = min(stride * 2, step)
+        last_check_nanoseconds = current_nanoseconds
+        countdown = stride
 
 
 def reduce_in_windows(
