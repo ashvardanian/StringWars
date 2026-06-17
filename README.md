@@ -522,7 +522,7 @@ Such as using `ncu` for NVIDIA GPUs to evaluate the register usage and occupancy
   --kernel-name "levenshtein_on_each_cuda_thread" \
   --launch-skip 5 \
   --launch-count 1 \
-  bash -c 'STRINGWARS_DATASET=acgt_100.txt STRINGWARS_BATCH=65536 STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU\)" cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1'
+  bash -c 'STRINGWARS_DATASET=acgt_100.txt STRINGWARS_BATCH_PER_CORE=65536 STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU\)" cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1'
 ```
 
 Using `perf` on Linux to analyze the CPU-side performance of SIMD-accelerated substring search:

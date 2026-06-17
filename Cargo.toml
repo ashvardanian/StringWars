@@ -53,7 +53,6 @@ bench_hash = [
     "foldhash",     # FoldHash
     "sha2",         # SHA256
     "ring",         # SHA256
-    "gxhash",       # gxHash (x86_64 only)
     "cityhash",     # CityHash (x86_64 only)
 ]
 bench_sequence = [
@@ -244,7 +243,6 @@ perf-event = "0.4"
 libc = "0.2.177"
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-gxhash = { version = "3.4.1", optional = true }
 cityhash = { version = "0.1", optional = true }
 
 [[bench]]
@@ -300,3 +298,9 @@ name = "bench_encryption"
 path = "encryption/bench.rs"
 harness = false
 required-features = ["bench_encryption"]
+
+[profile.release]
+# Incremental release builds: after the first full optimize, editing a single bench.rs
+# recompiles only the changed codegen units instead of the whole crate, cutting the
+# measurement-build turnaround. Dependency crates (where the kernels live) stay fully cached.
+incremental = true

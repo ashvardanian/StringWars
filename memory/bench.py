@@ -36,6 +36,7 @@ from utils import (
     now_nanoseconds,
     paced_items,
     reduce_in_windows,
+    report_stats,
     should_run,
     tokenize_dataset,
 )
@@ -125,9 +126,7 @@ def bench_translate(
     )
 
     seconds = (now_nanoseconds() - start_time) / 1e9
-    gigabytes_per_second = produced_bytes / (1e9 * seconds) if seconds > 0 else 0.0
-    ops_per_second = requested / seconds if seconds > 0 else 0.0
-    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {ops_per_second:10,.0f} ops/s")
+    report_stats(name, "bytes", seconds, requested, produced_bytes)
 
 
 def sizes_from_tokens(tokens: Iterable[bytes]) -> list[int]:
@@ -149,11 +148,7 @@ def bench_generator(
         total_bytes += size
 
     seconds = (now_nanoseconds() - start) / 1e9
-    if seconds == 0:
-        seconds = 1e-9
-    gigabytes_per_second = total_bytes / (1e9 * seconds)
-    tokens_per_second = processed / seconds
-    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {tokens_per_second:10,.0f} tokens/s")
+    report_stats(name, "bytes", seconds, processed, total_bytes)
 
 
 def make_pycryptodome_aes_ctr():

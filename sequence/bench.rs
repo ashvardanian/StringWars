@@ -33,7 +33,6 @@ RUSTFLAGS="-C target-cpu=native" \
 use std::hint::black_box;
 use std::sync::Arc;
 
-use criterion::{Criterion, SamplingMode};
 use stringtape::CharsCowsAuto;
 
 use arrow::array::{ArrayRef, LargeStringArray};
@@ -46,23 +45,18 @@ use stringzilla::sz::ArgsortOptions;
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    configure_bench, install_panic_hook, load_dataset, log_stringzilla_metadata, reclaim_memory,
-    should_run, ComparisonsWallTime, ResultExt,
+    install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput, reclaim_memory,
+    should_run, BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
 
-fn bench_argsort(
-    group: &mut criterion::BenchmarkGroup<'_, ComparisonsWallTime>,
-    unsorted: &CharsCowsAuto<'static>,
-) {
-    // NOTE: a long benchmark, so flat sampling is what we need.
-    // https://bheisler.github.io/criterion.rs/book/user_guide/advanced_configuration.html#sampling-mode
-    group.sampling_mode(SamplingMode::Flat);
-    // ? For comparison-based sorting algorithms, we can report throughput in terms of comparisons,
-    // ? which is proportional to the number of elements in the array multiplied by the logarithm of
-    // ? the number of elements.
+fn bench_argsort(budget: &BenchBudget, unsorted: &CharsCowsAuto<'static>) {
+    // For comparison-based sorting algorithms, we report throughput in terms of comparisons,
+    // which is proportional to the number of elements in the array multiplied by the logarithm of
+    // the number of elements. Each full sort accomplishes one batch of `comparisons_estimate`
+    // comparisons; the secondary bytes/s metric uses the total UTF-8 size of the dataset.
     let count = unsorted.len();
-    let throughput = count as f64 * (count as f64).log2();
-    group.throughput(criterion::Throughput::Elements(throughput as u64));
+    let comparisons_estimate = (count as f64 * (count as f64).log2()) as u64;
+    let total_bytes: u64 = unsorted.iter().map(|token| token.len() as u64).sum();
 
     // Pre-allocate reusable index vector to avoid allocation on hot path
     let mut reusable_indices = Vec::with_capacity(count);
@@ -85,8 +79,12 @@ fn bench_argsort(
         // Collect StringTape into Vec<&str> for StringZilla (zero-copy, just references)
         let unsorted_references: Vec<&str> = unsorted.iter().collect();
 
-        group.bench_function("stringzilla::argsort", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "argsort/stringzilla::argsort",
+            ReportAs::Comparisons,
+            budget,
+            || {
+                // Reset the index vector each call so every pass sorts the same unsorted data.
                 reusable_indices.clear();
                 reusable_indices.extend(0..count);
                 sz::argsort(
@@ -96,8 +94,9 @@ fn bench_argsort(
                 )
                 .expect("StringZilla argsort failed");
                 black_box(&reusable_indices);
-            })
-        });
+                WorkUnits::new(comparisons_estimate, total_bytes)
+            },
+        );
 
         drop(unsorted_references);
         reclaim_memory();
@@ -113,8 +112,11 @@ fn bench_argsort(
         // Use from_iter_values to directly iterate from StringTape
         let array = Arc::new(LargeStringArray::from_iter_values(unsorted.iter())) as ArrayRef;
 
-        group.bench_function("arrow::lexsort_to_indices", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "argsort/arrow::lexsort_to_indices",
+            ReportAs::Comparisons,
+            budget,
+            || {
                 let column_to_sort = SortColumn {
                     values: array.clone(),
                     options: Some(arrow::compute::SortOptions {
@@ -125,9 +127,10 @@ fn bench_argsort(
                 match lexsort_to_indices(&[column_to_sort], None) {
                     Ok(indices) => black_box(indices),
                     Err(error) => panic!("Arrow lexsort failed: {:?}", error),
-                }
-            })
-        });
+                };
+                WorkUnits::new(comparisons_estimate, total_bytes)
+            },
+        );
 
         // Explicitly drop and reclaim memory (~4.7 GB)
         drop(array);
@@ -139,14 +142,19 @@ fn bench_argsort(
         // Collect StringTape into Vec<&str> for indexing
         let unsorted_references: Vec<&str> = unsorted.iter().collect();
 
-        group.bench_function("std::sort_unstable_by_key", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "argsort/std::sort_unstable_by_key",
+            ReportAs::Comparisons,
+            budget,
+            || {
+                // Reset the index vector each call so every pass sorts the same unsorted data.
                 reusable_indices.clear();
                 reusable_indices.extend(0..count);
                 reusable_indices.sort_unstable_by_key(|&index| unsorted_references[index]);
                 black_box(&reusable_indices);
-            })
-        });
+                WorkUnits::new(comparisons_estimate, total_bytes)
+            },
+        );
 
         drop(unsorted_references);
         reclaim_memory();
@@ -157,14 +165,19 @@ fn bench_argsort(
         // Collect StringTape into Vec<&str> for indexing
         let unsorted_references: Vec<&str> = unsorted.iter().collect();
 
-        group.bench_function("rayon::par_sort_unstable_by_key", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "argsort/rayon::par_sort_unstable_by_key",
+            ReportAs::Comparisons,
+            budget,
+            || {
+                // Reset the index vector each call so every pass sorts the same unsorted data.
                 reusable_indices.clear();
                 reusable_indices.extend(0..count);
                 reusable_indices.par_sort_unstable_by_key(|&index| unsorted_references[index]);
                 black_box(&reusable_indices);
-            })
-        });
+                WorkUnits::new(comparisons_estimate, total_bytes)
+            },
+        );
 
         drop(unsorted_references);
         reclaim_memory();
@@ -174,12 +187,16 @@ fn bench_argsort(
     if should_run("argsort/polars::Series::sort") {
         // Polars can create Series from an iterator of &str
         let polars_series = Series::new(COLUMN_NAME.into(), unsorted.iter().collect::<Vec<&str>>());
-        group.bench_function("polars::Series::sort", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "argsort/polars::Series::sort",
+            ReportAs::Comparisons,
+            budget,
+            || {
                 let sorted = polars_series.sort(POLARS_SORT_OPTIONS).unwrap();
                 let _ = black_box(sorted);
-            })
-        });
+                WorkUnits::new(comparisons_estimate, total_bytes)
+            },
+        );
         drop(polars_series);
         reclaim_memory();
     }
@@ -187,12 +204,16 @@ fn bench_argsort(
     // Benchmark: Polars Series argsort (returning indices)
     if should_run("argsort/polars::Series::arg_sort") {
         let polars_series = Series::new(COLUMN_NAME.into(), unsorted.iter().collect::<Vec<&str>>());
-        group.bench_function("polars::Series::arg_sort", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "argsort/polars::Series::arg_sort",
+            ReportAs::Comparisons,
+            budget,
+            || {
                 let indices = polars_series.arg_sort(POLARS_SORT_OPTIONS);
                 black_box(indices);
-            })
-        });
+                WorkUnits::new(comparisons_estimate, total_bytes)
+            },
+        );
         drop(polars_series);
         reclaim_memory();
     }
@@ -208,14 +229,18 @@ fn bench_argsort(
         .into()])
         .unwrap();
 
-        group.bench_function("polars::DataFrame::sort", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "argsort/polars::DataFrame::sort",
+            ReportAs::Comparisons,
+            budget,
+            || {
                 let sorted = polars_dataframe
                     .sort([COLUMN_NAME], polars_sort_multiple_options.clone())
                     .unwrap();
                 black_box(sorted);
-            })
-        });
+                WorkUnits::new(comparisons_estimate, total_bytes)
+            },
+        );
 
         // Explicitly drop and reclaim memory (~4.7 GB)
         drop(polars_dataframe);
@@ -235,11 +260,8 @@ fn main() {
         .as_chars()
         .expect("Dataset must be valid UTF-8");
 
-    let mut criterion = configure_bench(ComparisonsWallTime::default(), 5, 10);
+    let budget = BenchBudget::from_env(5.0, 10.0);
 
-    let mut group = criterion.benchmark_group("argsort");
-    bench_argsort(&mut group, &tokens);
-    group.finish();
-
-    criterion.final_summary();
+    println!("# argsort");
+    bench_argsort(&budget, &tokens);
 }

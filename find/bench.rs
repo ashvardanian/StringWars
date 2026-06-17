@@ -35,8 +35,6 @@ RUSTFLAGS="-C target-cpu=native" \
 "#]
 use std::hint::black_box;
 
-use criterion::measurement::WallTime;
-use criterion::{Criterion, Throughput};
 use stringtape::BytesCowsAuto;
 
 use aho_corasick::AhoCorasick;
@@ -48,166 +46,179 @@ use stringzilla::sz;
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    configure_bench, install_panic_hook, load_dataset, log_stringzilla_metadata, should_run,
-    ResultExt,
+    install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput, BenchBudget,
+    ReportAs, ResultExt, WorkUnits,
 };
 
 /// Benchmarks forward substring search using "StringZilla", "MemMem", and standard strings.
-fn bench_substring_forward(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    haystack: &[u8],
-    needles: &BytesCowsAuto,
-) {
-    group.throughput(Throughput::Bytes(haystack.len() as u64));
+///
+/// Each call cycles to the next needle and scans the whole haystack for every occurrence of it,
+/// so the per-call work is one full haystack pass (`haystack.len()` bytes), matching the original
+/// `Throughput::Bytes(haystack.len())` accounting.
+fn bench_substring_forward(budget: &BenchBudget, haystack: &[u8], needles: &BytesCowsAuto) {
+    let haystack_bytes = haystack.len() as u64;
 
     // Benchmark for StringZilla forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    if should_run("substring-forward/stringzilla::find") {
-        group.bench_function("stringzilla::find", |bencher| {
-            bencher.iter(|| {
-                let token = black_box(tokens.next().unwrap());
-                let mut position: usize = 0;
-                while let Some(found) = sz::find(&haystack[position..], token) {
-                    position += found + token.len();
-                }
-            })
-        });
-    }
+    measure_throughput(
+        "substring-forward/stringzilla::find",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let mut position: usize = 0;
+            while let Some(found) = sz::find(&haystack[position..], token) {
+                position += found + token.len();
+            }
+            WorkUnits::new(1, haystack_bytes)
+        },
+    );
 
     // Benchmark for `memmem::find` forward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    if should_run("substring-forward/memmem::find") {
-        group.bench_function("memmem::find", |bencher| {
-            bencher.iter(|| {
-                let token = black_box(tokens.next().unwrap());
-                let mut position: usize = 0;
-                while let Some(found) = memmem::find(&haystack[position..], token) {
-                    position += found + token.len();
-                }
-            })
-        });
-    }
+    measure_throughput(
+        "substring-forward/memmem::find",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let mut position: usize = 0;
+            while let Some(found) = memmem::find(&haystack[position..], token) {
+                position += found + token.len();
+            }
+            WorkUnits::new(1, haystack_bytes)
+        },
+    );
 
     // Benchmark for `memmem::Finder` forward search with pre-constructed matcher.
     let mut tokens = needles.iter().cycle();
-    if should_run("substring-forward/memmem::Finder") {
-        group.bench_function("memmem::Finder", |bencher| {
-            bencher.iter(|| {
-                let token = black_box(tokens.next().unwrap());
-                let finder = memmem::Finder::new(token);
-                let mut position: usize = 0;
-                while let Some(found) = finder.find(&haystack[position..]) {
-                    position += found + token.len();
-                }
-            })
-        });
-    }
+    measure_throughput(
+        "substring-forward/memmem::Finder",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let finder = memmem::Finder::new(token);
+            let mut position: usize = 0;
+            while let Some(found) = finder.find(&haystack[position..]) {
+                position += found + token.len();
+            }
+            WorkUnits::new(1, haystack_bytes)
+        },
+    );
 
     // Benchmark for default `std::str::find` forward search.
     let mut tokens = needles.iter().cycle();
-    if should_run("substring-forward/std::str::find") {
-        group.bench_function("std::str::find", |bencher| {
-            bencher.iter(|| {
-                let token = black_box(tokens.next().unwrap());
-                let mut position = 0;
-                while let Some(found) = haystack[position..].find(token) {
-                    position += found + token.len();
-                }
-            })
-        });
-    }
+    measure_throughput(
+        "substring-forward/std::str::find",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let mut position = 0;
+            while let Some(found) = haystack[position..].find(token) {
+                position += found + token.len();
+            }
+            WorkUnits::new(1, haystack_bytes)
+        },
+    );
 }
 
 /// Benchmarks backward substring search using "StringZilla", "MemMem", and standard strings.
-fn bench_substring_backward(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    haystack: &[u8],
-    needles: &BytesCowsAuto,
-) {
-    group.throughput(Throughput::Bytes(haystack.len() as u64));
+///
+/// Each call cycles to the next needle and scans the whole haystack backward, so the per-call
+/// work is one full haystack pass, matching the original `Throughput::Bytes(haystack.len())`.
+fn bench_substring_backward(budget: &BenchBudget, haystack: &[u8], needles: &BytesCowsAuto) {
+    let haystack_bytes = haystack.len() as u64;
 
     // Benchmark for StringZilla backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    if should_run("substring-backward/stringzilla::rfind") {
-        group.bench_function("stringzilla::rfind", |bencher| {
-            bencher.iter(|| {
-                let token = black_box(tokens.next().unwrap());
-                let mut position: Option<usize> = Some(haystack.len());
-                while let Some(end) = position {
-                    if let Some(found) = sz::rfind(&haystack[..end], token) {
-                        position = Some(found);
-                    } else {
-                        break;
-                    }
+    measure_throughput(
+        "substring-backward/stringzilla::rfind",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let mut position: Option<usize> = Some(haystack.len());
+            while let Some(end) = position {
+                if let Some(found) = sz::rfind(&haystack[..end], token) {
+                    position = Some(found);
+                } else {
+                    break;
                 }
-            })
-        });
-    }
+            }
+            WorkUnits::new(1, haystack_bytes)
+        },
+    );
 
     // Benchmark for `memmem::rfind` backward search using a cycle iterator.
     let mut tokens = needles.iter().cycle();
-    if should_run("substring-backward/memmem::rfind") {
-        group.bench_function("memmem::rfind", |bencher| {
-            bencher.iter(|| {
-                let token = black_box(tokens.next().unwrap());
-                let mut position: Option<usize> = Some(haystack.len());
-                while let Some(end) = position {
-                    if let Some(found) = memmem::rfind(&haystack[..end], token) {
-                        position = Some(found);
-                    } else {
-                        break;
-                    }
+    measure_throughput(
+        "substring-backward/memmem::rfind",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let mut position: Option<usize> = Some(haystack.len());
+            while let Some(end) = position {
+                if let Some(found) = memmem::rfind(&haystack[..end], token) {
+                    position = Some(found);
+                } else {
+                    break;
                 }
-            })
-        });
-    }
+            }
+            WorkUnits::new(1, haystack_bytes)
+        },
+    );
 
     // Benchmark for `memmem::FinderRev` backward search with pre-constructed matcher.
     let mut tokens = needles.iter().cycle();
-    if should_run("substring-backward/memmem::FinderRev") {
-        group.bench_function("memmem::FinderRev", |bencher| {
-            bencher.iter(|| {
-                let token = black_box(tokens.next().unwrap());
-                let finder = memmem::FinderRev::new(token);
-                let mut position: Option<usize> = Some(haystack.len());
-                while let Some(end) = position {
-                    if let Some(found) = finder.rfind(&haystack[..end]) {
-                        position = Some(found);
-                    } else {
-                        break;
-                    }
+    measure_throughput(
+        "substring-backward/memmem::FinderRev",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let finder = memmem::FinderRev::new(token);
+            let mut position: Option<usize> = Some(haystack.len());
+            while let Some(end) = position {
+                if let Some(found) = finder.rfind(&haystack[..end]) {
+                    position = Some(found);
+                } else {
+                    break;
                 }
-            })
-        });
-    }
+            }
+            WorkUnits::new(1, haystack_bytes)
+        },
+    );
 
     // Benchmark for default `std::str::rfind` backward search.
     let mut tokens = needles.iter().cycle();
-    if should_run("substring-backward/std::str::rfind") {
-        group.bench_function("std::str::rfind", |bencher| {
-            bencher.iter(|| {
-                let token = black_box(tokens.next().unwrap());
-                let mut position: Option<usize> = Some(haystack.len());
-                while let Some(end) = position {
-                    if let Some(found) = haystack[..end].rfind(token) {
-                        position = Some(found);
-                    } else {
-                        break;
-                    }
+    measure_throughput(
+        "substring-backward/std::str::rfind",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let mut position: Option<usize> = Some(haystack.len());
+            while let Some(end) = position {
+                if let Some(found) = haystack[..end].rfind(token) {
+                    position = Some(found);
+                } else {
+                    break;
                 }
-            })
-        });
-    }
+            }
+            WorkUnits::new(1, haystack_bytes)
+        },
+    );
 }
 
-/// Benchmarks byteset search using "StringZilla", "bstr", "RegEx", and "AhoCorasick"
-fn bench_byteset_forward(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    haystack: &[u8],
-    needles: &BytesCowsAuto,
-) {
-    group.throughput(Throughput::Bytes(3 * haystack.len() as u64));
-
+/// Benchmarks byteset search using "StringZilla", "bstr", "RegEx", and "AhoCorasick".
+///
+/// Each call cycles to the next needle token and runs all three bytesets over it. The original
+/// looped over every needle in one iteration with `Throughput::Bytes(3 * haystack.len())`; since
+/// the needles collectively span the haystack, the per-token equivalent is `3 * token.len()`.
+fn bench_byteset_forward(budget: &BenchBudget, _haystack: &[u8], needles: &BytesCowsAuto) {
     // Define the three bytesets we will analyze.
     const BYTES_TABS: &[u8] = b"\n\r\x0B\x0C";
     const BYTES_HTML: &[u8] = b"</>&'\"=[]";
@@ -217,76 +228,82 @@ fn bench_byteset_forward(
     let sz_tabs = sz::Byteset::from(BYTES_TABS);
     let sz_html = sz::Byteset::from(BYTES_HTML);
     let sz_digits = sz::Byteset::from(BYTES_DIGITS);
-    if should_run("byteset-forward/stringzilla::find_byteset") {
-        group.bench_function("stringzilla::find_byteset", |bencher| {
-            bencher.iter(|| {
-                for token in needles.iter() {
-                    let mut position: usize = 0;
-                    while let Some(found) = sz::find_byteset(&token[position..], sz_tabs) {
-                        position += found + 1;
-                    }
-                    position = 0;
-                    while let Some(found) = sz::find_byteset(&token[position..], sz_html) {
-                        position += found + 1;
-                    }
-                    position = 0;
-                    while let Some(found) = sz::find_byteset(&token[position..], sz_digits) {
-                        position += found + 1;
-                    }
-                }
-            })
-        });
-    }
+    let mut tokens = needles.iter().cycle();
+    measure_throughput(
+        "byteset-forward/stringzilla::find_byteset",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let mut position: usize = 0;
+            while let Some(found) = sz::find_byteset(&token[position..], sz_tabs) {
+                position += found + 1;
+            }
+            position = 0;
+            while let Some(found) = sz::find_byteset(&token[position..], sz_html) {
+                position += found + 1;
+            }
+            position = 0;
+            while let Some(found) = sz::find_byteset(&token[position..], sz_digits) {
+                position += found + 1;
+            }
+            WorkUnits::new(1, 3 * token.len() as u64)
+        },
+    );
 
     // Benchmark for bstr's byteset search.
-    if should_run("byteset-forward/bstr::iter") {
-        group.bench_function("bstr::iter", |bencher| {
-            bencher.iter(|| {
-                for token in needles.iter() {
-                    let mut position: usize = 0;
-                    // Inline search for `BYTES_TABS`.
-                    while let Some(found) = token[position..]
-                        .iter()
-                        .position(|&byte| BYTES_TABS.contains(&byte))
-                    {
-                        position += found + 1;
-                    }
-                    position = 0;
-                    // Inline search for `BYTES_HTML`.
-                    while let Some(found) = token[position..]
-                        .iter()
-                        .position(|&byte| BYTES_HTML.contains(&byte))
-                    {
-                        position += found + 1;
-                    }
-                    position = 0;
-                    // Inline search for `BYTES_DIGITS`.
-                    while let Some(found) = token[position..]
-                        .iter()
-                        .position(|&byte| BYTES_DIGITS.contains(&byte))
-                    {
-                        position += found + 1;
-                    }
-                }
-            })
-        });
-    }
+    let mut tokens = needles.iter().cycle();
+    measure_throughput(
+        "byteset-forward/bstr::iter",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            let mut position: usize = 0;
+            // Inline search for `BYTES_TABS`.
+            while let Some(found) = token[position..]
+                .iter()
+                .position(|&byte| BYTES_TABS.contains(&byte))
+            {
+                position += found + 1;
+            }
+            position = 0;
+            // Inline search for `BYTES_HTML`.
+            while let Some(found) = token[position..]
+                .iter()
+                .position(|&byte| BYTES_HTML.contains(&byte))
+            {
+                position += found + 1;
+            }
+            position = 0;
+            // Inline search for `BYTES_DIGITS`.
+            while let Some(found) = token[position..]
+                .iter()
+                .position(|&byte| BYTES_DIGITS.contains(&byte))
+            {
+                position += found + 1;
+            }
+            WorkUnits::new(1, 3 * token.len() as u64)
+        },
+    );
 
     // Benchmark for Regex-based byteset search.
     let re_tabs = Regex::new("[\n\r\x0B\x0C]").unwrap();
     let re_html = Regex::new("[</>&'\"=\\[\\]]").unwrap();
     let re_digits = Regex::new("[0-9]").unwrap();
-    if should_run("byteset-forward/regex::find_iter") {
-        group.bench_function("regex::find_iter", |bencher| {
-            bencher.iter(|| {
-                for token in needles.iter() {
-                    black_box(re_tabs.find_iter(token.as_bytes()).count());
-                    black_box(re_html.find_iter(token.as_bytes()).count());
-                    black_box(re_digits.find_iter(token.as_bytes()).count());
-                }
-            })
-        });
-    }
+    let mut tokens = needles.iter().cycle();
+    measure_throughput(
+        "byteset-forward/regex::find_iter",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            black_box(re_tabs.find_iter(token.as_bytes()).count());
+            black_box(re_html.find_iter(token.as_bytes()).count());
+            black_box(re_digits.find_iter(token.as_bytes()).count());
+            WorkUnits::new(1, 3 * token.len() as u64)
+        },
+    );
 
     // Benchmark for Aho–Corasick-based byteset search.
     let ac_tabs = AhoCorasick::new(
@@ -310,17 +327,19 @@ fn bench_byteset_forward(
             .collect::<Vec<_>>(),
     )
     .expect("failed to create AhoCorasick FSA");
-    if should_run("byteset-forward/aho_corasick::find_iter") {
-        group.bench_function("aho_corasick::find_iter", |bencher| {
-            bencher.iter(|| {
-                for token in needles.iter() {
-                    black_box(ac_tabs.find_iter(token).count());
-                    black_box(ac_html.find_iter(token).count());
-                    black_box(ac_digits.find_iter(token).count());
-                }
-            })
-        });
-    }
+    let mut tokens = needles.iter().cycle();
+    measure_throughput(
+        "byteset-forward/aho_corasick::find_iter",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let token = black_box(tokens.next().unwrap());
+            black_box(ac_tabs.find_iter(token).count());
+            black_box(ac_html.find_iter(token).count());
+            black_box(ac_digits.find_iter(token).count());
+            WorkUnits::new(1, 3 * token.len() as u64)
+        },
+    );
 }
 
 fn main() {
@@ -334,22 +353,14 @@ fn main() {
     let haystack = tape.parent();
     let needles = &tape;
 
-    let mut criterion = configure_bench(WallTime, 3, 20);
+    let budget = BenchBudget::from_env(3.0, 20.0);
 
-    // Benchmarks for forward search
-    let mut group = criterion.benchmark_group("substring-forward");
-    bench_substring_forward(&mut group, &haystack, &needles);
-    group.finish();
+    println!("# substring-forward");
+    bench_substring_forward(&budget, &haystack, &needles);
 
-    // Benchmarks for backward search
-    let mut group = criterion.benchmark_group("substring-backward");
-    bench_substring_backward(&mut group, &haystack, &needles);
-    group.finish();
+    println!("# substring-backward");
+    bench_substring_backward(&budget, &haystack, &needles);
 
-    // Benchmarks for byteset search
-    let mut group = criterion.benchmark_group("byteset-forward");
-    bench_byteset_forward(&mut group, &haystack, &needles);
-    group.finish();
-
-    criterion.final_summary();
+    println!("# byteset-forward");
+    bench_byteset_forward(&budget, &haystack, &needles);
 }

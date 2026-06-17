@@ -52,7 +52,15 @@ import mmh3
 import stringzilla as sz
 import xxhash
 
-from utils import add_common_args, load_dataset, now_nanoseconds, paced_items, should_run, tokenize_dataset
+from utils import (
+    add_common_args,
+    load_dataset,
+    now_nanoseconds,
+    paced_items,
+    report_stats,
+    should_run,
+    tokenize_dataset,
+)
 
 
 def log_system_info():
@@ -93,10 +101,7 @@ def bench_hash_function(
     end_time = now_nanoseconds()
 
     seconds = (end_time - start_time) / 1e9
-    gigabytes_per_second = processed_bytes / (1e9 * seconds)
-    tokens_per_second = processed_tokens / seconds
-
-    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {tokens_per_second:10,.0f} tokens/s")
+    report_stats(name, "bytes", seconds, processed_tokens, processed_bytes)
 
 
 def run_stateless_benchmarks(
@@ -161,9 +166,7 @@ def bench_stateful_hash(
     end_time = now_nanoseconds()
 
     seconds = (end_time - start_time) / 1e9
-    gigabytes_per_second = processed_bytes / (1e9 * seconds)
-    tokens_per_second = processed_tokens / seconds
-    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {tokens_per_second:10,.0f} tokens/s")
+    report_stats(name, "bytes", seconds, processed_tokens, processed_bytes)
 
 
 def run_stateful_benchmarks(

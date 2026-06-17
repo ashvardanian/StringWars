@@ -21,7 +21,7 @@ Repository = "https://github.com/ashvardanian/StringWars"
 find = ["stringzilla>=4.5.0", "pyahocorasick"]
 
 # Sequence ops (split/sort)
-sequence = ["stringzilla>=4.5.0", "pandas", "pyarrow", "polars"]
+sequence = ["stringzilla>=4.5.0", "numpy", "pandas", "pyarrow", "polars"]
 
 # Fingerprinting/sketching
 fingerprints = [
@@ -58,6 +58,12 @@ hash = [
 
 # Random byte generators and translation tables
 memory = ["stringzilla>=4.5.0", "numpy", "pycryptodome", "opencv-python"]
+
+# UTF-8 tokenization / iteration (whitespace, newline, TR29 words, codepoints)
+tokenization = ["stringzilla>=4.5.0", "regex", "PyICU"]
+
+# Case folding + Unicode normalization
+normalization = ["stringzilla>=4.5.0", "regex", "PyICU"]
 
 [tool.ruff]
 # Enforce 120-column lines across formatting and linting

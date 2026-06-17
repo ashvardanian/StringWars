@@ -27,6 +27,12 @@ Similarity benchmarks in Python: MCUPS for string similarity operations.
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
+- STRINGWARS_BATCH_PER_CORE: Items processed per core (default: 128)
+
+The only batch knob is STRINGWARS_BATCH_PER_CORE (items per core); the per-device batch is
+auto-derived from the hardware core count — one CPU core is a core, one GPU streaming
+multiprocessor (SM) is a core — so each device is fed enough work without manual scaling.
+The --batch-size flag overrides STRINGWARS_BATCH_PER_CORE as the per-core base.
 
 Examples:
   uv run --with stringzillas-cpus similarities/bench.py --dataset README.md --max-pairs 1000
@@ -38,6 +44,7 @@ import argparse
 import os
 import random
 import re
+import sys
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -56,10 +63,13 @@ from tqdm import tqdm
 
 from utils import (
     add_common_args,
+    auto_batch_size,
     clamped_subranges,
+    gpu_multiprocessor_count,
     load_dataset,
     now_nanoseconds,
     reduce_in_windows,
+    report_stats,
     should_run,
     tokenize_dataset,
 )
@@ -95,21 +105,20 @@ def _report(
     processed_pairs: int,
     checksum: int,
     cells_per_pair: np.ndarray,
+    bytes_per_pair: np.ndarray,
 ):
     """Print the throughput summary shared by the pairwise and batched paths."""
-    seconds = (now_nanoseconds() - start_nanoseconds) / 1e9
+    elapsed_seconds = (now_nanoseconds() - start_nanoseconds) / 1e9
     if processed_pairs <= 0:
         print(f"{name}: No pairs processed")
         return
-    # Cells are summed once, over exactly the pairs we got through, instead of
-    # being accumulated (and numpy-boxed) on every iteration.
+    # Cells and bytes are summed once, over exactly the pairs we got through, instead of
+    # being accumulated (and numpy-boxed) on every iteration. The MCUPS metric is cells/sec,
+    # so elements = total matrix cells; total_bytes = bytes spanned by the processed pairs.
     processed_cells = int(cells_per_pair[:processed_pairs].sum())
-    pairs_per_second = processed_pairs / seconds
-    mega_cells_per_second = processed_cells / seconds / 1e6  # MCUPS
-    print(
-        f"{name:35s}: {seconds:8.3f}s ~ {mega_cells_per_second:10,.1f} MCUPS ~ "
-        f"{pairs_per_second:10,.0f} pairs/s ~ checksum={checksum}"
-    )
+    processed_bytes = int(bytes_per_pair[:processed_pairs].sum())
+    report_stats(name, "cups", elapsed_seconds, processed_cells, processed_bytes)
+    print(f"  {name} checksum={checksum}", file=sys.stderr)
 
 
 def bench_pairwise(
@@ -118,7 +127,8 @@ def bench_pairwise(
     second_strings: Sequence,
     scalar_function: Callable,
     cells_per_pair: np.ndarray,
-    timeout_seconds: int = 10,
+    bytes_per_pair: np.ndarray,
+    time_limit_seconds: int = 10,
 ):
     """Benchmark a scalar function called once per pair.
 
@@ -127,7 +137,7 @@ def bench_pairwise(
     with no Python bytecode in the inner loop.
     """
     count_pairs = len(first_strings)
-    deadline_nanoseconds = now_nanoseconds() + int(timeout_seconds * 1e9)
+    deadline_nanoseconds = now_nanoseconds() + int(time_limit_seconds * 1e9)
     start_nanoseconds = now_nanoseconds()
     bar = tqdm(total=count_pairs, desc=name, unit="pairs", leave=False)
     try:
@@ -143,7 +153,7 @@ def bench_pairwise(
         return
     finally:
         bar.close()
-    _report(name, start_nanoseconds, processed_pairs, int(checksum), cells_per_pair)
+    _report(name, start_nanoseconds, processed_pairs, int(checksum), cells_per_pair, bytes_per_pair)
 
 
 def bench_batched(
@@ -152,8 +162,9 @@ def bench_batched(
     second_strings: Sequence,
     array_kernel: Callable,
     cells_per_pair: np.ndarray,
-    timeout_seconds: int = 10,
-    batch_size: int = 2048,
+    bytes_per_pair: np.ndarray,
+    batch_size: int,
+    time_limit_seconds: int = 10,
 ):
     """Benchmark an array kernel that scores a whole batch of pairs per call.
 
@@ -163,7 +174,7 @@ def bench_batched(
     single-pair latency of an array engine.
     """
     count_pairs = len(first_strings)
-    deadline_nanoseconds = now_nanoseconds() + int(timeout_seconds * 1e9)
+    deadline_nanoseconds = now_nanoseconds() + int(time_limit_seconds * 1e9)
     checksum = 0
     processed_pairs = 0
     start_nanoseconds = now_nanoseconds()
@@ -181,7 +192,7 @@ def bench_batched(
         return
     finally:
         bar.close()
-    _report(name, start_nanoseconds, processed_pairs, checksum, cells_per_pair)
+    _report(name, start_nanoseconds, processed_pairs, checksum, cells_per_pair, bytes_per_pair)
 
 
 def _checksum_from_results(results: Any) -> int:
@@ -214,9 +225,10 @@ def _checksum_from_results(results: Any) -> int:
 
 def benchmark_third_party_edit_distances(
     string_pairs: tuple[list[str], list[str]],
-    timeout_seconds: int = 10,
+    bytes_per_pair: np.ndarray,
+    batch_size: int | None = None,
+    time_limit_seconds: int = 10,
     filter_pattern: re.Pattern | None = None,
-    batch_size: int = 2048,
     cells_per_pair_binary: np.ndarray | None = None,
     cells_per_pair_utf8: np.ndarray | None = None,
 ):
@@ -232,7 +244,8 @@ def benchmark_third_party_edit_distances(
             second_strings,
             rf.distance,
             cells_per_pair_utf8,  # UTF-8 codepoints
-            timeout_seconds=timeout_seconds,
+            bytes_per_pair,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # python-Levenshtein
@@ -243,7 +256,8 @@ def benchmark_third_party_edit_distances(
             second_strings,
             le.distance,
             cells_per_pair_utf8,  # UTF-8 codepoints
-            timeout_seconds=timeout_seconds,
+            bytes_per_pair,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # Jellyfish
@@ -254,7 +268,8 @@ def benchmark_third_party_edit_distances(
             second_strings,
             jf.levenshtein_distance,
             cells_per_pair_utf8,  # UTF-8 codepoints
-            timeout_seconds=timeout_seconds,
+            bytes_per_pair,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # EditDistance
@@ -265,7 +280,8 @@ def benchmark_third_party_edit_distances(
             second_strings,
             ed.eval,
             cells_per_pair_utf8,  # UTF-8 codepoints
-            timeout_seconds=timeout_seconds,
+            bytes_per_pair,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # NLTK
@@ -276,7 +292,8 @@ def benchmark_third_party_edit_distances(
             second_strings,
             nltk_ed,
             cells_per_pair_utf8,  # UTF-8 codepoints
-            timeout_seconds=timeout_seconds,
+            bytes_per_pair,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # Edlib
@@ -291,7 +308,8 @@ def benchmark_third_party_edit_distances(
             second_strings,
             edlib_distance,
             cells_per_pair_binary,  # Binary/bytes
-            timeout_seconds=timeout_seconds,
+            bytes_per_pair,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # Polyleven (if available)
@@ -302,33 +320,37 @@ def benchmark_third_party_edit_distances(
             second_strings,
             polyleven.levenshtein,
             cells_per_pair_binary,  # Binary/bytes
-            timeout_seconds=timeout_seconds,
+            bytes_per_pair,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # cuDF edit_distance
-    if should_run(f"levenshtein/cudf.edit_distance(1xGPU,batch={batch_size})", filter_pattern) and CUDF_AVAILABLE:
+    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+    if should_run(f"levenshtein/cudf.edit_distance(1xGPU,batch={gpu_batch_size})", filter_pattern) and CUDF_AVAILABLE:
 
         def cudf_kernel(first_slice: Sequence, second_slice: Sequence) -> list[int]:
             results = first_slice.str.edit_distance(second_slice)
             return results.to_arrow().to_numpy()
 
         bench_batched(
-            f"cudf.edit_distance(1xGPU,batch={batch_size})",
+            f"cudf.edit_distance(1xGPU,batch={gpu_batch_size})",
             cudf.Series(first_strings),
             cudf.Series(second_strings),
             cudf_kernel,
             cells_per_pair_utf8,  # UTF-8 codepoints
-            timeout_seconds=timeout_seconds,
-            batch_size=batch_size,
+            bytes_per_pair,
+            gpu_batch_size,
+            time_limit_seconds=time_limit_seconds,
         )
 
 
 def benchmark_stringzillas_edit_distances(
     string_pairs: tuple[list[str], list[str]],
     cells_per_pair: np.ndarray,
+    bytes_per_pair: np.ndarray,
     is_utf8: bool,
-    timeout_seconds: int = 10,
-    batch_size: int = 1,
+    time_limit_seconds: int = 10,
+    batch_size: int | None = None,
     filter_pattern: re.Pattern | None = None,
     szs_class: Any = szs.LevenshteinDistances,
     szs_name: str = "stringzillas.LevenshteinDistances",
@@ -346,6 +368,10 @@ def benchmark_stringzillas_edit_distances(
     first_strings = sz.Strs(string_pairs[0])
     second_strings = sz.Strs(string_pairs[1])
 
+    one_cpu_batch_size = auto_batch_size(1, base=batch_size)
+    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size)
+    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+
     def run_variant(label_suffix: str, scope, variant_batch_size: int):
         engine = szs_class(capabilities=scope)
 
@@ -358,8 +384,9 @@ def benchmark_stringzillas_edit_distances(
             second_strings,
             kernel,
             cells_per_pair,
-            timeout_seconds=timeout_seconds,
-            batch_size=variant_batch_size,
+            bytes_per_pair,
+            variant_batch_size,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # Single-pair latency: one native call per pair (batch size 1).
@@ -371,21 +398,22 @@ def benchmark_stringzillas_edit_distances(
         run_variant("(1xGPU)", gpu_scope, 1)
 
     # Batch throughput: many pairs per native call.
-    if should_run(f"levenshtein/{szs_name}(1xCPU,batch={batch_size})", filter_pattern):
-        run_variant(f"(1xCPU,batch={batch_size})", default_scope, batch_size)
-    if should_run(f"levenshtein/{szs_name}({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
-        run_variant(f"({cpu_cores}xCPU,batch={batch_size})", cpu_scope, batch_size)
+    if should_run(f"levenshtein/{szs_name}(1xCPU,batch={one_cpu_batch_size})", filter_pattern):
+        run_variant(f"(1xCPU,batch={one_cpu_batch_size})", default_scope, one_cpu_batch_size)
+    if should_run(f"levenshtein/{szs_name}({cpu_cores}xCPU,batch={all_cpu_batch_size})", filter_pattern):
+        run_variant(f"({cpu_cores}xCPU,batch={all_cpu_batch_size})", cpu_scope, all_cpu_batch_size)
     if (
-        should_run(f"levenshtein/{szs_name}(1xGPU,batch={batch_size})", filter_pattern)
+        should_run(f"levenshtein/{szs_name}(1xGPU,batch={gpu_batch_size})", filter_pattern)
         and not is_utf8
         and gpu_scope is not None
     ):
-        run_variant(f"(1xGPU,batch={batch_size})", gpu_scope, batch_size)
+        run_variant(f"(1xGPU,batch={gpu_batch_size})", gpu_scope, gpu_batch_size)
 
 
 def benchmark_third_party_similarity_scores(
     string_pairs: tuple[list[str], list[str]],
-    timeout_seconds: int = 10,
+    bytes_per_pair: np.ndarray,
+    time_limit_seconds: int = 10,
     filter_pattern: re.Pattern | None = None,
     gap_open: int = -10,
     gap_extend: int = -2,
@@ -406,14 +434,16 @@ def benchmark_third_party_similarity_scores(
             string_pairs[1],
             aligner.score,
             cells_per_pair,
-            timeout_seconds=timeout_seconds,
+            bytes_per_pair,
+            time_limit_seconds=time_limit_seconds,
         )
 
 
 def benchmark_stringzillas_similarity_scores(
     string_pairs: tuple[list[str], list[str]],
-    timeout_seconds: int = 10,
-    batch_size: int = 2048,
+    bytes_per_pair: np.ndarray,
+    time_limit_seconds: int = 10,
+    batch_size: int | None = None,
     filter_pattern: re.Pattern | None = None,
     szs_class: Any = szs.NeedlemanWunschScores,
     szs_name: str = "stringzillas.NeedlemanWunschScores",
@@ -456,6 +486,10 @@ def benchmark_stringzillas_similarity_scores(
     first_strings = sz.Strs(string_pairs[0])
     second_strings = sz.Strs(string_pairs[1])
 
+    one_cpu_batch_size = auto_batch_size(1, base=batch_size)
+    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size)
+    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+
     def run_variant(label_suffix: str, scope, variant_batch_size: int):
         engine = szs_class(
             byte_to_class,
@@ -474,8 +508,9 @@ def benchmark_stringzillas_similarity_scores(
             second_strings,
             kernel,
             cells_per_pair,
-            timeout_seconds=timeout_seconds,
-            batch_size=variant_batch_size,
+            bytes_per_pair,
+            variant_batch_size,
+            time_limit_seconds=time_limit_seconds,
         )
 
     # Single-pair latency: one native call per pair (batch size 1).
@@ -487,12 +522,12 @@ def benchmark_stringzillas_similarity_scores(
         run_variant("(1xGPU)", gpu_scope, 1)
 
     # Batch throughput: many pairs per native call.
-    if should_run(f"{category}/{szs_name}(1xCPU,batch={batch_size})", filter_pattern):
-        run_variant(f"(1xCPU,batch={batch_size})", default_scope, batch_size)
-    if should_run(f"{category}/{szs_name}({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
-        run_variant(f"({cpu_cores}xCPU,batch={batch_size})", cpu_scope, batch_size)
-    if should_run(f"{category}/{szs_name}(1xGPU,batch={batch_size})", filter_pattern) and gpu_scope is not None:
-        run_variant(f"(1xGPU,batch={batch_size})", gpu_scope, batch_size)
+    if should_run(f"{category}/{szs_name}(1xCPU,batch={one_cpu_batch_size})", filter_pattern):
+        run_variant(f"(1xCPU,batch={one_cpu_batch_size})", default_scope, one_cpu_batch_size)
+    if should_run(f"{category}/{szs_name}({cpu_cores}xCPU,batch={all_cpu_batch_size})", filter_pattern):
+        run_variant(f"({cpu_cores}xCPU,batch={all_cpu_batch_size})", cpu_scope, all_cpu_batch_size)
+    if should_run(f"{category}/{szs_name}(1xGPU,batch={gpu_batch_size})", filter_pattern) and gpu_scope is not None:
+        run_variant(f"(1xGPU,batch={gpu_batch_size})", gpu_scope, gpu_batch_size)
 
 
 def generate_random_pairs(strings: Sequence, num_pairs: int) -> tuple[list[str], list[str]]:
@@ -540,8 +575,8 @@ def main():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=2048,
-        help="Number of pairs to process per call in batch-capable APIs (default: 2048)",
+        default=None,
+        help="Items processed per core (overrides STRINGWARS_BATCH_PER_CORE, default: 128)",
     )
 
     args = parser.parse_args()
@@ -576,17 +611,20 @@ def main():
     second_bytes = np.fromiter((len(s.encode("utf-8")) for s in second_strings), dtype=np.int64, count=num_pairs)
     cells_per_pair_binary = first_bytes * second_bytes
     cells_per_pair_utf8 = first_codepoints * second_codepoints
+    # Bytes spanned by each pair: the data fed to the kernel for that pair.
+    bytes_per_pair = first_bytes + second_bytes
 
     print(f"Prepared {num_pairs:,} string pairs from {len(strings):,} unique strings")
     print(f"Average string length: {avg_length:.1f} chars")
     print(f"Total characters: {total_chars:,}")
-    print(f"Timeout per benchmark: {args.time_limit}s")
+    print(f"Time limit per benchmark: {args.time_limit}s")
     print()
 
     print("\nUniform Gap Costs")
     benchmark_third_party_edit_distances(
         (first_strings, second_strings),
-        timeout_seconds=args.time_limit,
+        bytes_per_pair,
+        time_limit_seconds=args.time_limit,
         filter_pattern=filter_pattern,
         batch_size=args.batch_size,
         cells_per_pair_binary=cells_per_pair_binary,
@@ -595,23 +633,25 @@ def main():
 
     benchmark_stringzillas_edit_distances(
         (first_strings, second_strings),
-        timeout_seconds=args.time_limit,
+        cells_per_pair_binary,
+        bytes_per_pair,
+        is_utf8=False,
+        time_limit_seconds=args.time_limit,
         batch_size=args.batch_size,
         filter_pattern=filter_pattern,
         szs_class=szs.LevenshteinDistances,
         szs_name="stringzillas.LevenshteinDistances",
-        cells_per_pair=cells_per_pair_binary,
-        is_utf8=False,
     )
     benchmark_stringzillas_edit_distances(
         (first_strings, second_strings),
-        timeout_seconds=args.time_limit,
+        cells_per_pair_utf8,
+        bytes_per_pair,
+        is_utf8=True,
+        time_limit_seconds=args.time_limit,
         batch_size=args.batch_size,
         filter_pattern=filter_pattern,
         szs_class=szs.LevenshteinDistancesUTF8,
         szs_name="stringzillas.LevenshteinDistancesUTF8",
-        cells_per_pair=cells_per_pair_utf8,
-        is_utf8=True,
     )
 
     if args.bio:
@@ -619,7 +659,8 @@ def main():
         print("\nLinear Gap Costs")
         benchmark_third_party_similarity_scores(
             (first_strings, second_strings),
-            timeout_seconds=args.time_limit,
+            bytes_per_pair,
+            time_limit_seconds=args.time_limit,
             filter_pattern=filter_pattern,
             gap_open=-2,
             gap_extend=-2,
@@ -627,7 +668,8 @@ def main():
         )
         benchmark_stringzillas_similarity_scores(
             (first_strings, second_strings),
-            timeout_seconds=args.time_limit,
+            bytes_per_pair,
+            time_limit_seconds=args.time_limit,
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
             szs_class=szs.NeedlemanWunschScores,
@@ -639,7 +681,8 @@ def main():
         )
         benchmark_stringzillas_similarity_scores(
             (first_strings, second_strings),
-            timeout_seconds=args.time_limit,
+            bytes_per_pair,
+            time_limit_seconds=args.time_limit,
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
             szs_class=szs.SmithWatermanScores,
@@ -654,7 +697,8 @@ def main():
         print("\nAffine Gap Costs")
         benchmark_third_party_similarity_scores(
             (first_strings, second_strings),
-            timeout_seconds=args.time_limit,
+            bytes_per_pair,
+            time_limit_seconds=args.time_limit,
             filter_pattern=filter_pattern,
             gap_open=-10,
             gap_extend=-2,
@@ -662,7 +706,8 @@ def main():
         )
         benchmark_stringzillas_similarity_scores(
             (first_strings, second_strings),
-            timeout_seconds=args.time_limit,
+            bytes_per_pair,
+            time_limit_seconds=args.time_limit,
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
             szs_class=szs.NeedlemanWunschScores,
@@ -674,7 +719,8 @@ def main():
         )
         benchmark_stringzillas_similarity_scores(
             (first_strings, second_strings),
-            timeout_seconds=args.time_limit,
+            bytes_per_pair,
+            time_limit_seconds=args.time_limit,
             batch_size=args.batch_size,
             filter_pattern=filter_pattern,
             szs_class=szs.SmithWatermanScores,

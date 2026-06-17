@@ -3,9 +3,11 @@ use std::collections::HashSet;
 use std::env;
 use std::fmt;
 use std::fs;
+use std::hint::black_box;
 use std::panic;
 use std::path::Path;
 use std::str::FromStr;
+use std::time::{Duration, Instant};
 use stringtape::BytesCowsAuto;
 
 /// Get an optional environment variable, returning None if not set.
@@ -87,23 +89,6 @@ pub fn log_stringzilla_metadata() {
         "- capabilities: {}",
         stringzilla::sz::capabilities().as_str()
     );
-}
-
-/// Builds a Criterion with the project's shared sampling policy (sample size 10, overridable
-/// from the command line) and the given warm-up / measurement durations in seconds, on the
-/// chosen measurement backend.
-#[allow(dead_code)]
-pub fn configure_bench<MeasurementBackend: criterion::measurement::Measurement + 'static>(
-    measurement: MeasurementBackend,
-    warm_up_seconds: u64,
-    measurement_seconds: u64,
-) -> criterion::Criterion<MeasurementBackend> {
-    criterion::Criterion::default()
-        .with_measurement(measurement)
-        .configure_from_args()
-        .sample_size(10)
-        .warm_up_time(std::time::Duration::from_secs(warm_up_seconds))
-        .measurement_time(std::time::Duration::from_secs(measurement_seconds))
 }
 
 /// Extension trait for Result that provides clean panic-on-error semantics.
@@ -457,25 +442,6 @@ use perf_event::{
     events::CacheOp, events::CacheResult, events::Hardware, events::WhichCache, Builder, Counter,
 };
 
-#[cfg(any(
-    feature = "bench_similarities",
-    feature = "bench_fingerprints",
-    feature = "bench_sequence"
-))]
-use criterion::measurement::{Measurement, ValueFormatter};
-#[cfg(any(
-    feature = "bench_similarities",
-    feature = "bench_fingerprints",
-    feature = "bench_sequence"
-))]
-use criterion::Throughput;
-#[cfg(any(
-    feature = "bench_similarities",
-    feature = "bench_fingerprints",
-    feature = "bench_sequence"
-))]
-use std::time::Instant;
-
 /// Filter helper function to check if a benchmark should run based on STRINGWARS_FILTER env var
 #[allow(dead_code)]
 pub fn should_run(name: &str) -> bool {
@@ -506,16 +472,8 @@ pub fn should_run(name: &str) -> bool {
     }
 }
 
-#[cfg(feature = "bench_fingerprints")]
-use std::sync::atomic::{AtomicU64, Ordering};
-
-// Simple SI scaling helper
+// Simple SI scaling helper: returns the scaled value and its metric prefix.
 #[allow(dead_code)]
-#[cfg(any(
-    feature = "bench_similarities",
-    feature = "bench_fingerprints",
-    feature = "bench_sequence"
-))]
 fn scale_si(mut v: f64) -> (f64, &'static str) {
     if v >= 1_000_000_000.0 {
         v /= 1_000_000_000.0;
@@ -532,11 +490,6 @@ fn scale_si(mut v: f64) -> (f64, &'static str) {
 }
 
 #[allow(dead_code)]
-#[cfg(any(
-    feature = "bench_similarities",
-    feature = "bench_fingerprints",
-    feature = "bench_sequence"
-))]
 fn format_seconds(value: f64) -> String {
     // value is seconds
     if value < 1e-6 {
@@ -550,436 +503,327 @@ fn format_seconds(value: f64) -> String {
     }
 }
 
+// Time-budgeted benchmark loop.
+//
+// Replaces Criterion in the throughput benchmarks: instead of a fixed sample count over the
+// whole dataset, each variant runs for a fixed wall-time budget while cycling bounded items,
+// and reports `work / elapsed`. Because we own the loop we also read hardware cycle and
+// instruction counters around the measured region, surfacing exact cycles-per-byte and IPC
+// instead of a batch-wide wall-clock estimate.
+
+/// What one routine call accomplished, for dual-metric reporting.
+/// `elements` counts pairs / hashes / comparisons / tokens (0 when not applicable);
+/// `bytes` counts the bytes touched.
 #[allow(dead_code)]
-#[cfg(feature = "bench_similarities")]
-pub struct CupsFormatter;
-#[cfg(feature = "bench_similarities")]
-impl ValueFormatter for CupsFormatter {
-    fn format_value(&self, value: f64) -> String {
-        // Format raw times
-        format_seconds(value)
+#[derive(Clone, Copy, Default)]
+pub struct WorkUnits {
+    pub elements: u64,
+    pub bytes: u64,
+}
+
+#[allow(dead_code)]
+impl WorkUnits {
+    /// Byte-only work (whole-buffer scans, transforms): `elements` stays 0.
+    pub fn bytes(bytes: u64) -> Self {
+        Self { elements: 0, bytes }
     }
 
-    fn format_throughput(&self, throughput: &Throughput, secs: f64) -> String {
-        match throughput {
-            Throughput::Bytes(bytes) | Throughput::BytesDecimal(bytes) => {
-                let rate = (*bytes as f64) / secs; // bytes/s
-                let (value, unit) = if rate >= 1e9 {
-                    (rate / 1e9, "GB/s")
-                } else if rate >= 1e6 {
-                    (rate / 1e6, "MB/s")
-                } else if rate >= 1e3 {
-                    (rate / 1e3, "kB/s")
-                } else {
-                    (rate, "B/s")
-                };
-                format!("{:.2} {}", value, unit)
-            }
-            Throughput::Elements(elems) => {
-                let cups = (*elems as f64) / secs; // elements/s
-                let (value, prefix) = scale_si(cups);
-                let unit = match prefix {
-                    "G" => "GCUPS",
-                    "M" => "MCUPS",
-                    "k" => "kCUPS",
-                    _ => "CUPS",
-                };
-                format!("{:.2} {}", value, unit)
-            }
-            Throughput::ElementsAndBytes { elements, bytes } => {
-                // Primary: elements/s
-                let elems_rate = (*elements as f64) / secs;
-                let (elements_value, elements_prefix) = scale_si(elems_rate);
-                let elements_unit = match elements_prefix {
-                    "G" => "GCUPS",
-                    "M" => "MCUPS",
-                    "k" => "kCUPS",
-                    _ => "CUPS",
-                };
-                // Secondary: bytes/s
-                let bytes_rate = (*bytes as f64) / secs;
-                let (bytes_value, bytes_unit) = if bytes_rate >= 1e9 {
-                    (bytes_rate / 1e9, "GB/s")
-                } else if bytes_rate >= 1e6 {
-                    (bytes_rate / 1e6, "MB/s")
-                } else if bytes_rate >= 1e3 {
-                    (bytes_rate / 1e3, "kB/s")
-                } else {
-                    (bytes_rate, "B/s")
-                };
-                format!(
-                    "{:.2} {} | {:.2} {}",
-                    elements_value, elements_unit, bytes_value, bytes_unit
-                )
-            }
-            Throughput::Bits(bits) => {
-                let rate = (*bits as f64) / secs; // bits/s
-                let (value, prefix) = scale_si(rate);
-                let unit = match prefix {
-                    "G" => "Gb/s",
-                    "M" => "Mb/s",
-                    "k" => "kb/s",
-                    _ => "b/s",
-                };
-                format!("{:.2} {}", value, unit)
-            }
+    /// Both an element count and the bytes it spanned.
+    pub fn new(elements: u64, bytes: u64) -> Self {
+        Self { elements, bytes }
+    }
+}
+
+/// Which primary unit a benchmark reports; bytes/s is always shown as the secondary metric.
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+pub enum ReportAs {
+    /// Bytes per second is the primary (and only) rate.
+    Bytes,
+    /// Cell updates per second (Needleman-Wunsch / Smith-Waterman / Levenshtein).
+    Cups,
+    /// Hashes per second (fingerprinting, hashing).
+    Hashes,
+    /// Comparisons per second (sorting / sequence operations).
+    Comparisons,
+}
+
+/// Wall-time budget for one benchmarked variant, read from the environment so the CLI can
+/// override it (`STRINGWARS_WARMUP`, `STRINGWARS_TIME`, both in fractional seconds).
+#[allow(dead_code)]
+pub struct BenchBudget {
+    pub warm_up: Duration,
+    pub measure: Duration,
+}
+
+#[allow(dead_code)]
+impl BenchBudget {
+    /// Build the budget from the environment, falling back to the given defaults (seconds).
+    pub fn from_env(default_warm_up_seconds: f64, default_measure_seconds: f64) -> Self {
+        let warm_up_seconds = get_env_parsed("STRINGWARS_WARMUP", default_warm_up_seconds);
+        let measure_seconds = get_env_parsed("STRINGWARS_TIME", default_measure_seconds);
+        Self {
+            warm_up: Duration::from_secs_f64(warm_up_seconds.max(0.0)),
+            measure: Duration::from_secs_f64(measure_seconds.max(0.0)),
+        }
+    }
+}
+
+// Adaptive deadline cadence: a stride that starts at 1 and doubles toward this cap while a
+// stride runs faster than the target, so fine-grained kernels amortize the clock and counter
+// reads while a single slow call cannot overshoot the deadline by more than one item. Mirrors
+// the Python `paced_items` design.
+const PACING_STRIDE_CAP: u64 = 1024;
+const PACING_TARGET_BETWEEN_CHECKS: Duration = Duration::from_millis(1);
+
+/// Hardware cycle and instruction counters around the measured region (Linux only).
+#[cfg(target_os = "linux")]
+struct HardwareCounters {
+    cycles: Option<Counter>,
+    instructions: Option<Counter>,
+}
+
+#[cfg(target_os = "linux")]
+impl HardwareCounters {
+    fn start() -> Self {
+        let build = |kind: Hardware| -> Option<Counter> {
+            let mut counter = Builder::new().kind(kind).build().ok()?;
+            counter.enable().ok()?;
+            Some(counter)
+        };
+        Self {
+            cycles: build(Hardware::CPU_CYCLES),
+            instructions: build(Hardware::INSTRUCTIONS),
         }
     }
 
-    fn scale_values(&self, _typical_value: f64, _values: &mut [f64]) -> &'static str {
-        "s"
-    }
-    fn scale_throughputs(
-        &self,
-        _typical_value: f64,
-        _throughput: &Throughput,
-        _values: &mut [f64],
-    ) -> &'static str {
-        "s"
-    }
-    fn scale_for_machines(&self, _values: &mut [f64]) -> &'static str {
-        "s"
+    fn stop(mut self) -> (Option<u64>, Option<u64>) {
+        let read = |counter: &mut Option<Counter>| -> Option<u64> {
+            let handle = counter.as_mut()?;
+            handle.disable().ok()?;
+            handle.read().ok()
+        };
+        (read(&mut self.cycles), read(&mut self.instructions))
     }
 }
 
+/// Accurate per-operation accounting accumulated across a measured region.
 #[allow(dead_code)]
-#[cfg(feature = "bench_fingerprints")]
-pub struct HashesFormatter;
-#[cfg(feature = "bench_fingerprints")]
-impl ValueFormatter for HashesFormatter {
-    fn format_value(&self, value: f64) -> String {
-        format_seconds(value)
+#[derive(Default)]
+pub struct BenchStats {
+    pub elapsed: Duration,
+    pub calls: u64,
+    pub elements: u64,
+    pub bytes: u64,
+    pub cycles: Option<u64>,
+    pub instructions: Option<u64>,
+    /// Per-checkpoint nanoseconds-per-call samples, for the latency distribution.
+    latencies_ns: Vec<f64>,
+}
+
+#[allow(dead_code)]
+impl BenchStats {
+    /// p-quantile (0.0..=1.0) of the recorded per-call latency samples, in nanoseconds.
+    fn latency_quantile(&self, quantile: f64) -> Option<f64> {
+        if self.latencies_ns.is_empty() {
+            return None;
+        }
+        let mut sorted = self.latencies_ns.clone();
+        sorted.sort_by(|left, right| left.total_cmp(right));
+        let rank = (quantile * (sorted.len() as f64 - 1.0)).round() as usize;
+        Some(sorted[rank.min(sorted.len() - 1)])
     }
 
-    fn format_throughput(&self, throughput: &Throughput, secs: f64) -> String {
-        match throughput {
-            Throughput::Bytes(bytes) | Throughput::BytesDecimal(bytes) => {
-                let bytes_per_sec = (*bytes as f64) / secs;
-                let (bytes_value, bytes_unit) = if bytes_per_sec >= 1e9 {
-                    (bytes_per_sec / 1e9, "GB/s")
-                } else if bytes_per_sec >= 1e6 {
-                    (bytes_per_sec / 1e6, "MB/s")
-                } else if bytes_per_sec >= 1e3 {
-                    (bytes_per_sec / 1e3, "kB/s")
-                } else {
-                    (bytes_per_sec, "B/s")
-                };
-                // If a bytes-per-hash ratio is set, also render hashes/s
-                let bytes_per_hash = get_bytes_per_hash();
-                if bytes_per_hash > 0.0 {
-                    let hashes_per_sec = bytes_per_sec / bytes_per_hash;
-                    let (hashes_value, hashes_prefix) = scale_si(hashes_per_sec);
-                    let hashes_unit = match hashes_prefix {
-                        "G" => "G hashes/s",
-                        "M" => "M hashes/s",
-                        "k" => "k hashes/s",
-                        _ => "hashes/s",
-                    };
-                    format!(
-                        "{:.2} {} | {:.2} {}",
-                        bytes_value, bytes_unit, hashes_value, hashes_unit
-                    )
-                } else {
-                    format!("{:.2} {}", bytes_value, bytes_unit)
-                }
+    /// Print the single canonical, column-aligned line for this variant. Columns are joined by
+    /// " | " in a fixed order; columns that cannot be computed (no perf counters, no element
+    /// count) are omitted, never reformatted, so Rust and Python stay layout-compatible.
+    pub fn report(&self, name: &str, report: ReportAs) {
+        let seconds = self.elapsed.as_secs_f64().max(1e-12);
+        let mut columns: Vec<String> = Vec::new();
+
+        // Primary rate.
+        let elements_per_second = self.elements as f64 / seconds;
+        let bytes_per_second = self.bytes as f64 / seconds;
+        columns.push(match report {
+            ReportAs::Bytes => format_byte_rate(bytes_per_second),
+            ReportAs::Cups => format_si_rate(elements_per_second, "CUPS", false),
+            ReportAs::Hashes => format_si_rate(elements_per_second, "hashes/s", true),
+            ReportAs::Comparisons => format_si_rate(elements_per_second, "cmp/s", true),
+        });
+
+        // Secondary bytes/s, unless the primary already is bytes/s.
+        if !matches!(report, ReportAs::Bytes) && self.bytes > 0 {
+            columns.push(format_byte_rate(bytes_per_second));
+        }
+
+        // Exact cycles-per-byte and IPC from hardware counters (Linux only).
+        if let (Some(cycles), true) = (self.cycles, self.bytes > 0) {
+            columns.push(format!("{:.2} cyc/B", cycles as f64 / self.bytes as f64));
+        }
+        if let (Some(cycles), Some(instructions)) = (self.cycles, self.instructions) {
+            if cycles > 0 {
+                columns.push(format!("IPC {:.2}", instructions as f64 / cycles as f64));
             }
-            Throughput::Elements(elems) => {
-                let hashes_per_sec = (*elems as f64) / secs;
-                let (hashes_value, hashes_prefix) = scale_si(hashes_per_sec);
-                let hashes_unit = match hashes_prefix {
-                    "G" => "G hashes/s",
-                    "M" => "M hashes/s",
-                    "k" => "k hashes/s",
-                    _ => "hashes/s",
-                };
-                // Also compute bytes/s if ratio present
-                let bytes_per_hash = get_bytes_per_hash();
-                if bytes_per_hash > 0.0 {
-                    let bytes_per_sec = hashes_per_sec * bytes_per_hash;
-                    let (bytes_value, bytes_unit) = if bytes_per_sec >= 1e9 {
-                        (bytes_per_sec / 1e9, "GB/s")
-                    } else if bytes_per_sec >= 1e6 {
-                        (bytes_per_sec / 1e6, "MB/s")
-                    } else if bytes_per_sec >= 1e3 {
-                        (bytes_per_sec / 1e3, "kB/s")
-                    } else {
-                        (bytes_per_sec, "B/s")
-                    };
-                    format!(
-                        "{:.2} {} | {:.2} {}",
-                        hashes_value, hashes_unit, bytes_value, bytes_unit
-                    )
-                } else {
-                    format!("{:.2} {}", hashes_value, hashes_unit)
-                }
-            }
-            Throughput::ElementsAndBytes { elements, bytes } => {
-                // Primary: hashes/s (elements)
-                let hashes_per_sec = (*elements as f64) / secs;
-                let (hashes_value, hashes_prefix) = scale_si(hashes_per_sec);
-                let hashes_unit = match hashes_prefix {
-                    "G" => "G hashes/s",
-                    "M" => "M hashes/s",
-                    "k" => "k hashes/s",
-                    _ => "hashes/s",
-                };
-                // Secondary: bytes/s
-                let bytes_per_sec = (*bytes as f64) / secs;
-                let (bytes_value, bytes_unit) = if bytes_per_sec >= 1e9 {
-                    (bytes_per_sec / 1e9, "GB/s")
-                } else if bytes_per_sec >= 1e6 {
-                    (bytes_per_sec / 1e6, "MB/s")
-                } else if bytes_per_sec >= 1e3 {
-                    (bytes_per_sec / 1e3, "kB/s")
-                } else {
-                    (bytes_per_sec, "B/s")
-                };
-                format!(
-                    "{:.2} {} | {:.2} {}",
-                    hashes_value, hashes_unit, bytes_value, bytes_unit
-                )
-            }
-            Throughput::Bits(bits) => {
-                let rate = (*bits as f64) / secs; // bits/s
-                let (value, prefix) = scale_si(rate);
-                let unit = match prefix {
-                    "G" => "Gb/s",
-                    "M" => "Mb/s",
-                    "k" => "kb/s",
-                    _ => "b/s",
-                };
-                format!("{:.2} {}", value, unit)
-            }
+        }
+
+        // Latency distribution.
+        if let (Some(p50), Some(p99)) = (self.latency_quantile(0.5), self.latency_quantile(0.99)) {
+            columns.push(format!(
+                "p50 {} p99 {}",
+                format_seconds(p50 / 1e9),
+                format_seconds(p99 / 1e9)
+            ));
+        }
+
+        println!("{:<42} {}", name, columns.join(" | "));
+    }
+}
+
+/// Render a bytes-per-second rate as `<value> <prefix>B/s` (decimal SI, 2 decimals).
+#[allow(dead_code)]
+fn format_byte_rate(bytes_per_second: f64) -> String {
+    let (value, prefix) = scale_si(bytes_per_second);
+    format!("{:.2} {}B/s", value, prefix)
+}
+
+/// Render an SI rate as `<value> <prefix><unit>` (e.g. `1.24 GCUPS`). When `space_before_unit`
+/// is set, a space separates the prefix from a word unit (`1.24 G hashes/s`).
+#[allow(dead_code)]
+fn format_si_rate(rate: f64, unit: &str, space_before_unit: bool) -> String {
+    let (value, prefix) = scale_si(rate);
+    if prefix.is_empty() {
+        format!("{:.2} {}", value, unit)
+    } else if space_before_unit {
+        format!("{:.2} {} {}", value, prefix, unit)
+    } else {
+        format!("{:.2} {}{}", value, prefix, unit)
+    }
+}
+
+/// Run `routine` cyclically until the measurement deadline (after an uncounted warm-up),
+/// summing the work it reports and recording statistics, then print the canonical line and
+/// return the stats. Honors `STRINGWARS_FILTER` via `should_run`; a filtered-out variant does
+/// no work and prints nothing.
+#[allow(dead_code)]
+pub fn measure_throughput<Routine: FnMut() -> WorkUnits>(
+    name: &str,
+    report: ReportAs,
+    budget: &BenchBudget,
+    mut routine: Routine,
+) -> BenchStats {
+    if !should_run(name) {
+        return BenchStats::default();
+    }
+
+    // Warm-up: run the kernel without recording so caches and frequency settle.
+    if !budget.warm_up.is_zero() {
+        let warm_up_start = Instant::now();
+        while warm_up_start.elapsed() < budget.warm_up {
+            let _ = black_box(routine());
         }
     }
 
-    fn scale_values(&self, _typical_value: f64, _values: &mut [f64]) -> &'static str {
-        "s"
-    }
-    fn scale_throughputs(
-        &self,
-        _typical_value: f64,
-        _throughput: &Throughput,
-        _values: &mut [f64],
-    ) -> &'static str {
-        "s"
-    }
-    fn scale_for_machines(&self, _values: &mut [f64]) -> &'static str {
-        "s"
-    }
-}
+    let mut elements = 0u64;
+    let mut bytes = 0u64;
+    let mut calls = 0u64;
+    let mut latencies_ns: Vec<f64> = Vec::new();
 
-// Measurement wrappers that mirror WallTime but override formatting.
+    #[cfg(target_os = "linux")]
+    let counters = HardwareCounters::start();
 
-#[allow(dead_code)]
-#[cfg(feature = "bench_similarities")]
-#[derive(Clone, Default)]
-pub struct CupsWallTime;
+    let start = Instant::now();
+    let deadline = start + budget.measure;
+    let mut stride = 1u64;
+    let mut countdown = 1u64;
+    let mut last_check = start;
+    let mut calls_since_check = 0u64;
 
-#[cfg(feature = "bench_similarities")]
-impl Measurement for CupsWallTime {
-    type Intermediate = Instant;
-    type Value = f64; // seconds
-
-    fn start(&self) -> Self::Intermediate {
-        Instant::now()
-    }
-
-    fn end(&self, i: Self::Intermediate) -> Self::Value {
-        i.elapsed().as_secs_f64()
-    }
-
-    fn add(&self, v: &Self::Value, a: &Self::Value) -> Self::Value {
-        v + a
-    }
-
-    fn zero(&self) -> Self::Value {
-        0.0
-    }
-
-    fn to_f64(&self, value: &Self::Value) -> f64 {
-        *value
-    }
-
-    fn formatter(&self) -> &dyn ValueFormatter {
-        &CupsFormatter
-    }
-}
-
-#[allow(dead_code)]
-#[cfg(feature = "bench_fingerprints")]
-#[derive(Clone, Default)]
-pub struct HashesWallTime;
-
-#[cfg(feature = "bench_fingerprints")]
-impl Measurement for HashesWallTime {
-    type Intermediate = Instant;
-    type Value = f64; // seconds
-
-    fn start(&self) -> Self::Intermediate {
-        Instant::now()
-    }
-
-    fn end(&self, i: Self::Intermediate) -> Self::Value {
-        i.elapsed().as_secs_f64()
-    }
-
-    fn add(&self, v: &Self::Value, a: &Self::Value) -> Self::Value {
-        v + a
-    }
-
-    fn zero(&self) -> Self::Value {
-        0.0
-    }
-
-    fn to_f64(&self, value: &Self::Value) -> f64 {
-        *value
-    }
-
-    fn formatter(&self) -> &dyn ValueFormatter {
-        &HashesFormatter
-    }
-}
-
-// Global ratio to let the formatter print both hashes/s and bytes/s
-#[allow(dead_code)]
-#[cfg(feature = "bench_fingerprints")]
-static FINGERPRINTS_BYTES_PER_HASH_BITS: AtomicU64 = AtomicU64::new(0);
-
-#[allow(dead_code)]
-#[cfg(feature = "bench_fingerprints")]
-pub fn set_fingerprints_bytes_per_hash(v: f64) {
-    FINGERPRINTS_BYTES_PER_HASH_BITS.store(v.to_bits(), Ordering::Relaxed);
-}
-
-#[allow(dead_code)]
-#[cfg(feature = "bench_fingerprints")]
-fn get_bytes_per_hash() -> f64 {
-    let bits = FINGERPRINTS_BYTES_PER_HASH_BITS.load(Ordering::Relaxed);
-    f64::from_bits(bits)
-}
-
-// Comparisons/sec formatter: k/M/G cmp/s
-#[allow(dead_code)]
-#[cfg(feature = "bench_sequence")]
-pub struct ComparisonsFormatter;
-
-#[cfg(feature = "bench_sequence")]
-impl ValueFormatter for ComparisonsFormatter {
-    fn format_value(&self, value: f64) -> String {
-        format_seconds(value)
-    }
-
-    fn format_throughput(&self, throughput: &Throughput, secs: f64) -> String {
-        match throughput {
-            Throughput::Bytes(bytes_per_iter) | Throughput::BytesDecimal(bytes_per_iter) => {
-                let rate = (*bytes_per_iter as f64) / secs; // bytes/s
-                let (value, unit) = if rate >= 1e9 {
-                    (rate / 1e9, "GB/s")
-                } else if rate >= 1e6 {
-                    (rate / 1e6, "MB/s")
-                } else if rate >= 1e3 {
-                    (rate / 1e3, "kB/s")
-                } else {
-                    (rate, "B/s")
-                };
-                format!("{:.2} {}", value, unit)
-            }
-            Throughput::Elements(elems_per_iter) => {
-                let cmps_per_sec = (*elems_per_iter as f64) / secs;
-                let (value, prefix) = scale_si(cmps_per_sec);
-                let unit = match prefix {
-                    "G" => "G cmp/s",
-                    "M" => "M cmp/s",
-                    "k" => "k cmp/s",
-                    _ => "cmp/s",
-                };
-                format!("{:.2} {}", value, unit)
-            }
-            Throughput::ElementsAndBytes { elements, bytes } => {
-                // Primary: comparisons/s
-                let cmps_per_sec = (*elements as f64) / secs;
-                let (comparisons_value, comparisons_prefix) = scale_si(cmps_per_sec);
-                let comparisons_unit = match comparisons_prefix {
-                    "G" => "G cmp/s",
-                    "M" => "M cmp/s",
-                    "k" => "k cmp/s",
-                    _ => "cmp/s",
-                };
-                // Secondary: bytes/s
-                let bytes_rate = (*bytes as f64) / secs;
-                let (bytes_value, bytes_unit) = if bytes_rate >= 1e9 {
-                    (bytes_rate / 1e9, "GB/s")
-                } else if bytes_rate >= 1e6 {
-                    (bytes_rate / 1e6, "MB/s")
-                } else if bytes_rate >= 1e3 {
-                    (bytes_rate / 1e3, "kB/s")
-                } else {
-                    (bytes_rate, "B/s")
-                };
-                format!(
-                    "{:.2} {} | {:.2} {}",
-                    comparisons_value, comparisons_unit, bytes_value, bytes_unit
-                )
-            }
-            Throughput::Bits(bits) => {
-                let rate = (*bits as f64) / secs;
-                let (value, prefix) = scale_si(rate);
-                let unit = match prefix {
-                    "G" => "Gb/s",
-                    "M" => "Mb/s",
-                    "k" => "kb/s",
-                    _ => "b/s",
-                };
-                format!("{:.2} {}", value, unit)
-            }
+    loop {
+        let work = black_box(routine());
+        elements += work.elements;
+        bytes += work.bytes;
+        calls += 1;
+        calls_since_check += 1;
+        countdown -= 1;
+        if countdown != 0 {
+            continue;
         }
+
+        let now = Instant::now();
+        let block = now - last_check;
+        if calls_since_check > 0 {
+            latencies_ns.push(block.as_nanos() as f64 / calls_since_check as f64);
+        }
+        if now >= deadline {
+            break;
+        }
+        if block < PACING_TARGET_BETWEEN_CHECKS && stride < PACING_STRIDE_CAP {
+            stride = (stride * 2).min(PACING_STRIDE_CAP);
+        }
+        last_check = now;
+        calls_since_check = 0;
+        countdown = stride;
     }
 
-    fn scale_values(&self, _typical_value: f64, _values: &mut [f64]) -> &'static str {
-        "s"
-    }
-    fn scale_throughputs(
-        &self,
-        _typical_value: f64,
-        _throughput: &Throughput,
-        _values: &mut [f64],
-    ) -> &'static str {
-        "s"
-    }
-    fn scale_for_machines(&self, _values: &mut [f64]) -> &'static str {
-        "s"
-    }
+    let elapsed = start.elapsed();
+
+    #[cfg(target_os = "linux")]
+    let (cycles, instructions) = counters.stop();
+    #[cfg(not(target_os = "linux"))]
+    let (cycles, instructions): (Option<u64>, Option<u64>) = (None, None);
+
+    let stats = BenchStats {
+        elapsed,
+        calls,
+        elements,
+        bytes,
+        cycles,
+        instructions,
+        latencies_ns,
+    };
+    stats.report(name, report);
+    stats
 }
 
+/// Items processed per core — one CPU core, or on the GPU one streaming multiprocessor (SM).
+/// "Core" here means an SM, not an individual warp or CUDA core. This is the single knob that
+/// scales batches to the device; `STRINGWARS_BATCH_PER_CORE` overrides it.
 #[allow(dead_code)]
-#[cfg(feature = "bench_sequence")]
-#[derive(Clone, Default)]
-pub struct ComparisonsWallTime;
+fn items_per_core() -> usize {
+    get_env_parsed("STRINGWARS_BATCH_PER_CORE", 128).max(1)
+}
 
-#[cfg(feature = "bench_sequence")]
-impl Measurement for ComparisonsWallTime {
-    type Intermediate = Instant;
-    type Value = f64; // seconds
+/// Batch size for a backend with `cores` parallel cores. A CPU core counts as one core and a GPU
+/// streaming multiprocessor counts as one core, so the batch scales automatically with the
+/// hardware instead of a fixed CPU/GPU multiplier: a 1-core scope gets `items_per_core`, an
+/// N-core scope `N * items_per_core`, and a GPU `streaming_multiprocessors * items_per_core`.
+#[allow(dead_code)]
+pub fn auto_batch_size(cores: usize) -> usize {
+    items_per_core().saturating_mul(cores.max(1)).max(1)
+}
 
-    fn start(&self) -> Self::Intermediate {
-        Instant::now()
+/// Number of streaming multiprocessors on the given CUDA device, queried from the CUDA runtime.
+/// Each SM is counted as one core for batch sizing (an SM, not a warp or an individual CUDA core).
+/// Returns None when CUDA is unavailable or the query fails, so callers fall back to a default
+/// core count. The attribute id 16 is `cudaDevAttrMultiProcessorCount`.
+#[allow(dead_code)]
+#[cfg(feature = "cuda")]
+pub fn gpu_multiprocessor_count(device_index: i32) -> Option<usize> {
+    extern "C" {
+        fn cudaDeviceGetAttribute(value: *mut i32, attribute: i32, device: i32) -> i32;
     }
-    fn end(&self, i: Self::Intermediate) -> Self::Value {
-        i.elapsed().as_secs_f64()
-    }
-    fn add(&self, v: &Self::Value, a: &Self::Value) -> Self::Value {
-        v + a
-    }
-    fn zero(&self) -> Self::Value {
-        0.0
-    }
-    fn to_f64(&self, value: &Self::Value) -> f64 {
-        *value
-    }
-    fn formatter(&self) -> &dyn ValueFormatter {
-        &ComparisonsFormatter
-    }
+    const MULTIPROCESSOR_COUNT_ATTRIBUTE: i32 = 16;
+    let mut count: i32 = 0;
+    let status =
+        unsafe { cudaDeviceGetAttribute(&mut count, MULTIPROCESSOR_COUNT_ATTRIBUTE, device_index) };
+    (status == 0 && count > 0).then_some(count as usize)
+}
+
+/// Without the CUDA feature there is no device to query, so callers use their fallback core count.
+#[allow(dead_code)]
+#[cfg(not(feature = "cuda"))]
+pub fn gpu_multiprocessor_count(_device_index: i32) -> Option<usize> {
+    None
 }
 
 /// RAII guard that profiles a code section using perf events on Linux.

@@ -41,6 +41,7 @@ from utils import (
     load_dataset,
     now_nanoseconds,
     paced_items,
+    report_stats,
     should_run,
     tokenize_dataset,
 )
@@ -83,14 +84,10 @@ def bench_tokenize(
         passes += 1
 
     seconds = (now_nanoseconds() - start_time) / 1e9
-    passes_per_second = passes / seconds if seconds > 0 else 0.0
-    gigabytes_per_second = (text_byte_length * passes) / seconds / 1e9 if seconds > 0 else 0.0
     tokens_per_pass = token_total // passes if passes else 0
 
-    print(
-        f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ "
-        f"{passes_per_second:10,.0f} passes/s ~ {tokens_per_pass:,} tokens"
-    )
+    print(f"{name}: {tokens_per_pass:,} tokens per pass over {passes:,} passes", file=sys.stderr)
+    report_stats(name, "bytes", seconds, passes, text_byte_length * passes)
 
 
 def count_words_stringzilla(text: str) -> int:

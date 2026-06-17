@@ -34,7 +34,15 @@ from importlib.metadata import version as pkg_version
 import ahocorasick as ahoc
 import stringzilla as sz
 
-from utils import add_common_args, load_dataset, now_nanoseconds, reduce_in_windows, should_run, tokenize_dataset
+from utils import (
+    add_common_args,
+    load_dataset,
+    now_nanoseconds,
+    reduce_in_windows,
+    report_stats,
+    should_run,
+    tokenize_dataset,
+)
 
 
 def log_system_info():
@@ -62,13 +70,16 @@ def bench_op(name: str, haystack, patterns, operation: Callable[..., int], time_
     end_time = now_nanoseconds()
     seconds = (end_time - start_time) / 1e9
 
-    queries_per_second = requested_queries / seconds if seconds > 0 else 0.0
-    results_per_second = received_results / seconds if seconds > 0 else 0.0
-    gigabytes_per_second = haystack_length * queries_per_second / 1e9
-
     print(
-        f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ "
-        f"{queries_per_second:10,.0f} queries/s ~ {results_per_second:10,.0f} results/s"
+        f"{name}: {received_results:,} results over {requested_queries:,} queries",
+        file=sys.stderr,
+    )
+    report_stats(
+        name,
+        "bytes",
+        seconds,
+        requested_queries,
+        haystack_length * requested_queries,
     )
 
 

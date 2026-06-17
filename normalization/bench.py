@@ -46,6 +46,7 @@ from utils import (
     now_nanoseconds,
     paced_items,
     reduce_in_windows,
+    report_stats,
     should_run,
     tokenize_dataset,
 )
@@ -75,7 +76,7 @@ def bench_case_compare(
 ):
     """Benchmark case-insensitive comparison of string pairs."""
     if not pairs:
-        print(f"{name:35s}: no pairs to compare")
+        print(f"{name}: no pairs to compare", file=sys.stderr)
         return
 
     # Encode once: byte length of every pair plus cumulative prefix sums, so the
@@ -113,13 +114,8 @@ def bench_case_compare(
     full_passes, remainder = divmod(compared_pairs, len(pairs))
     compared_bytes = full_passes * bytes_per_pass + cumulative_bytes[remainder]
 
-    pairs_per_second = compared_pairs / seconds if seconds > 0 else 0.0
-    gigabytes_per_second = compared_bytes / seconds / 1e9 if seconds > 0 else 0.0
-
-    print(
-        f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ "
-        f"{pairs_per_second:10,.0f} pairs/s ~ {matches_found:,} matches"
-    )
+    print(f"{name}: {matches_found:,} matches over {compared_pairs:,} pairs", file=sys.stderr)
+    report_stats(name, "bytes", seconds, compared_pairs, compared_bytes)
 
 
 def compare_casefold(first_string: str, second_string: str) -> bool:
@@ -155,7 +151,7 @@ def bench_case_find(
 ):
     """Benchmark case-insensitive substring search."""
     if not needles:
-        print(f"{name:35s}: no needles to search")
+        print(f"{name}: no needles to search", file=sys.stderr)
         return
 
     haystack_bytes = len(haystack.encode("utf-8"))
@@ -180,14 +176,9 @@ def bench_case_find(
 
     seconds = (now_nanoseconds() - start_time) / 1e9
 
-    queries_per_second = queries_done / seconds if seconds > 0 else 0.0
     # Throughput = haystack bytes searched per query
-    gigabytes_per_second = (haystack_bytes * queries_done) / seconds / 1e9 if seconds > 0 else 0.0
-
-    print(
-        f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ "
-        f"{queries_per_second:10,.0f} queries/s ~ {total_matches:,} matches"
-    )
+    print(f"{name}: {total_matches:,} matches over {queries_done:,} queries", file=sys.stderr)
+    report_stats(name, "bytes", seconds, queries_done, haystack_bytes * queries_done)
 
 
 def find_casefold(haystack: str, needle: str) -> int:
@@ -246,7 +237,7 @@ def bench_case_fold(
 ):
     """Benchmark case folding transformation."""
     if not strings:
-        print(f"{name:35s}: no strings to fold")
+        print(f"{name}: no strings to fold", file=sys.stderr)
         return
 
     # Encode once: cumulative prefix sums of byte lengths for exact throughput
@@ -270,10 +261,7 @@ def bench_case_fold(
     full_passes, remainder = divmod(processed_strings, len(strings))
     processed_bytes = full_passes * bytes_per_pass + cumulative_bytes[remainder]
 
-    strings_per_second = processed_strings / seconds if seconds > 0 else 0.0
-    gigabytes_per_second = processed_bytes / seconds / 1e9 if seconds > 0 else 0.0
-
-    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {strings_per_second:10,.0f} strings/s")
+    report_stats(name, "bytes", seconds, processed_strings, processed_bytes)
 
 
 def fold_casefold(s: str) -> str:
@@ -307,7 +295,7 @@ def bench_normalize(
     normalization is a distinct operation family with its own reporting section.
     """
     if not strings:
-        print(f"{name:35s}: no strings to normalize")
+        print(f"{name}: no strings to normalize", file=sys.stderr)
         return
 
     # Encode once: cumulative prefix sums of byte lengths for exact throughput
@@ -331,10 +319,7 @@ def bench_normalize(
     full_passes, remainder = divmod(processed_strings, len(strings))
     processed_bytes = full_passes * bytes_per_pass + cumulative_bytes[remainder]
 
-    strings_per_second = processed_strings / seconds if seconds > 0 else 0.0
-    gigabytes_per_second = processed_bytes / seconds / 1e9 if seconds > 0 else 0.0
-
-    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {strings_per_second:10,.0f} strings/s")
+    report_stats(name, "bytes", seconds, processed_strings, processed_bytes)
 
 
 def normalize_stringzilla(form: str, s: str) -> bytes:

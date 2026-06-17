@@ -17,6 +17,12 @@ Fingerprinting benchmarks in Python: docs/s for MinHash operations.
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
 - STRINGWARS_TOKENS: Tokenization mode ('lines', 'words', 'file')
+- STRINGWARS_BATCH_PER_CORE: Items processed per core (default: 128)
+
+The only batch knob is STRINGWARS_BATCH_PER_CORE (items per core); the per-device batch is
+auto-derived from the hardware core count — one CPU core is a core, one GPU streaming
+multiprocessor (SM) is a core — so each device is fed enough work without manual scaling.
+The --batch-size flag overrides STRINGWARS_BATCH_PER_CORE as the per-core base.
 
 Examples:
   uv run --with stringzillas-cpus fingerprints/bench.py --dataset README.md --tokens lines
@@ -35,7 +41,17 @@ import stringzillas as szs
 from datasketch import MinHash
 from tqdm import tqdm
 
-from utils import add_common_args, clamped_subranges, load_dataset, now_nanoseconds, should_run, tokenize_dataset
+from utils import (
+    add_common_args,
+    auto_batch_size,
+    clamped_subranges,
+    gpu_multiprocessor_count,
+    load_dataset,
+    now_nanoseconds,
+    report_stats,
+    should_run,
+    tokenize_dataset,
+)
 
 # For RAPIDS cuDF GPU-accelerated MinHash
 try:
@@ -61,8 +77,8 @@ def log_system_info():
     print()  # Add blank line
 
 
-def bench_fingerprint(name, documents, kernel, doc_bytes, time_limit_seconds, batch_size):
-    """Time kernel over documents in batches until the deadline; report docs/s and GB/s."""
+def bench_fingerprint(name, documents, kernel, doc_bytes, dimensions, time_limit_seconds, batch_size):
+    """Time kernel over documents in batches until the deadline; report hashes/s and bytes/s."""
     count = len(documents)
     deadline_nanoseconds = now_nanoseconds() + int(time_limit_seconds * 1e9)
     start_time = now_nanoseconds()
@@ -78,11 +94,12 @@ def bench_fingerprint(name, documents, kernel, doc_bytes, time_limit_seconds, ba
     finally:
         bar.close()
 
-    seconds = (now_nanoseconds() - start_time) / 1e9
+    elapsed_seconds = (now_nanoseconds() - start_time) / 1e9
     processed_bytes = int(doc_bytes[:processed].sum())
-    gigabytes_per_second = processed_bytes / (1e9 * seconds) if seconds > 0 else 0.0
-    docs_per_second = processed / seconds if seconds > 0 else 0.0
-    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {docs_per_second:10,.0f} docs/s")
+    # Hash operations mirror the Rust harness: dimensions hash updates per byte of each
+    # processed document, so total_hash_ops = dimensions * bytes spanned by processed docs.
+    total_hash_ops = dimensions * processed_bytes
+    report_stats(name, "hashes", elapsed_seconds, total_hash_ops, processed_bytes)
 
 
 def document_byte_lengths(documents):
@@ -102,6 +119,9 @@ def benchmark_stringzillas(documents, dimensions, batch_size, time_limit_seconds
     moved = sz.Strs(documents)
     doc_bytes = document_byte_lengths(documents)
 
+    all_cpu_batch_size = auto_batch_size(cpu_cores, base=batch_size)
+    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+
     def run_variant(suffix, scope, variant_batch_size):
         engine = szs.Fingerprints(ndim=dimensions, window_widths=NGRAM_WIDTHS_ARRAY, capabilities=scope)
 
@@ -109,23 +129,30 @@ def benchmark_stringzillas(documents, dimensions, batch_size, time_limit_seconds
             engine(strs_slice, device=scope)  # returns (hashes, counts); discarded for throughput
 
         bench_fingerprint(
-            f"stringzillas.Fingerprints{suffix}", moved, kernel, doc_bytes, time_limit_seconds, variant_batch_size
+            f"stringzillas.Fingerprints{suffix}",
+            moved,
+            kernel,
+            doc_bytes,
+            dimensions,
+            time_limit_seconds,
+            variant_batch_size,
         )
 
     if should_run("minhash/stringzillas.Fingerprints(1xCPU)", filter_pattern):
         run_variant("(1xCPU)", default_scope, 1)
-    if should_run(f"minhash/stringzillas.Fingerprints({cpu_cores}xCPU,batch={batch_size})", filter_pattern):
-        run_variant(f"({cpu_cores}xCPU,batch={batch_size})", cpu_scope, batch_size)
+    if should_run(f"minhash/stringzillas.Fingerprints({cpu_cores}xCPU,batch={all_cpu_batch_size})", filter_pattern):
+        run_variant(f"({cpu_cores}xCPU,batch={all_cpu_batch_size})", cpu_scope, all_cpu_batch_size)
     if gpu_scope is not None and should_run(
-        f"minhash/stringzillas.Fingerprints(1xGPU,batch={batch_size})", filter_pattern
+        f"minhash/stringzillas.Fingerprints(1xGPU,batch={gpu_batch_size})", filter_pattern
     ):
-        run_variant(f"(1xGPU,batch={batch_size})", gpu_scope, batch_size)
+        run_variant(f"(1xGPU,batch={gpu_batch_size})", gpu_scope, gpu_batch_size)
 
 
 def benchmark_datasketch(documents, dimensions, batch_size, time_limit_seconds, filter_pattern):
     """datasketch MinHash on CPU: the common data-science baseline, n-grams built in Python."""
     if not should_run("minhash/datasketch.MinHash()", filter_pattern):
         return
+    cpu_batch_size = auto_batch_size(1, base=batch_size)
     per_width = max(1, dimensions // len(NGRAM_WIDTHS))
     doc_bytes = document_byte_lengths(documents)
 
@@ -138,12 +165,15 @@ def benchmark_datasketch(documents, dimensions, batch_size, time_limit_seconds, 
                     signature.update(data[offset : offset + width])
                 _ = signature.hashvalues  # force materialization
 
-    bench_fingerprint("datasketch.MinHash()", documents, kernel, doc_bytes, time_limit_seconds, batch_size)
+    bench_fingerprint(
+        "datasketch.MinHash()", documents, kernel, doc_bytes, dimensions, time_limit_seconds, cpu_batch_size
+    )
 
 
 def benchmark_cudf(documents, dimensions, batch_size, time_limit_seconds, filter_pattern):
     """cuDF MinHash on the GPU: the CUDA first-party comparison (optional, best-effort)."""
-    if not should_run(f"minhash/cudf.minhash(1xGPU,batch={batch_size})", filter_pattern):
+    gpu_batch_size = auto_batch_size(gpu_multiprocessor_count(0) or 64, base=batch_size)
+    if not should_run(f"minhash/cudf.minhash(1xGPU,batch={gpu_batch_size})", filter_pattern):
         return
     try:
         import cupy as cp
@@ -163,7 +193,13 @@ def benchmark_cudf(documents, dimensions, batch_size, time_limit_seconds, filter
 
     try:
         bench_fingerprint(
-            f"cudf.minhash(1xGPU,batch={batch_size})", series, kernel, doc_bytes, time_limit_seconds, batch_size
+            f"cudf.minhash(1xGPU,batch={gpu_batch_size})",
+            series,
+            kernel,
+            doc_bytes,
+            dimensions,
+            time_limit_seconds,
+            gpu_batch_size,
         )
     except Exception as error:
         print(f"cudf.minhash(1xGPU): SKIPPED ({type(error).__name__}: {error})")
@@ -210,8 +246,8 @@ def main():
         "-b",
         "--batch-size",
         type=int,
-        default=1,
-        help="Batch size for batch-capable APIs (default: 1)",
+        default=None,
+        help="Items processed per core (overrides STRINGWARS_BATCH_PER_CORE, default: 128)",
     )
 
     args = parser.parse_args()

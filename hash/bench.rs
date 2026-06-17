@@ -13,7 +13,6 @@ The benchmarks are organized into three categories:
 - Standard `Hash` implementation (SipHash)
 - aHash
 - xxHash (xxh3)
-- gxhash (x86_64 only)
 - FoldHash
 - CRC32 (IEEE) via `crc32fast`
 - MurmurHash32 via `murmurhash32`
@@ -64,14 +63,13 @@ RUSTFLAGS="-C target-cpu=native" \
     cargo criterion --features bench_hash bench_hash --jobs $(nproc)
 ```
 
-Note: `gxhash` and `cityhash` are only compiled on x86_64 targets as they require x86-specific instructions.
+Note: `cityhash` is only compiled on x86_64 targets as it requires x86-specific instructions.
 "#]
 use std::collections::HashSet;
 use std::hash::{BuildHasher, Hasher};
 use std::hint::black_box;
 
 use bit_set::BitSet;
-use criterion::{Criterion, Throughput};
 use stringtape::{BytesCowsAuto, BytesTape};
 
 use ahash::RandomState as AHashState;
@@ -87,16 +85,30 @@ use xxhash_rust::xxh3::xxh3_64;
 
 #[cfg(target_arch = "x86_64")]
 use cityhash;
-#[cfg(target_arch = "x86_64")]
-use gxhash;
 
 #[path = "../utils.rs"]
 mod utils;
-use criterion::measurement::WallTime;
 use utils::{
-    configure_bench, get_env_bool, install_panic_hook, load_dataset, log_stringzilla_metadata,
-    should_run, ResultExt,
+    get_env_bool, install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput,
+    should_run, BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
+
+/// Time one stateless hash over the dataset by cycling tokens for the budget. The kernel
+/// `hash_one` is called on one token per iteration; throughput is reported as bytes/s.
+fn bench_each_token<HashOne: FnMut(&[u8])>(
+    name: &str,
+    budget: &BenchBudget,
+    tokens: &[&[u8]],
+    mut hash_one: HashOne,
+) {
+    let mut cursor = 0usize;
+    measure_throughput(name, ReportAs::Bytes, budget, || {
+        let token = tokens[cursor % tokens.len()];
+        cursor += 1;
+        hash_one(black_box(token));
+        WorkUnits::new(1, token.len() as u64)
+    });
+}
 
 /// Counts collisions for a given hash function using a bitset sized to the number of unique tokens
 fn count_collisions<F>(unique_tokens: &[&[u8]], hash_fn: F) -> usize
@@ -139,19 +151,11 @@ where
     );
 }
 
-/// Benchmarks stateless hashes seeing the whole input at once
-fn bench_stateless(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    tokens: &BytesCowsAuto,
-) {
-    // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = tokens.iter().map(|token| token.len()).sum();
-    group.throughput(Throughput::Bytes(total_bytes as u64));
-
-    // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable
-    // This avoids OOM on large datasets (can use GBs of RAM for deduplication)
+/// Benchmarks stateless hashes, hashing one token per call and cycling the dataset.
+fn bench_stateless(budget: &BenchBudget, tokens: &BytesCowsAuto) {
+    // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable.
+    // This avoids OOM on large datasets (can use GBs of RAM for deduplication).
     let enable_collision_detection = get_env_bool("STRINGWARS_COLLISIONS");
-
     let unique_tokens: Vec<&[u8]> = if enable_collision_detection {
         println!("\nComputing unique tokens for collision detection...");
         let unique_set: HashSet<&[u8]> = tokens.iter().collect();
@@ -166,175 +170,113 @@ fn bench_stateless(
         Vec::new()
     };
 
-    // Use BytesTape to colocate strings and reduce memory access overhead
+    // Use BytesTape to colocate strings and reduce memory access overhead.
     let mut tokens_tape = BytesTape::<u64>::new();
     tokens_tape
         .extend(tokens.iter())
         .expect("Failed to create BytesTape");
-    let tokens = tokens_tape.view();
+    let view = tokens_tape.view();
+    let slices: Vec<&[u8]> = (&view).into_iter().collect();
 
     // Benchmark: StringZilla
-    if should_run("stateless/stringzilla/hash()") {
-        group.bench_function("stringzilla/hash()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let _ = black_box(sz::hash(black_box(token)));
-                }
-            })
-        });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| sz::hash(token_bytes));
-        }
+    bench_each_token("stateless/stringzilla/hash()", budget, &slices, |token| {
+        let _ = black_box(sz::hash(token));
+    });
+    if !unique_tokens.is_empty() && should_run("stateless/stringzilla/hash()") {
+        print_collision_rate(&unique_tokens, |token_bytes| sz::hash(token_bytes));
     }
 
     // Benchmark: SipHash via `std::DefaultHasher`
-    if should_run("stateless/std/DefaultHasher.hash_one()") {
-        let std_builder = std::collections::hash_map::RandomState::new();
-        group.bench_function("std/DefaultHasher.hash_one()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(std_builder.hash_one(token_bytes));
-                }
-            })
+    let std_builder = std::collections::hash_map::RandomState::new();
+    bench_each_token(
+        "stateless/std/DefaultHasher.hash_one()",
+        budget,
+        &slices,
+        |token| {
+            let _ = black_box(std_builder.hash_one(token));
+        },
+    );
+    if !unique_tokens.is_empty() && should_run("stateless/std/DefaultHasher.hash_one()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            std_builder.hash_one(token_bytes)
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                std_builder.hash_one(token_bytes)
-            });
-        }
     }
 
     // Benchmark: aHash
-    if should_run("stateless/ahash/hash_one()") {
-        let hash_builder = AHashState::with_seed(42);
-        group.bench_function("ahash/hash_one()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(hash_builder.hash_one(token_bytes));
-                }
-            })
+    let hash_builder = AHashState::with_seed(42);
+    bench_each_token("stateless/ahash/hash_one()", budget, &slices, |token| {
+        let _ = black_box(hash_builder.hash_one(token));
+    });
+    if !unique_tokens.is_empty() && should_run("stateless/ahash/hash_one()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            hash_builder.hash_one(token_bytes)
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                hash_builder.hash_one(token_bytes)
-            });
-        }
     }
 
     // Benchmark: xxHash
-    if should_run("stateless/xxh3/xxh3_64()") {
-        group.bench_function("xxh3/xxh3_64()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(xxh3_64(token_bytes));
-                }
-            })
-        });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| xxh3_64(token_bytes));
-        }
+    bench_each_token("stateless/xxh3/xxh3_64()", budget, &slices, |token| {
+        let _ = black_box(xxh3_64(token));
+    });
+    if !unique_tokens.is_empty() && should_run("stateless/xxh3/xxh3_64()") {
+        print_collision_rate(&unique_tokens, |token_bytes| xxh3_64(token_bytes));
     }
 
     // Benchmark: wyhash
-    if should_run("stateless/wyhash/wyhash()") {
-        group.bench_function("wyhash/wyhash()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(wyhash(token_bytes, 42));
-                }
-            })
-        });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| wyhash(token_bytes, 42));
-        }
-    }
-
-    // Benchmark: gxhash (x86_64 only)
-    #[cfg(target_arch = "x86_64")]
-    if should_run("stateless/gxhash/gxhash64()") {
-        group.bench_function("gxhash/gxhash64()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(gxhash::gxhash64(token_bytes, 42));
-                }
-            })
-        });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                gxhash::gxhash64(token_bytes, 42)
-            });
-        }
+    bench_each_token("stateless/wyhash/wyhash()", budget, &slices, |token| {
+        let _ = black_box(wyhash(token, 42));
+    });
+    if !unique_tokens.is_empty() && should_run("stateless/wyhash/wyhash()") {
+        print_collision_rate(&unique_tokens, |token_bytes| wyhash(token_bytes, 42));
     }
 
     // Benchmark: FoldHash
-    if should_run("stateless/foldhash/hash_one()") {
-        let foldhash_builder = foldhash::fast::RandomState::default();
-        group.bench_function("foldhash/hash_one()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(foldhash_builder.hash_one(token_bytes));
-                }
-            })
+    let foldhash_builder = foldhash::fast::RandomState::default();
+    bench_each_token("stateless/foldhash/hash_one()", budget, &slices, |token| {
+        let _ = black_box(foldhash_builder.hash_one(token));
+    });
+    if !unique_tokens.is_empty() && should_run("stateless/foldhash/hash_one()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            foldhash_builder.hash_one(token_bytes)
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                foldhash_builder.hash_one(token_bytes)
-            });
-        }
     }
 
     // Benchmark: CRC32
-    if should_run("stateless/crc32fast/hash()") {
-        group.bench_function("crc32fast/hash()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(crc32fast::hash(token_bytes));
-                }
-            })
+    bench_each_token("stateless/crc32fast/hash()", budget, &slices, |token| {
+        let _ = black_box(crc32fast::hash(token));
+    });
+    if !unique_tokens.is_empty() && should_run("stateless/crc32fast/hash()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            crc32fast::hash(token_bytes) as u64
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                crc32fast::hash(token_bytes) as u64
-            });
-        }
     }
 
     // Benchmark: MurmurHash32 via `murmurhash32` (stateless)
-    if should_run("stateless/murmurhash32/murmurhash3()") {
-        group.bench_function("murmurhash32/murmurhash3()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(murmurhash32::murmurhash3(token_bytes) as u64);
-                }
-            })
+    bench_each_token(
+        "stateless/murmurhash32/murmurhash3()",
+        budget,
+        &slices,
+        |token| {
+            let _ = black_box(murmurhash32::murmurhash3(token) as u64);
+        },
+    );
+    if !unique_tokens.is_empty() && should_run("stateless/murmurhash32/murmurhash3()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            murmurhash32::murmurhash3(token_bytes) as u64
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                murmurhash32::murmurhash3(token_bytes) as u64
-            });
-        }
     }
 
     // Benchmark: CityHash64 via `cityhash` (stateless, x86_64 only)
     #[cfg(target_arch = "x86_64")]
-    if should_run("stateless/cityhash/city_hash_64()") {
-        group.bench_function("cityhash/city_hash_64()", |bencher| {
-            bencher.iter(|| {
-                for token in &tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(cityhash::city_hash_64(token_bytes));
-                }
-            })
-        });
-        if !unique_tokens.is_empty() {
+    {
+        bench_each_token(
+            "stateless/cityhash/city_hash_64()",
+            budget,
+            &slices,
+            |token| {
+                let _ = black_box(cityhash::city_hash_64(token));
+            },
+        );
+        if !unique_tokens.is_empty() && should_run("stateless/cityhash/city_hash_64()") {
             print_collision_rate(&unique_tokens, |token_bytes| {
                 cityhash::city_hash_64(token_bytes)
             });
@@ -346,18 +288,9 @@ fn bench_stateless(
     }
 }
 
-/// Benchmarks checksum hashes including cryptographic hashes and reference bounds
-fn bench_checksum(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    tokens: &BytesCowsAuto,
-) {
-    // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = tokens.iter().map(|token| token.len()).sum();
-    group.throughput(Throughput::Bytes(total_bytes as u64));
-
-    // Collision detection is opt-in via STRINGWARS_COLLISIONS environment variable
+/// Benchmarks checksum hashes including cryptographic hashes and reference bounds.
+fn bench_checksum(budget: &BenchBudget, tokens: &BytesCowsAuto) {
     let enable_collision_detection = get_env_bool("STRINGWARS_COLLISIONS");
-
     let unique_tokens: Vec<&[u8]> = if enable_collision_detection {
         let unique_set: HashSet<&[u8]> = tokens.iter().collect();
         let unique: Vec<&[u8]> = unique_set.into_iter().collect();
@@ -371,104 +304,76 @@ fn bench_checksum(
         Vec::new()
     };
 
+    let mut tokens_tape = BytesTape::<u64>::new();
+    tokens_tape
+        .extend(tokens.iter())
+        .expect("Failed to create BytesTape");
+    let view = tokens_tape.view();
+    let slices: Vec<&[u8]> = (&view).into_iter().collect();
+
     // Benchmark: StringZilla `bytesum` reference lower bound
-    if should_run("checksum/stringzilla/bytesum()") {
-        group.bench_function("stringzilla/bytesum()", |bencher| {
-            bencher.iter(|| {
-                for token in tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(sz::bytesum(token_bytes));
-                }
-            })
-        });
-    }
+    bench_each_token("checksum/stringzilla/bytesum()", budget, &slices, |token| {
+        let _ = black_box(sz::bytesum(token));
+    });
 
     // Benchmark: Blake3 - cryptographic hash
-    if should_run("checksum/blake3/hash()") {
-        group.bench_function("blake3/hash()", |bencher| {
-            bencher.iter(|| {
-                for token in tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(blake3::hash(token_bytes));
-                }
-            })
+    bench_each_token("checksum/blake3/hash()", budget, &slices, |token| {
+        let _ = black_box(blake3::hash(token));
+    });
+    if !unique_tokens.is_empty() && should_run("checksum/blake3/hash()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            let hash = blake3::hash(token_bytes);
+            let bytes = hash.as_bytes();
+            u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                let hash = blake3::hash(token_bytes);
-                let bytes = hash.as_bytes();
-                u64::from_le_bytes([
-                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                ])
-            });
-        }
     }
 
     // Benchmark: SHA256 via sha2
-    if should_run("checksum/sha2/Sha256()") {
-        group.bench_function("sha2/Sha256()", |bencher| {
-            bencher.iter(|| {
-                for token in tokens {
-                    let token_bytes = black_box(token);
-                    let mut hasher = Sha256::new();
-                    hasher.update(token_bytes);
-                    let _ = black_box(hasher.finalize());
-                }
-            })
+    bench_each_token("checksum/sha2/Sha256()", budget, &slices, |token| {
+        let mut hasher = Sha256::new();
+        hasher.update(token);
+        let _ = black_box(hasher.finalize());
+    });
+    if !unique_tokens.is_empty() && should_run("checksum/sha2/Sha256()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            let mut hasher = Sha256::new();
+            hasher.update(token_bytes);
+            let result = hasher.finalize();
+            u64::from_le_bytes([
+                result[0], result[1], result[2], result[3], result[4], result[5], result[6],
+                result[7],
+            ])
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                let mut hasher = Sha256::new();
-                hasher.update(token_bytes);
-                let result = hasher.finalize();
-                u64::from_le_bytes([
-                    result[0], result[1], result[2], result[3], result[4], result[5], result[6],
-                    result[7],
-                ])
-            });
-        }
     }
 
     // Benchmark: SHA256 via ring
-    if should_run("checksum/ring/SHA256()") {
-        group.bench_function("ring/SHA256()", |bencher| {
-            bencher.iter(|| {
-                for token in tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(ring_digest::digest(&ring_digest::SHA256, token_bytes));
-                }
-            })
+    bench_each_token("checksum/ring/SHA256()", budget, &slices, |token| {
+        let _ = black_box(ring_digest::digest(&ring_digest::SHA256, token));
+    });
+    if !unique_tokens.is_empty() && should_run("checksum/ring/SHA256()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            let digest = ring_digest::digest(&ring_digest::SHA256, token_bytes);
+            let bytes = digest.as_ref();
+            u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                let digest = ring_digest::digest(&ring_digest::SHA256, token_bytes);
-                let bytes = digest.as_ref();
-                u64::from_le_bytes([
-                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                ])
-            });
-        }
     }
 
     // Benchmark: SHA256 via stringzilla
-    if should_run("checksum/stringzilla/Sha256()") {
-        group.bench_function("stringzilla/Sha256()", |bencher| {
-            bencher.iter(|| {
-                for token in tokens {
-                    let token_bytes = black_box(token);
-                    let _ = black_box(sz::Sha256::hash(token_bytes));
-                }
-            })
+    bench_each_token("checksum/stringzilla/Sha256()", budget, &slices, |token| {
+        let _ = black_box(sz::Sha256::hash(token));
+    });
+    if !unique_tokens.is_empty() && should_run("checksum/stringzilla/Sha256()") {
+        print_collision_rate(&unique_tokens, |token_bytes| {
+            let digest = sz::Sha256::hash(token_bytes);
+            u64::from_le_bytes([
+                digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6],
+                digest[7],
+            ])
         });
-        if !unique_tokens.is_empty() {
-            print_collision_rate(&unique_tokens, |token_bytes| {
-                let digest = sz::Sha256::hash(token_bytes);
-                u64::from_le_bytes([
-                    digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6],
-                    digest[7],
-                ])
-            });
-        }
     }
 
     if !unique_tokens.is_empty() {
@@ -476,114 +381,106 @@ fn bench_checksum(
     }
 }
 
-/// Benchmarks stateful hashes seeing one slice at a time
-fn bench_stateful(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    tokens: &BytesCowsAuto,
-) {
-    // Use BytesTape to colocate strings and reduce memory access overhead
+/// Benchmarks stateful hashes, streaming the whole dataset through one hasher per pass and
+/// cycling passes for the budget. The per-call unit is one full streaming pass, so the deadline
+/// check after each call bounds overshoot to a single pass.
+fn bench_stateful(budget: &BenchBudget, tokens: &BytesCowsAuto) {
     let mut tokens_tape = BytesTape::<u64>::new();
     tokens_tape
         .extend(tokens.iter())
         .expect("Failed to create BytesTape");
-    let tokens = tokens_tape.view();
+    let view = tokens_tape.view();
+    let total_bytes: u64 = (&view).into_iter().map(|token| token.len() as u64).sum();
 
-    // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = (&tokens).into_iter().map(|token| token.len()).sum();
-    group.throughput(Throughput::Bytes(total_bytes as u64));
-
-    // Benchmark: StringZilla `hash`
-    if should_run("stateful/stringzilla/Hasher()") {
-        group.bench_function("stringzilla/Hasher()", |bencher| {
-            bencher.iter(|| {
-                let mut hasher = sz::Hasher::new(0);
-                for token in &tokens {
-                    hasher.write(token);
-                }
-                black_box(hasher.finish());
-            })
-        });
-    }
+    // Benchmark: StringZilla `Hasher`
+    measure_throughput(
+        "stateful/stringzilla/Hasher()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let mut hasher = sz::Hasher::new(0);
+            for token in &view {
+                hasher.write(token);
+            }
+            black_box(hasher.finish());
+            WorkUnits::bytes(total_bytes)
+        },
+    );
 
     // Benchmark: SipHash via `std::DefaultHasher`
-    if should_run("stateful/std/DefaultHasher()") {
-        group.bench_function("std/DefaultHasher()", |bencher| {
-            let std_builder = std::collections::hash_map::RandomState::new();
-            bencher.iter(|| {
-                let mut aggregate = std_builder.build_hasher();
-                for token in &tokens {
-                    aggregate.write(token);
-                }
-                black_box(aggregate.finish());
-            })
-        });
-    }
+    let std_builder = std::collections::hash_map::RandomState::new();
+    measure_throughput(
+        "stateful/std/DefaultHasher()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let mut aggregate = std_builder.build_hasher();
+            for token in &view {
+                aggregate.write(token);
+            }
+            black_box(aggregate.finish());
+            WorkUnits::bytes(total_bytes)
+        },
+    );
 
     // Benchmark: aHash
-    if should_run("stateful/ahash/AHasher()") {
-        group.bench_function("ahash/AHasher()", |bencher| {
-            let state = AHashState::with_seed(42);
-            bencher.iter(|| {
-                let mut aggregate = state.build_hasher();
-                for token in &tokens {
-                    aggregate.write(token);
-                }
-                black_box(aggregate.finish());
-            })
-        });
-    }
+    let ahash_state = AHashState::with_seed(42);
+    measure_throughput("stateful/ahash/AHasher()", ReportAs::Bytes, budget, || {
+        let mut aggregate = ahash_state.build_hasher();
+        for token in &view {
+            aggregate.write(token);
+        }
+        black_box(aggregate.finish());
+        WorkUnits::bytes(total_bytes)
+    });
 
     // Benchmark: FoldHash
-    if should_run("stateful/foldhash/FoldHasher()") {
-        group.bench_function("foldhash/FoldHasher()", |bencher| {
-            let state = foldhash::fast::RandomState::default();
-            bencher.iter(|| {
-                let mut aggregate = state.build_hasher();
-                for token in &tokens {
-                    aggregate.write(token);
-                }
-                black_box(aggregate.finish());
-            })
-        });
-    }
+    let foldhash_state = foldhash::fast::RandomState::default();
+    measure_throughput(
+        "stateful/foldhash/FoldHasher()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let mut aggregate = foldhash_state.build_hasher();
+            for token in &view {
+                aggregate.write(token);
+            }
+            black_box(aggregate.finish());
+            WorkUnits::bytes(total_bytes)
+        },
+    );
 
     // Benchmark: CRC32
-    if should_run("stateful/crc32fast/Hasher()") {
-        group.bench_function("crc32fast/Hasher()", |bencher| {
-            bencher.iter(|| {
-                let mut hasher = crc32fast::Hasher::new();
-                for token in &tokens {
-                    hasher.update(token);
-                }
-                black_box(hasher.finalize());
-            })
-        });
-    }
+    measure_throughput(
+        "stateful/crc32fast/Hasher()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let mut hasher = crc32fast::Hasher::new();
+            for token in &view {
+                hasher.update(token);
+            }
+            black_box(hasher.finalize());
+            WorkUnits::bytes(total_bytes)
+        },
+    );
 }
 
 fn main() {
     install_panic_hook();
     log_stringzilla_metadata();
 
-    // Load the dataset defined by the environment variables
+    // Load the dataset defined by the environment variables.
     let tape = load_dataset().unwrap_nice();
 
-    let mut criterion = configure_bench(WallTime, 5, 10);
+    let budget = BenchBudget::from_env(2.0, 10.0);
 
-    // Profile stateless hash functions that see the whole input at once
-    let mut group = criterion.benchmark_group("stateless");
-    bench_stateless(&mut group, &tape);
-    group.finish();
+    println!("# stateless");
+    bench_stateless(&budget, &tape);
 
-    // Profile stateful/incremental hash functions that see only a slice of data at a time
-    let mut group = criterion.benchmark_group("stateful");
-    bench_stateful(&mut group, &tape);
-    group.finish();
+    println!("# stateful");
+    bench_stateful(&budget, &tape);
 
-    // Profile checksum and cryptographic hash functions
-    let mut group = criterion.benchmark_group("checksum");
-    bench_checksum(&mut group, &tape);
-    group.finish();
-
-    criterion.final_summary();
+    println!("# checksum");
+    bench_checksum(&budget, &tape);
 }

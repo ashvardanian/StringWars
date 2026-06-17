@@ -157,25 +157,183 @@ def reduce_in_windows(
     real kernels, but only when the body is "call a function on each item and reduce the
     results" with no per-item side effect.
 
+    The window size is *adaptive*, exactly like paced_items: it starts at 1 and doubles toward
+    `step` whenever a window ran faster than PACING_TARGET_BETWEEN_CHECKS_NS. A window of
+    few-but-huge items (e.g. one full-haystack find per call) stays small, so the deadline is
+    re-checked promptly and cannot overshoot by more than one window's worth of a single item;
+    cheap items climb to the fully-amortized `step` and keep the C-map speedup.
+
     Pass several equal-length sequences to vary more than one argument, for example two
     string columns. Pin a fixed argument with a leading functools.partial or a constant
     column such as [fixed] * n. Returns (reduced_total, processed_count).
     """
     count = min((len(column) for column in columns), default=0)
     total = 0
-    processed = 0
-    for low in range(0, count, step):
+    low = 0
+    window = 1  # items per checkpoint; doubles toward `step` for cheap items
+    last_check_nanoseconds = now_nanoseconds()
+    while low < count:
         if now_nanoseconds() >= deadline_nanoseconds:
             break
-        high = min(low + step, count)
+        high = min(low + window, count)
         total += combine(map(function, *(column[low:high] for column in columns)))
         if progress is not None:
             progress.update(high - low)
-        processed = high
-    return total, processed
+        current_nanoseconds = now_nanoseconds()
+        if current_nanoseconds - last_check_nanoseconds < PACING_TARGET_BETWEEN_CHECKS_NS and window < step:
+            window = min(window * 2, step)
+        last_check_nanoseconds = current_nanoseconds
+        low = high
+    return total, low
+
+
+def items_per_core(base: int | None = None) -> int:
+    """Items processed per core — one CPU core, or on the GPU one streaming multiprocessor (SM).
+    "Core" here means an SM, not an individual warp or CUDA core. The single knob that scales
+    batches to the device; `STRINGWARS_BATCH_PER_CORE` (or the explicit `base` argument) overrides
+    the default of 128.
+    """
+    if base is None:
+        base = get_env_parsed("STRINGWARS_BATCH_PER_CORE", 128)
+    return max(1, base)
+
+
+def auto_batch_size(cores: int, base: int | None = None) -> int:
+    """Batch size for a backend with `cores` parallel cores. A CPU core counts as one core and a
+    GPU streaming multiprocessor counts as one core, so the batch scales automatically with the
+    hardware instead of a fixed CPU/GPU multiplier: a 1-core scope gets `items_per_core`, an
+    N-core scope `N * items_per_core`, and a GPU `streaming_multiprocessors * items_per_core`.
+    Mirrors the Rust `auto_batch_size`.
+    """
+    return max(1, items_per_core(base) * max(1, cores))
+
+
+def gpu_multiprocessor_count(device_index: int = 0) -> int | None:
+    """Number of streaming multiprocessors on the given CUDA device, queried straight from the
+    CUDA runtime via ctypes (no cupy/torch needed). Each SM is counted as one core for batch
+    sizing (an SM, not a warp or an individual CUDA core). Returns None when CUDA is unavailable
+    or the query fails, so callers fall back to a default core count. Attribute id 16 is
+    `cudaDevAttrMultiProcessorCount`.
+    """
+    import ctypes
+    import ctypes.util
+
+    candidates = ["libcudart.so", "libcudart.so.12", ctypes.util.find_library("cudart")]
+    multiprocessor_count_attribute = 16
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            library = ctypes.CDLL(candidate)
+        except OSError:
+            continue
+        count = ctypes.c_int(0)
+        status = library.cudaDeviceGetAttribute(
+            ctypes.byref(count), ctypes.c_int(multiprocessor_count_attribute), ctypes.c_int(device_index)
+        )
+        if status == 0 and count.value > 0:
+            return count.value
+    return None
 
 
 # endregion: Benchmark loop profile
+
+
+# region: Reporting
+# One canonical, column-aligned result line per variant, identical in layout to the Rust harness
+# (utils.rs). The Rust-only cycles-per-byte and IPC columns are absent here (Python cannot read
+# hardware perf counters), but every other column — primary rate, bytes/s, latency percentiles —
+# uses the same units, the same SI thresholds, and the same 2-decimal precision, so the two suites
+# stay diff-compatible.
+
+# Width of the left-aligned variant-name column, matching the Rust reporter.
+REPORT_NAME_WIDTH = 42
+
+
+def scale_si(value: float) -> tuple[float, str]:
+    """Scale a value to a metric prefix (G/M/k), returning (scaled_value, prefix)."""
+    if value >= 1e9:
+        return value / 1e9, "G"
+    if value >= 1e6:
+        return value / 1e6, "M"
+    if value >= 1e3:
+        return value / 1e3, "k"
+    return value, ""
+
+
+def format_byte_rate(bytes_per_second: float) -> str:
+    """Render a bytes-per-second rate as `<value> <prefix>B/s` (decimal SI, 2 decimals)."""
+    value, prefix = scale_si(bytes_per_second)
+    return f"{value:.2f} {prefix}B/s"
+
+
+def format_si_rate(rate: float, unit: str, space_before_unit: bool) -> str:
+    """Render an SI rate as `<value> <prefix><unit>` (e.g. `1.24 GCUPS`), with a space between the
+    prefix and a word unit when `space_before_unit` is set (e.g. `1.24 G hashes/s`)."""
+    value, prefix = scale_si(rate)
+    if not prefix:
+        return f"{value:.2f} {unit}"
+    return f"{value:.2f} {prefix} {unit}" if space_before_unit else f"{value:.2f} {prefix}{unit}"
+
+
+def format_seconds(value_seconds: float) -> str:
+    """Render a duration with an appropriate sub-second unit, matching the Rust reporter."""
+    if value_seconds < 1e-6:
+        return f"{value_seconds * 1e9:.2f} ns"
+    if value_seconds < 1e-3:
+        return f"{value_seconds * 1e6:.2f} µs"
+    if value_seconds < 1.0:
+        return f"{value_seconds * 1e3:.2f} ms"
+    return f"{value_seconds:.2f} s"
+
+
+def report_stats(
+    name: str,
+    report: str,
+    elapsed_seconds: float,
+    elements: int,
+    total_bytes: int,
+    latencies_seconds: list[float] | None = None,
+) -> None:
+    """Print the single canonical result line for one variant.
+
+    `report` selects the primary unit: "bytes", "cups", "hashes", or "comparisons". bytes/s is
+    always shown as the secondary metric (unless the primary already is bytes/s). Columns are
+    joined by " | " in a fixed order, and columns that cannot be computed are omitted, never
+    reformatted, so the layout matches the Rust harness line-for-line.
+    """
+    seconds = max(elapsed_seconds, 1e-12)
+    columns: list[str] = []
+
+    elements_per_second = elements / seconds
+    bytes_per_second = total_bytes / seconds
+    if report == "bytes":
+        columns.append(format_byte_rate(bytes_per_second))
+    elif report == "cups":
+        columns.append(format_si_rate(elements_per_second, "CUPS", False))
+    elif report == "hashes":
+        columns.append(format_si_rate(elements_per_second, "hashes/s", True))
+    elif report == "comparisons":
+        columns.append(format_si_rate(elements_per_second, "cmp/s", True))
+    else:
+        raise ValueError(f"Unknown report unit: {report!r}")
+
+    if report != "bytes" and total_bytes > 0:
+        columns.append(format_byte_rate(bytes_per_second))
+
+    if latencies_seconds:
+        ordered = sorted(latencies_seconds)
+
+        def quantile(fraction: float) -> float:
+            rank = round(fraction * (len(ordered) - 1))
+            return ordered[min(rank, len(ordered) - 1)]
+
+        columns.append(f"p50 {format_seconds(quantile(0.5))} p99 {format_seconds(quantile(0.99))}")
+
+    print(f"{name:<{REPORT_NAME_WIDTH}} {' | '.join(columns)}")
+
+
+# endregion: Reporting
 
 
 def parse_size(size_str: str) -> int:

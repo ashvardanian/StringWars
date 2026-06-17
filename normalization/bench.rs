@@ -25,8 +25,6 @@ RUSTFLAGS="-C target-cpu=native" \
 "#]
 use std::hint::black_box;
 
-use criterion::measurement::WallTime;
-use criterion::Throughput;
 use rand::prelude::IndexedRandom;
 use rand::SeedableRng;
 use stringtape::BytesCowsAuto;
@@ -43,8 +41,8 @@ use unicode_normalization::UnicodeNormalization;
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    configure_bench, install_panic_hook, load_dataset, log_stringzilla_metadata, should_run,
-    ResultExt,
+    install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput, BenchBudget,
+    ReportAs, ResultExt, WorkUnits,
 };
 
 fn log_pcre2_metadata() {
@@ -57,12 +55,8 @@ fn log_pcre2_metadata() {
 /// Unicode case folding may expand characters (e.group., German ß -> ss).
 /// - `stringzilla::utf8_uncased_fold()`: Full Unicode case folding per Unicode Standard
 /// - `stdlib::to_lowercase()`: Full Unicode lowercasing (locale-independent, allocates)
-fn bench_case_fold(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    haystack: &[u8],
-    _needles: &BytesCowsAuto,
-) {
-    group.throughput(Throughput::Bytes(haystack.len() as u64));
+fn bench_case_fold(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAuto) {
+    let haystack_length = haystack.len() as u64;
 
     let haystack_str = std::str::from_utf8(haystack).unwrap();
 
@@ -70,26 +64,30 @@ fn bench_case_fold(
     let mut fold_buffer = vec![0u8; haystack.len() * 3];
 
     // Benchmark for StringZilla case folding (full Unicode).
-    if should_run("case-fold/stringzilla/utf8_uncased_fold()") {
-        group.bench_function("stringzilla/utf8_uncased_fold()", |bencher| {
-            bencher.iter(|| {
-                let input = black_box(haystack);
-                let len = sz::utf8_uncased_fold(input, &mut fold_buffer);
-                black_box(len);
-            })
-        });
-    }
+    measure_throughput(
+        "case-fold/stringzilla/utf8_uncased_fold()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let input = black_box(haystack);
+            let len = sz::utf8_uncased_fold(input, &mut fold_buffer);
+            black_box(len);
+            WorkUnits::bytes(haystack_length)
+        },
+    );
 
     // Benchmark for stdlib to_lowercase (full Unicode, allocates).
-    if should_run("case-fold/std/to_lowercase()") {
-        group.bench_function("std/to_lowercase()", |bencher| {
-            bencher.iter(|| {
-                let input = black_box(haystack_str);
-                let lowered = input.to_lowercase();
-                black_box(lowered);
-            })
-        });
-    }
+    measure_throughput(
+        "case-fold/std/to_lowercase()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let input = black_box(haystack_str);
+            let lowered = input.to_lowercase();
+            black_box(lowered);
+            WorkUnits::bytes(haystack_length)
+        },
+    );
 }
 /// Benchmarks Unicode normalization (NFC / NFD / NFKC / NFKD) throughput.
 ///
@@ -99,11 +97,7 @@ fn bench_case_fold(
 ///
 /// Normalization is most meaningful on Indic / Arabic / Vietnamese / Korean corpora; on
 /// ASCII-heavy inputs every implementation degenerates to a near-passthrough copy.
-fn bench_normalize(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    haystack: &[u8],
-    _needles: &BytesCowsAuto,
-) {
+fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAuto) {
     let haystack_str = match std::str::from_utf8(haystack) {
         Ok(text) => text,
         Err(_) => {
@@ -112,7 +106,7 @@ fn bench_normalize(
         }
     };
 
-    group.throughput(Throughput::Bytes(haystack.len() as u64));
+    let haystack_length = haystack.len() as u64;
 
     // Benchmark for StringZilla normalization across all four forms. The form is a
     // runtime enum value, so a single loop covers every form without duplication.
@@ -128,15 +122,11 @@ fn bench_normalize(
             "normalize-{}/stringzilla/utf8_norm()",
             form_name.to_lowercase()
         );
-        if should_run(&identifier) {
-            group.bench_function(format!("stringzilla/utf8_norm({form_name})"), |bencher| {
-                bencher.iter(|| {
-                    let length =
-                        sz::utf8_norm(black_box(haystack), form, &mut normalization_buffer);
-                    black_box(length);
-                })
-            });
-        }
+        measure_throughput(&identifier, ReportAs::Bytes, budget, || {
+            let length = sz::utf8_norm(black_box(haystack), form, &mut normalization_buffer);
+            black_box(length);
+            WorkUnits::bytes(haystack_length)
+        });
     }
 
     // A single reusable UTF-8 output buffer shared by the baseline implementations, so
@@ -149,42 +139,50 @@ fn bench_normalize(
     // Benchmark for the `unicode-normalization` crate. Each form returns a distinct
     // iterator type (Decompositions vs Recompositions), so the four cases are spelled out.
     // `String::extend` consumes the iterator into the reused buffer without reallocating.
-    if should_run("normalize-nfc/unicode-normalization/nfc()") {
-        group.bench_function("unicode-normalization/nfc()", |bencher| {
-            bencher.iter(|| {
-                string_buffer.clear();
-                string_buffer.extend(black_box(haystack_str).nfc());
-                black_box(string_buffer.len());
-            })
-        });
-    }
-    if should_run("normalize-nfd/unicode-normalization/nfd()") {
-        group.bench_function("unicode-normalization/nfd()", |bencher| {
-            bencher.iter(|| {
-                string_buffer.clear();
-                string_buffer.extend(black_box(haystack_str).nfd());
-                black_box(string_buffer.len());
-            })
-        });
-    }
-    if should_run("normalize-nfkc/unicode-normalization/nfkc()") {
-        group.bench_function("unicode-normalization/nfkc()", |bencher| {
-            bencher.iter(|| {
-                string_buffer.clear();
-                string_buffer.extend(black_box(haystack_str).nfkc());
-                black_box(string_buffer.len());
-            })
-        });
-    }
-    if should_run("normalize-nfkd/unicode-normalization/nfkd()") {
-        group.bench_function("unicode-normalization/nfkd()", |bencher| {
-            bencher.iter(|| {
-                string_buffer.clear();
-                string_buffer.extend(black_box(haystack_str).nfkd());
-                black_box(string_buffer.len());
-            })
-        });
-    }
+    measure_throughput(
+        "normalize-nfc/unicode-normalization/nfc()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            string_buffer.clear();
+            string_buffer.extend(black_box(haystack_str).nfc());
+            black_box(string_buffer.len());
+            WorkUnits::bytes(haystack_length)
+        },
+    );
+    measure_throughput(
+        "normalize-nfd/unicode-normalization/nfd()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            string_buffer.clear();
+            string_buffer.extend(black_box(haystack_str).nfd());
+            black_box(string_buffer.len());
+            WorkUnits::bytes(haystack_length)
+        },
+    );
+    measure_throughput(
+        "normalize-nfkc/unicode-normalization/nfkc()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            string_buffer.clear();
+            string_buffer.extend(black_box(haystack_str).nfkc());
+            black_box(string_buffer.len());
+            WorkUnits::bytes(haystack_length)
+        },
+    );
+    measure_throughput(
+        "normalize-nfkd/unicode-normalization/nfkd()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            string_buffer.clear();
+            string_buffer.extend(black_box(haystack_str).nfkd());
+            black_box(string_buffer.len());
+            WorkUnits::bytes(haystack_length)
+        },
+    );
 
     // Benchmark for ICU4X normalizers. Composing forms (NFC/NFKC) and decomposing forms
     // (NFD/NFKD) are different types; both expose `normalize_to(&str, &mut impl fmt::Write)`,
@@ -193,57 +191,61 @@ fn bench_normalize(
     let icu_nfkc = ComposingNormalizerBorrowed::new_nfkc();
     let icu_nfd = DecomposingNormalizerBorrowed::new_nfd();
     let icu_nfkd = DecomposingNormalizerBorrowed::new_nfkd();
-    if should_run("normalize-nfc/icu/ComposingNormalizer::normalize_to()") {
-        group.bench_function("icu/Normalizer(NFC)", |bencher| {
-            bencher.iter(|| {
-                string_buffer.clear();
-                icu_nfc
-                    .normalize_to(black_box(haystack_str), &mut string_buffer)
-                    .unwrap();
-                black_box(string_buffer.len());
-            })
-        });
-    }
-    if should_run("normalize-nfd/icu/DecomposingNormalizer::normalize_to()") {
-        group.bench_function("icu/Normalizer(NFD)", |bencher| {
-            bencher.iter(|| {
-                string_buffer.clear();
-                icu_nfd
-                    .normalize_to(black_box(haystack_str), &mut string_buffer)
-                    .unwrap();
-                black_box(string_buffer.len());
-            })
-        });
-    }
-    if should_run("normalize-nfkc/icu/ComposingNormalizer::normalize_to()") {
-        group.bench_function("icu/Normalizer(NFKC)", |bencher| {
-            bencher.iter(|| {
-                string_buffer.clear();
-                icu_nfkc
-                    .normalize_to(black_box(haystack_str), &mut string_buffer)
-                    .unwrap();
-                black_box(string_buffer.len());
-            })
-        });
-    }
-    if should_run("normalize-nfkd/icu/DecomposingNormalizer::normalize_to()") {
-        group.bench_function("icu/Normalizer(NFKD)", |bencher| {
-            bencher.iter(|| {
-                string_buffer.clear();
-                icu_nfkd
-                    .normalize_to(black_box(haystack_str), &mut string_buffer)
-                    .unwrap();
-                black_box(string_buffer.len());
-            })
-        });
-    }
+    measure_throughput(
+        "normalize-nfc/icu/ComposingNormalizer::normalize_to()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            string_buffer.clear();
+            icu_nfc
+                .normalize_to(black_box(haystack_str), &mut string_buffer)
+                .unwrap();
+            black_box(string_buffer.len());
+            WorkUnits::bytes(haystack_length)
+        },
+    );
+    measure_throughput(
+        "normalize-nfd/icu/DecomposingNormalizer::normalize_to()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            string_buffer.clear();
+            icu_nfd
+                .normalize_to(black_box(haystack_str), &mut string_buffer)
+                .unwrap();
+            black_box(string_buffer.len());
+            WorkUnits::bytes(haystack_length)
+        },
+    );
+    measure_throughput(
+        "normalize-nfkc/icu/ComposingNormalizer::normalize_to()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            string_buffer.clear();
+            icu_nfkc
+                .normalize_to(black_box(haystack_str), &mut string_buffer)
+                .unwrap();
+            black_box(string_buffer.len());
+            WorkUnits::bytes(haystack_length)
+        },
+    );
+    measure_throughput(
+        "normalize-nfkd/icu/DecomposingNormalizer::normalize_to()",
+        ReportAs::Bytes,
+        budget,
+        || {
+            string_buffer.clear();
+            icu_nfkd
+                .normalize_to(black_box(haystack_str), &mut string_buffer)
+                .unwrap();
+            black_box(string_buffer.len());
+            WorkUnits::bytes(haystack_length)
+        },
+    );
 }
 /// Benchmarks case-insensitive string equality comparison.
-fn bench_case_insensitive_compare(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    _haystack: &[u8],
-    needles: &BytesCowsAuto,
-) {
+fn bench_case_insensitive_compare(budget: &BenchBudget, _haystack: &[u8], needles: &BytesCowsAuto) {
     // We compare each pair of adjacent tokens
     let pairs: Vec<(&[u8], &[u8])> = needles
         .iter()
@@ -255,13 +257,6 @@ fn bench_case_insensitive_compare(
         eprintln!("Warning: Not enough tokens for case-insensitive comparison benchmarks");
         return;
     }
-
-    // Total bytes compared (both sides of each pair)
-    let total_bytes: usize = pairs
-        .iter()
-        .map(|(first, second)| first.len() + second.len())
-        .sum();
-    group.throughput(Throughput::Bytes(total_bytes as u64));
 
     // Decode each pair to `&str` once, outside the timed closures, so the string-based baselines
     // do not re-validate UTF-8 on every iteration. StringZilla compares the raw bytes directly.
@@ -275,70 +270,64 @@ fn bench_case_insensitive_compare(
         })
         .collect();
 
-    // Benchmark for StringZilla case-insensitive comparison.
-    if should_run("case-insensitive-compare/stringzilla/utf8_uncased_order()") {
-        group.bench_function("stringzilla/utf8_uncased_order()", |bencher| {
-            bencher.iter(|| {
-                let mut matches = 0usize;
-                for (left, right) in &pairs {
-                    if sz::utf8_uncased_order(left, right) == std::cmp::Ordering::Equal {
-                        matches += 1;
-                    }
-                }
-                black_box(matches);
-            })
-        });
+    // Benchmark for StringZilla case-insensitive comparison. One pair is compared per call,
+    // cycling through the pairs; throughput is reported as the bytes spanned by both sides.
+    {
+        let mut cursor = 0usize;
+        measure_throughput(
+            "case-insensitive-compare/stringzilla/utf8_uncased_order()",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let (left, right) = pairs[cursor % pairs.len()];
+                cursor += 1;
+                let pair_bytes = (left.len() + right.len()) as u64;
+                let equal = sz::utf8_uncased_order(left, right) == std::cmp::Ordering::Equal;
+                black_box(equal);
+                WorkUnits::new(1, pair_bytes)
+            },
+        );
     }
 
     // Benchmark for unicase equality.
-    if should_run("case-insensitive-compare/unicase/eq()") {
-        group.bench_function("unicase/eq()", |bencher| {
-            bencher.iter(|| {
-                let mut matches = 0usize;
-                for (left_str, right_str) in &pairs_str {
-                    if UniCase::new(left_str) == UniCase::new(right_str) {
-                        matches += 1;
-                    }
-                }
-                black_box(matches);
-            })
-        });
+    {
+        let mut cursor = 0usize;
+        measure_throughput(
+            "case-insensitive-compare/unicase/eq()",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let (left_str, right_str) = pairs_str[cursor % pairs_str.len()];
+                cursor += 1;
+                let pair_bytes = (left_str.len() + right_str.len()) as u64;
+                let equal = UniCase::new(left_str) == UniCase::new(right_str);
+                black_box(equal);
+                WorkUnits::new(1, pair_bytes)
+            },
+        );
     }
 
     // Benchmark for stdlib lowercase + equality (baseline).
-    if should_run("case-insensitive-compare/std/to_lowercase().eq()") {
-        group.bench_function("std/to_lowercase().eq()", |bencher| {
-            bencher.iter(|| {
-                let mut matches = 0usize;
-                for (left_str, right_str) in &pairs_str {
-                    if left_str.to_lowercase() == right_str.to_lowercase() {
-                        matches += 1;
-                    }
-                }
-                black_box(matches);
-            })
-        });
+    {
+        let mut cursor = 0usize;
+        measure_throughput(
+            "case-insensitive-compare/std/to_lowercase().eq()",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let (left_str, right_str) = pairs_str[cursor % pairs_str.len()];
+                cursor += 1;
+                let pair_bytes = (left_str.len() + right_str.len()) as u64;
+                let equal = left_str.to_lowercase() == right_str.to_lowercase();
+                black_box(equal);
+                WorkUnits::new(1, pair_bytes)
+            },
+        );
     }
 }
 /// Benchmarks case-insensitive substring search.
-fn bench_case_insensitive_find(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    haystack: &[u8],
-    needles: &BytesCowsAuto,
-) {
-    // Limit haystack size to 10MB for case-insensitive search (it's O(n*m) with Unicode folding)
-    const MAX_HAYSTACK_SIZE: usize = 10 * 1024 * 1024;
-    let haystack = if haystack.len() > MAX_HAYSTACK_SIZE {
-        // Find a valid UTF-8 boundary near the limit
-        let mut end = MAX_HAYSTACK_SIZE;
-        while end > 0 && (haystack[end] & 0xC0) == 0x80 {
-            end -= 1;
-        }
-        &haystack[..end]
-    } else {
-        haystack
-    };
-
+fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &BytesCowsAuto) {
+    let haystack_length = haystack.len() as u64;
     let haystack_str = std::str::from_utf8(haystack).unwrap();
 
     // Collect candidate needles (valid UTF-8, length >= 3)
@@ -360,17 +349,18 @@ fn bench_case_insensitive_find(
         .copied()
         .collect();
 
-    // Throughput: each iteration searches haystack once with a single needle
-    group.throughput(Throughput::Bytes(haystack.len() as u64));
-
-    // Rotate through needles across iterations with a plain counter. criterion runs the
+    // Rotate through needles across iterations with a plain counter. The harness runs the
     // measured closure serially, so a captured `FnMut` counter suffices and avoids the
-    // atomic read-modify-write overhead on the hot path.
+    // atomic read-modify-write overhead on the hot path. Each call scans the full haystack
+    // once with a single needle; throughput is the haystack size.
     // Benchmark for StringZilla case-insensitive find (all matches for one needle).
-    if should_run("case-insensitive-find/stringzilla/utf8_uncased_find()") {
+    {
         let mut needle_index = 0usize;
-        group.bench_function("stringzilla/utf8_uncased_find()", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "case-insensitive-find/stringzilla/utf8_uncased_find()",
+            ReportAs::Bytes,
+            budget,
+            || {
                 let haystack_bytes = black_box(haystack);
                 let index = needle_index % search_needles.len();
                 needle_index += 1;
@@ -381,9 +371,10 @@ fn bench_case_insensitive_find(
                     matches += 1;
                     remaining = &remaining[offset + len.max(1)..];
                 }
-                black_box(matches)
-            })
-        });
+                black_box(matches);
+                WorkUnits::bytes(haystack_length)
+            },
+        );
     }
 
     // PCRE2 benchmarks for case-insensitive search with full Unicode case folding.
@@ -394,7 +385,7 @@ fn bench_case_insensitive_find(
     // See: https://github.com/rust-lang/regex/blob/master/UNICODE.md
 
     // Variant 1: Pre-compiled with JIT (compilation cost excluded from benchmark)
-    if should_run("case-insensitive-find/pcre2/pre-jit") {
+    {
         let regexes: Vec<_> = search_needles
             .iter()
             .filter_map(|needle| {
@@ -408,21 +399,28 @@ fn bench_case_insensitive_find(
             .collect();
 
         let mut needle_index = 0usize;
-        group.bench_function("pcre2/pre-jit", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "case-insensitive-find/pcre2/pre-jit",
+            ReportAs::Bytes,
+            budget,
+            || {
                 let haystack_bytes: &[u8] = black_box(haystack);
                 let index = needle_index % regexes.len();
                 needle_index += 1;
-                black_box(regexes[index].find_iter(haystack_bytes).count())
-            })
-        });
+                black_box(regexes[index].find_iter(haystack_bytes).count());
+                WorkUnits::bytes(haystack_length)
+            },
+        );
     }
 
     // Variant 2: JIT compilation included in benchmark (compile + search per iteration)
-    if should_run("case-insensitive-find/pcre2/jit-on-fly") {
+    {
         let mut needle_index = 0usize;
-        group.bench_function("pcre2/jit-on-fly", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "case-insensitive-find/pcre2/jit-on-fly",
+            ReportAs::Bytes,
+            budget,
+            || {
                 let haystack_bytes: &[u8] = black_box(haystack);
                 let index = needle_index % search_needles.len();
                 needle_index += 1;
@@ -433,13 +431,14 @@ fn bench_case_insensitive_find(
                     .jit_if_available(true)
                     .build(&pcre2::escape(needle))
                     .unwrap();
-                black_box(regex.find_iter(haystack_bytes).count())
-            })
-        });
+                black_box(regex.find_iter(haystack_bytes).count());
+                WorkUnits::bytes(haystack_length)
+            },
+        );
     }
 
     // Variant 3: No JIT (interpreter mode only)
-    if should_run("case-insensitive-find/pcre2/no-jit") {
+    {
         let regexes: Vec<_> = search_needles
             .iter()
             .filter_map(|needle| {
@@ -453,24 +452,31 @@ fn bench_case_insensitive_find(
             .collect();
 
         let mut needle_index = 0usize;
-        group.bench_function("pcre2/no-jit", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "case-insensitive-find/pcre2/no-jit",
+            ReportAs::Bytes,
+            budget,
+            || {
                 let haystack_bytes: &[u8] = black_box(haystack);
                 let index = needle_index % regexes.len();
                 needle_index += 1;
-                black_box(regexes[index].find_iter(haystack_bytes).count())
-            })
-        });
+                black_box(regexes[index].find_iter(haystack_bytes).count());
+                WorkUnits::bytes(haystack_length)
+            },
+        );
     }
 
     // Benchmark for ICU case-fold + memchr SIMD search.
     // Full Unicode case folding (ß→ss) + fast byte search.
     // Folding happens inside the loop for fair comparison.
-    if should_run("case-insensitive-find/icu+memchr/fold+find") {
+    {
         let case_mapper = CaseMapper::new();
         let mut needle_index = 0usize;
-        group.bench_function("icu+memchr/fold+find", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "case-insensitive-find/icu+memchr/fold+find",
+            ReportAs::Bytes,
+            budget,
+            || {
                 let haystack_text = black_box(haystack_str);
                 let index = needle_index % search_needles.len();
                 needle_index += 1;
@@ -479,9 +485,10 @@ fn bench_case_insensitive_find(
                 let folded_haystack = case_mapper.fold_string(haystack_text);
                 let folded_needle = case_mapper.fold_string(needle);
                 let finder = memmem::Finder::new(folded_needle.as_bytes());
-                black_box(finder.find_iter(folded_haystack.as_bytes()).count())
-            })
-        });
+                black_box(finder.find_iter(folded_haystack.as_bytes()).count());
+                WorkUnits::bytes(haystack_length)
+            },
+        );
     }
 }
 fn main() {
@@ -496,23 +503,17 @@ fn main() {
     let haystack = tape.parent();
     let needles = &tape;
 
-    let mut criterion = configure_bench(WallTime, 3, 20);
+    let budget = BenchBudget::from_env(3.0, 20.0);
 
-    let mut group = criterion.benchmark_group("case-fold");
-    bench_case_fold(&mut group, &haystack, needles);
-    group.finish();
+    println!("# case-fold");
+    bench_case_fold(&budget, &haystack, needles);
 
-    let mut group = criterion.benchmark_group("normalize");
-    bench_normalize(&mut group, &haystack, needles);
-    group.finish();
+    println!("# normalize");
+    bench_normalize(&budget, &haystack, needles);
 
-    let mut group = criterion.benchmark_group("case-insensitive-compare");
-    bench_case_insensitive_compare(&mut group, &haystack, needles);
-    group.finish();
+    println!("# case-insensitive-compare");
+    bench_case_insensitive_compare(&budget, &haystack, needles);
 
-    let mut group = criterion.benchmark_group("case-insensitive-find");
-    bench_case_insensitive_find(&mut group, &haystack, needles);
-    group.finish();
-
-    criterion.final_summary();
+    println!("# case-insensitive-find");
+    bench_case_insensitive_find(&budget, &haystack, needles);
 }

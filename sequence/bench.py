@@ -49,7 +49,7 @@ else:
     # cuDF sorts run on GPU; nothing to set for CPU threads here
     pass
 
-from utils import add_common_args, load_dataset, now_nanoseconds, should_run, tokenize_dataset
+from utils import add_common_args, load_dataset, now_nanoseconds, report_stats, should_run, tokenize_dataset
 
 
 def log_system_info():
@@ -65,19 +65,40 @@ def log_system_info():
     print()  # Add blank line
 
 
-def bench_sort_operation(name: str, operation: Callable[[], object], n_items: int):
-    """Timing wrapper for sorting operations"""
-    start = now_nanoseconds()
-    result = operation()
-    end = now_nanoseconds()
+def bench_sort_operation(
+    name: str,
+    build_input: Callable[[], object],
+    sort_input: Callable[[object], object],
+    n_items: int,
+    time_limit_seconds: float,
+):
+    """Repeatedly sort the same unsorted data under a wall-clock time budget.
 
-    seconds = (end - start) / 1e9
-    # For sorting operations: estimate comparisons as n*log2(n)
-    comparisons = n_items * math.log2(max(n_items, 2))
-    comparisons_per_second = comparisons / seconds if seconds > 0 else 0.0
-    gigabytes_per_second = (n_items * 10) / (1e9 * seconds) if seconds > 0 else 0.0
+    Each pass rebuilds the input from the original unsorted tokens via `build_input`
+    (so every pass sorts identical data and only the sort itself is timed), runs
+    `sort_input`, and accumulates the elapsed time and the comparison-count estimate.
+    The loop stops once the per-benchmark deadline passes.
+    """
+    deadline_nanoseconds = now_nanoseconds() + int(time_limit_seconds * 1e9)
 
-    print(f"{name:35s}: {seconds:8.3f}s ~ {gigabytes_per_second:8.3f} GB/s ~ {comparisons_per_second:10,.0f} cmp/s")
+    elapsed_nanoseconds = 0
+    comparisons = 0.0
+    # Per-pass comparison estimate for an n*log2(n) sort, preserved exactly.
+    comparisons_per_pass = n_items * math.log2(max(n_items, 2))
+    result = None
+
+    while True:
+        unsorted_input = build_input()
+        start = now_nanoseconds()
+        result = sort_input(unsorted_input)
+        end = now_nanoseconds()
+        elapsed_nanoseconds += end - start
+        comparisons += comparisons_per_pass
+        if end >= deadline_nanoseconds:
+            break
+
+    seconds = elapsed_nanoseconds / 1e9
+    report_stats(name, "comparisons", seconds, int(comparisons), 0)
     return result
 
 
@@ -133,25 +154,46 @@ def main():
 
     print("\nSort Benchmarks")
 
-    # Python list.sort
+    n_items = len(tokens)
+
+    # Python list.sort — mutates in place, so rebuild a fresh copy of the unsorted
+    # tokens before every timed pass.
     if should_run("argsort/std.list.sort()", filter_pattern):
-        py_list = list(tokens)
-        bench_sort_operation("std.list.sort()", lambda: py_list.sort(), len(tokens))
 
-    # StringZilla
+        def std_sort(py_list):
+            py_list.sort()
+            return py_list
+
+        bench_sort_operation("std.list.sort()", lambda: list(tokens), std_sort, n_items, args.time_limit)
+
+    # StringZilla — rebuild the Strs view each pass so every pass sorts identical data.
     if should_run("argsort/stringzilla.Strs.sorted()", filter_pattern):
-        sz_strs = sz.Strs(tokens)
-        bench_sort_operation("stringzilla.Strs.sorted()", lambda: sz_strs.sorted(), len(tokens))
+        bench_sort_operation(
+            "stringzilla.Strs.sorted()", lambda: sz.Strs(tokens), lambda strs: strs.sorted(), n_items, args.time_limit
+        )
 
-    # NumPy (object-dtype array; the most familiar Python baseline)
+    # NumPy (object-dtype array; the most familiar Python baseline). argsort is
+    # non-mutating, so the prebuilt array is the same unsorted input every pass.
     if should_run("argsort/numpy.argsort()", filter_pattern):
         np_array = np.array(tokens, dtype=object)
-        bench_sort_operation("numpy.argsort()", lambda: np.argsort(np_array, kind="stable"), len(tokens))
+        bench_sort_operation(
+            "numpy.argsort()",
+            lambda: np_array,
+            lambda array: np.argsort(array, kind="stable"),
+            n_items,
+            args.time_limit,
+        )
 
-    # Pandas
+    # Pandas (sort_values returns a new Series; the source stays unsorted).
     if should_run("argsort/pandas.Series.sort_values()", filter_pattern):
         s = pd.Series(tokens)
-        bench_sort_operation("pandas.Series.sort_values()", lambda: s.sort_values(ignore_index=True), len(tokens))
+        bench_sort_operation(
+            "pandas.Series.sort_values()",
+            lambda: s,
+            lambda series: series.sort_values(ignore_index=True),
+            n_items,
+            args.time_limit,
+        )
 
     # PyArrow
     if should_run("argsort/pyarrow.compute.sort_indices()", filter_pattern):
@@ -165,21 +207,27 @@ def main():
         use_large = total_bytes > INT32_MAX
         arr = pa.array(tokens, type=pa.large_string() if use_large else pa.string())
 
-        def _pa_sort_call():
-            idx = pc.sort_indices(arr)
-            _ = pc.take(arr, idx)
+        def pyarrow_sort(array):
+            indices = pc.sort_indices(array)
+            return pc.take(array, indices)
 
-        bench_sort_operation("pyarrow.compute.sort_indices()", _pa_sort_call, len(tokens))
+        bench_sort_operation("pyarrow.compute.sort_indices()", lambda: arr, pyarrow_sort, n_items, args.time_limit)
 
-    # Polars
+    # Polars (sort returns a new Series; the source stays unsorted).
     if should_run("argsort/polars.Series.sort()", filter_pattern):
         ps = pl.Series(tokens)
-        bench_sort_operation("polars.Series.sort()", lambda: ps.sort(), len(tokens))
+        bench_sort_operation("polars.Series.sort()", lambda: ps, lambda series: series.sort(), n_items, args.time_limit)
 
-    # cuDF GPU (if available)
+    # cuDF GPU (if available; sort_values returns a new Series).
     if CUDF_AVAILABLE and should_run("argsort/cudf.Series.sort_values(1xGPU)", filter_pattern):
         cs = cudf.Series(tokens)
-        bench_sort_operation("cudf.Series.sort_values(1xGPU)", lambda: cs.sort_values(ignore_index=True), len(tokens))
+        bench_sort_operation(
+            "cudf.Series.sort_values(1xGPU)",
+            lambda: cs,
+            lambda series: series.sort_values(ignore_index=True),
+            n_items,
+            args.time_limit,
+        )
 
     return 0
 

@@ -3,7 +3,7 @@
 Benchmarks for hashing functions across Rust and Python implementations.
 
 Many great hashing libraries exist in Rust, C, and C++.
-Typical top choices are `aHash`, `xxHash`, `blake3`, `gxhash`, `CityHash`, `MurmurHash`, `crc32fast`, or the native `std::hash`.
+Typical top choices are `aHash`, `xxHash`, `blake3`, `CityHash`, `MurmurHash`, `crc32fast`, or the native `std::hash`.
 Many of them have similar pitfalls:
 
 - They are not always documented to have a certain reproducible output and are recommended for use only for local in-memory construction of hash tables, not for serialization or network communication.
@@ -26,7 +26,6 @@ On Intel Sapphire Rapids CPU, on `xlsum.csv` dataset, the following numbers can 
 | `xxh3::xxh3_64`       |  64   |   +   |  +  |     1.08 GB/s |      9.48 GB/s |
 | `aHash::hash_one`     |  64   |   -   |  +  |     1.23 GB/s |      8.61 GB/s |
 | `foldhash::hash_one`  |  64   |   -   |  +  |     1.02 GB/s |      8.24 GB/s |
-| `gxhash::gxhash64`    |  64   |   -   |  -  |     2.68 GB/s |      9.19 GB/s |
 | `stringzilla::hash`   |  64   |   +   |  +  | **1.84 GB/s** | **11.38 GB/s** |
 |                       |       |       |     |               |                |
 | Python                |       |       |     |               |                |

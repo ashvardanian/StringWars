@@ -73,250 +73,281 @@ RUSTFLAGS="-C target-cpu=native" \
 "#]
 use std::hint::black_box;
 
-use criterion::{Criterion, Throughput};
 use stringtape::BytesCowsAuto;
 use stringzilla::sz;
 
 #[path = "../utils.rs"]
 mod utils;
-use criterion::measurement::WallTime;
 use utils::{
-    configure_bench, install_panic_hook, load_dataset, log_stringzilla_metadata, should_run,
-    ResultExt,
+    install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput, BenchBudget,
+    ReportAs, ResultExt, WorkUnits,
 };
 
-/// Benchmarks key generation and cipher setup overhead
-fn bench_key_generation(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-) {
+/// Benchmarks key generation and cipher setup overhead. Each variant builds one key/cipher per
+/// call and cycles for the budget; throughput is reported as bytes/s over the 32-byte key.
+fn bench_key_generation(budget: &BenchBudget) {
     use ring::aead;
 
     // Benchmark: ring ChaCha20-Poly1305 key generation
-    if should_run("keygen/ring::chacha20poly1305") {
-        group.bench_function("ring::chacha20poly1305", |bencher| {
-            bencher.iter(|| {
-                let key_bytes = [0u8; 32]; // 256-bit key
-                let key = aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &key_bytes);
-                black_box(key)
-            })
-        });
-    }
+    measure_throughput(
+        "keygen/ring::chacha20poly1305",
+        ReportAs::Bytes,
+        budget,
+        || {
+            let key_bytes = [0u8; 32]; // 256-bit key
+            let key = aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &key_bytes);
+            black_box(key);
+            WorkUnits::bytes(32)
+        },
+    );
 
     // Benchmark: ring AES-256-GCM key generation
-    if should_run("keygen/ring::aes256gcm") {
-        group.bench_function("ring::aes256gcm", |bencher| {
-            bencher.iter(|| {
-                let key_bytes = [0u8; 32]; // 256-bit key
-                let key = aead::UnboundKey::new(&aead::AES_256_GCM, &key_bytes);
-                black_box(key)
-            })
-        });
-    }
+    measure_throughput("keygen/ring::aes256gcm", ReportAs::Bytes, budget, || {
+        let key_bytes = [0u8; 32]; // 256-bit key
+        let key = aead::UnboundKey::new(&aead::AES_256_GCM, &key_bytes);
+        black_box(key);
+        WorkUnits::bytes(32)
+    });
 
     // Benchmark: OpenSSL ChaCha20-Poly1305 initialization
-    if should_run("keygen/openssl::chacha20poly1305") {
-        group.bench_function("openssl::chacha20poly1305", |bencher| {
-            use openssl::symm::{Cipher, Crypter, Mode};
-            bencher.iter(|| {
+    {
+        use openssl::symm::{Cipher, Crypter, Mode};
+        measure_throughput(
+            "keygen/openssl::chacha20poly1305",
+            ReportAs::Bytes,
+            budget,
+            || {
                 let key = [0u8; 32];
                 let cipher = Cipher::chacha20_poly1305();
                 let crypter = Crypter::new(cipher, Mode::Encrypt, &key, None);
-                black_box(crypter)
-            })
-        });
+                black_box(crypter);
+                WorkUnits::bytes(32)
+            },
+        );
     }
 
     // Benchmark: OpenSSL AES-256-GCM initialization
-    if should_run("keygen/openssl::aes256gcm") {
-        group.bench_function("openssl::aes256gcm", |bencher| {
-            use openssl::symm::{Cipher, Crypter, Mode};
-            bencher.iter(|| {
-                let key = [0u8; 32];
-                let cipher = Cipher::aes_256_gcm();
-                let crypter = Crypter::new(cipher, Mode::Encrypt, &key, None);
-                black_box(crypter)
-            })
+    {
+        use openssl::symm::{Cipher, Crypter, Mode};
+        measure_throughput("keygen/openssl::aes256gcm", ReportAs::Bytes, budget, || {
+            let key = [0u8; 32];
+            let cipher = Cipher::aes_256_gcm();
+            let crypter = Crypter::new(cipher, Mode::Encrypt, &key, None);
+            black_box(crypter);
+            WorkUnits::bytes(32)
         });
     }
 
     // Benchmark: libsodium ChaCha20-Poly1305 IETF key generation
-    if should_run("keygen/libsodium::chacha20poly1305_ietf") {
+    {
         use sodiumoxide::crypto::aead::chacha20poly1305_ietf::{self, Key};
-        group.bench_function("libsodium::chacha20poly1305_ietf", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "keygen/libsodium::chacha20poly1305_ietf",
+            ReportAs::Bytes,
+            budget,
+            || {
                 let key = Key([0u8; chacha20poly1305_ietf::KEYBYTES]);
-                black_box(key)
-            })
-        });
+                black_box(key);
+                WorkUnits::bytes(chacha20poly1305_ietf::KEYBYTES as u64)
+            },
+        );
     }
 
     // Benchmark: libsodium XChaCha20-Poly1305 IETF key generation
-    if should_run("keygen/libsodium::xchacha20poly1305_ietf") {
+    {
         use sodiumoxide::crypto::aead::xchacha20poly1305_ietf::{self, Key};
-        group.bench_function("libsodium::xchacha20poly1305_ietf", |bencher| {
-            bencher.iter(|| {
+        measure_throughput(
+            "keygen/libsodium::xchacha20poly1305_ietf",
+            ReportAs::Bytes,
+            budget,
+            || {
                 let key = Key([0u8; xchacha20poly1305_ietf::KEYBYTES]);
-                black_box(key)
-            })
-        });
+                black_box(key);
+                WorkUnits::bytes(xchacha20poly1305_ietf::KEYBYTES as u64)
+            },
+        );
     }
 }
 
-/// Benchmarks AEAD encryption (encrypt + authenticate)
-fn bench_encryption(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    tokens: &BytesCowsAuto,
-) {
+/// Benchmarks AEAD encryption (encrypt + authenticate). Each variant encrypts one token per call
+/// and cycles the dataset for the budget; throughput is reported as bytes/s over the plaintext.
+fn bench_encryption(budget: &BenchBudget, tokens: &BytesCowsAuto) {
     use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, NONCE_LEN};
 
-    // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = tokens.iter().map(|token| token.len()).sum();
-    group.throughput(Throughput::Bytes(total_bytes as u64));
+    // Collect token slices once so each cyclic call indexes a single token.
+    let slices: Vec<&[u8]> = tokens.iter().collect();
 
     // Benchmark: ring ChaCha20-Poly1305 encryption
-    if should_run("encryption/ring::chacha20poly1305") {
+    {
         let key_bytes = [0u8; 32];
         let unbound_key = UnboundKey::new(&aead::CHACHA20_POLY1305, &key_bytes).unwrap();
         let key = LessSafeKey::new(unbound_key);
 
-        group.bench_function("ring::chacha20poly1305", |bencher| {
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for token in tokens.iter() {
-                    let mut in_out = token.to_vec();
-                    in_out.reserve(aead::CHACHA20_POLY1305.tag_len());
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "encryption/ring::chacha20poly1305",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let token = slices[cursor % slices.len()];
+                cursor += 1;
+                let mut in_out = token.to_vec();
+                in_out.reserve(aead::CHACHA20_POLY1305.tag_len());
 
-                    let mut nonce_bytes = [0u8; NONCE_LEN];
-                    nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
-                    let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).unwrap();
+                let mut nonce_bytes = [0u8; NONCE_LEN];
+                nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
+                let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).unwrap();
 
-                    let _ =
-                        black_box(key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out));
-                }
-            })
-        });
+                let _ = black_box(key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out));
+                WorkUnits::new(1, token.len() as u64)
+            },
+        );
     }
 
     // Benchmark: ring AES-256-GCM encryption
-    if should_run("encryption/ring::aes256gcm") {
+    {
         let key_bytes = [0u8; 32];
         let unbound_key = UnboundKey::new(&aead::AES_256_GCM, &key_bytes).unwrap();
         let key = LessSafeKey::new(unbound_key);
 
-        group.bench_function("ring::aes256gcm", |bencher| {
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for token in tokens.iter() {
-                    let mut in_out = token.to_vec();
-                    // Reserve space for the authentication tag
-                    in_out.reserve(aead::AES_256_GCM.tag_len());
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "encryption/ring::aes256gcm",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let token = slices[cursor % slices.len()];
+                cursor += 1;
+                let mut in_out = token.to_vec();
+                // Reserve space for the authentication tag
+                in_out.reserve(aead::AES_256_GCM.tag_len());
 
-                    let mut nonce_bytes = [0u8; NONCE_LEN];
-                    nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
-                    let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).unwrap();
+                let mut nonce_bytes = [0u8; NONCE_LEN];
+                nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
+                let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).unwrap();
 
-                    let _ =
-                        black_box(key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out));
-                }
-            })
-        });
+                let _ = black_box(key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out));
+                WorkUnits::new(1, token.len() as u64)
+            },
+        );
     }
 
     // Benchmark: OpenSSL ChaCha20-Poly1305 encryption
-    if should_run("encryption/openssl::chacha20poly1305") {
+    {
         use openssl::symm::{encrypt_aead, Cipher};
 
-        group.bench_function("openssl::chacha20poly1305", |bencher| {
-            let key = [0u8; 32];
-            let cipher = Cipher::chacha20_poly1305();
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for token in tokens.iter() {
-                    let mut iv = [0u8; 12];
-                    iv[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
+        let key = [0u8; 32];
+        let cipher = Cipher::chacha20_poly1305();
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "encryption/openssl::chacha20poly1305",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let token = slices[cursor % slices.len()];
+                cursor += 1;
+                let mut iv = [0u8; 12];
+                iv[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
 
-                    let mut tag = vec![0u8; 16];
-                    let _ = black_box(encrypt_aead(cipher, &key, Some(&iv), &[], token, &mut tag));
-                }
-            })
-        });
+                let mut tag = vec![0u8; 16];
+                let _ = black_box(encrypt_aead(cipher, &key, Some(&iv), &[], token, &mut tag));
+                WorkUnits::new(1, token.len() as u64)
+            },
+        );
     }
 
     // Benchmark: OpenSSL AES-256-GCM encryption
-    if should_run("encryption/openssl::aes256gcm") {
+    {
         use openssl::symm::{encrypt_aead, Cipher};
 
-        group.bench_function("openssl::aes256gcm", |bencher| {
-            let key = [0u8; 32];
-            let cipher = Cipher::aes_256_gcm();
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for token in tokens.iter() {
-                    let mut iv = [0u8; 12];
-                    iv[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
+        let key = [0u8; 32];
+        let cipher = Cipher::aes_256_gcm();
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "encryption/openssl::aes256gcm",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let token = slices[cursor % slices.len()];
+                cursor += 1;
+                let mut iv = [0u8; 12];
+                iv[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
 
-                    let mut tag = vec![0u8; 16];
-                    let _ = black_box(encrypt_aead(cipher, &key, Some(&iv), &[], token, &mut tag));
-                }
-            })
-        });
+                let mut tag = vec![0u8; 16];
+                let _ = black_box(encrypt_aead(cipher, &key, Some(&iv), &[], token, &mut tag));
+                WorkUnits::new(1, token.len() as u64)
+            },
+        );
     }
 
     // Benchmark: libsodium ChaCha20-Poly1305 IETF encryption
-    if should_run("encryption/libsodium::chacha20poly1305_ietf") {
+    {
         use sodiumoxide::crypto::aead::chacha20poly1305_ietf::{self, Key, Nonce};
 
-        group.bench_function("libsodium::chacha20poly1305_ietf", |bencher| {
-            let key = Key([0u8; chacha20poly1305_ietf::KEYBYTES]);
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for token in tokens.iter() {
-                    let mut nonce_bytes = [0u8; chacha20poly1305_ietf::NONCEBYTES];
-                    nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
-                    let nonce = Nonce(nonce_bytes);
+        let key = Key([0u8; chacha20poly1305_ietf::KEYBYTES]);
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "encryption/libsodium::chacha20poly1305_ietf",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let token = slices[cursor % slices.len()];
+                cursor += 1;
+                let mut nonce_bytes = [0u8; chacha20poly1305_ietf::NONCEBYTES];
+                nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
+                let nonce = Nonce(nonce_bytes);
 
-                    let _ = black_box(chacha20poly1305_ietf::seal(token, None, &nonce, &key));
-                }
-            })
-        });
+                let _ = black_box(chacha20poly1305_ietf::seal(token, None, &nonce, &key));
+                WorkUnits::new(1, token.len() as u64)
+            },
+        );
     }
 
     // Benchmark: libsodium XChaCha20-Poly1305 IETF encryption
-    if should_run("encryption/libsodium::xchacha20poly1305_ietf") {
+    {
         use sodiumoxide::crypto::aead::xchacha20poly1305_ietf::{self, Key, Nonce};
 
-        group.bench_function("libsodium::xchacha20poly1305_ietf", |bencher| {
-            let key = Key([0u8; xchacha20poly1305_ietf::KEYBYTES]);
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for token in tokens.iter() {
-                    let mut nonce_bytes = [0u8; xchacha20poly1305_ietf::NONCEBYTES];
-                    nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
-                    let nonce = Nonce(nonce_bytes);
+        let key = Key([0u8; xchacha20poly1305_ietf::KEYBYTES]);
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "encryption/libsodium::xchacha20poly1305_ietf",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let token = slices[cursor % slices.len()];
+                cursor += 1;
+                let mut nonce_bytes = [0u8; xchacha20poly1305_ietf::NONCEBYTES];
+                nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
+                let nonce = Nonce(nonce_bytes);
 
-                    let _ = black_box(xchacha20poly1305_ietf::seal(token, None, &nonce, &key));
-                }
-            })
-        });
+                let _ = black_box(xchacha20poly1305_ietf::seal(token, None, &nonce, &key));
+                WorkUnits::new(1, token.len() as u64)
+            },
+        );
     }
 }
 
-/// Benchmarks AEAD decryption (verify + decrypt)
-fn bench_decryption(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    tokens: &BytesCowsAuto,
-) {
+/// Benchmarks AEAD decryption (verify + decrypt). Each variant decrypts one previously-encrypted
+/// token per call and cycles for the budget; throughput is reported as bytes/s over the original
+/// plaintext lengths to match the encryption accounting.
+fn bench_decryption(budget: &BenchBudget, tokens: &BytesCowsAuto) {
     use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey, NONCE_LEN};
 
-    // Calculate total bytes processed for throughput reporting
-    let total_bytes: usize = tokens.iter().map(|token| token.len()).sum();
-    group.throughput(Throughput::Bytes(total_bytes as u64));
+    // Original plaintext lengths, used as the per-item byte work (the encrypted buffers carry
+    // extra tag/overhead bytes that the original throughput accounting excluded).
+    let plaintext_lengths: Vec<u64> = tokens.iter().map(|token| token.len() as u64).collect();
 
     // Prepare encrypted data for ring ChaCha20-Poly1305
     let key_bytes = [0u8; 32];
@@ -364,41 +395,51 @@ fn bench_decryption(
     }
 
     // Benchmark: ring ChaCha20-Poly1305 decryption
-    if should_run("decryption/ring::chacha20poly1305") {
-        group.bench_function("ring::chacha20poly1305", |bencher| {
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for encrypted in &encrypted_tokens_chacha {
-                    let mut in_out = encrypted.clone();
+    {
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "decryption/ring::chacha20poly1305",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let index = cursor % encrypted_tokens_chacha.len();
+                cursor += 1;
+                let mut in_out = encrypted_tokens_chacha[index].clone();
 
-                    let mut nonce_bytes = [0u8; NONCE_LEN];
-                    nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
-                    let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).unwrap();
+                let mut nonce_bytes = [0u8; NONCE_LEN];
+                nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
+                let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).unwrap();
 
-                    let _ = black_box(key_chacha.open_in_place(nonce, Aad::empty(), &mut in_out));
-                }
-            })
-        });
+                let _ = black_box(key_chacha.open_in_place(nonce, Aad::empty(), &mut in_out));
+                WorkUnits::new(1, plaintext_lengths[index])
+            },
+        );
     }
 
     // Benchmark: ring AES-256-GCM decryption
-    if should_run("decryption/ring::aes256gcm") {
-        group.bench_function("ring::aes256gcm", |bencher| {
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for encrypted in &encrypted_tokens_aes {
-                    let mut in_out = encrypted.clone();
+    {
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "decryption/ring::aes256gcm",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let index = cursor % encrypted_tokens_aes.len();
+                cursor += 1;
+                let mut in_out = encrypted_tokens_aes[index].clone();
 
-                    let mut nonce_bytes = [0u8; NONCE_LEN];
-                    nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
-                    let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).unwrap();
+                let mut nonce_bytes = [0u8; NONCE_LEN];
+                nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
+                let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes).unwrap();
 
-                    let _ = black_box(key_aes.open_in_place(nonce, Aad::empty(), &mut in_out));
-                }
-            })
-        });
+                let _ = black_box(key_aes.open_in_place(nonce, Aad::empty(), &mut in_out));
+                WorkUnits::new(1, plaintext_lengths[index])
+            },
+        );
     }
 
     // Prepare encrypted data for OpenSSL ChaCha20-Poly1305
@@ -437,49 +478,61 @@ fn bench_decryption(
     }
 
     // Benchmark: OpenSSL ChaCha20-Poly1305 decryption
-    if should_run("decryption/openssl::chacha20poly1305") {
-        group.bench_function("openssl::chacha20poly1305", |bencher| {
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for (ciphertext, tag) in &encrypted_tokens_openssl_chacha {
-                    let mut iv = [0u8; 12];
-                    iv[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
+    {
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "decryption/openssl::chacha20poly1305",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let index = cursor % encrypted_tokens_openssl_chacha.len();
+                cursor += 1;
+                let (ciphertext, tag) = &encrypted_tokens_openssl_chacha[index];
+                let mut iv = [0u8; 12];
+                iv[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
 
-                    let _ = black_box(decrypt_aead(
-                        cipher_chacha,
-                        &key_bytes,
-                        Some(&iv),
-                        &[],
-                        ciphertext,
-                        tag,
-                    ));
-                }
-            })
-        });
+                let _ = black_box(decrypt_aead(
+                    cipher_chacha,
+                    &key_bytes,
+                    Some(&iv),
+                    &[],
+                    ciphertext,
+                    tag,
+                ));
+                WorkUnits::new(1, plaintext_lengths[index])
+            },
+        );
     }
 
     // Benchmark: OpenSSL AES-256-GCM decryption
-    if should_run("decryption/openssl::aes256gcm") {
-        group.bench_function("openssl::aes256gcm", |bencher| {
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for (ciphertext, tag) in &encrypted_tokens_openssl_aes {
-                    let mut iv = [0u8; 12];
-                    iv[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
+    {
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "decryption/openssl::aes256gcm",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let index = cursor % encrypted_tokens_openssl_aes.len();
+                cursor += 1;
+                let (ciphertext, tag) = &encrypted_tokens_openssl_aes[index];
+                let mut iv = [0u8; 12];
+                iv[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
 
-                    let _ = black_box(decrypt_aead(
-                        cipher_aes,
-                        &key_bytes,
-                        Some(&iv),
-                        &[],
-                        ciphertext,
-                        tag,
-                    ));
-                }
-            })
-        });
+                let _ = black_box(decrypt_aead(
+                    cipher_aes,
+                    &key_bytes,
+                    Some(&iv),
+                    &[],
+                    ciphertext,
+                    tag,
+                ));
+                WorkUnits::new(1, plaintext_lengths[index])
+            },
+        );
     }
 
     // Prepare encrypted data for libsodium ChaCha20-Poly1305 IETF
@@ -502,25 +555,31 @@ fn bench_decryption(
     }
 
     // Benchmark: libsodium ChaCha20-Poly1305 IETF decryption
-    if should_run("decryption/libsodium::chacha20poly1305_ietf") {
-        group.bench_function("libsodium::chacha20poly1305_ietf", |bencher| {
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for ciphertext in &encrypted_tokens_sodium_chacha {
-                    let mut nonce_bytes = [0u8; chacha20poly1305_ietf::NONCEBYTES];
-                    nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
-                    let nonce = Nonce_ChaCha(nonce_bytes);
+    {
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "decryption/libsodium::chacha20poly1305_ietf",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let index = cursor % encrypted_tokens_sodium_chacha.len();
+                cursor += 1;
+                let ciphertext = &encrypted_tokens_sodium_chacha[index];
+                let mut nonce_bytes = [0u8; chacha20poly1305_ietf::NONCEBYTES];
+                nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
+                let nonce = Nonce_ChaCha(nonce_bytes);
 
-                    let _ = black_box(chacha20poly1305_ietf::open(
-                        ciphertext,
-                        None,
-                        &nonce,
-                        &key_sodium_chacha,
-                    ));
-                }
-            })
-        });
+                let _ = black_box(chacha20poly1305_ietf::open(
+                    ciphertext,
+                    None,
+                    &nonce,
+                    &key_sodium_chacha,
+                ));
+                WorkUnits::new(1, plaintext_lengths[index])
+            },
+        );
     }
 
     // Prepare encrypted data for libsodium XChaCha20-Poly1305 IETF
@@ -543,25 +602,31 @@ fn bench_decryption(
     }
 
     // Benchmark: libsodium XChaCha20-Poly1305 IETF decryption
-    if should_run("decryption/libsodium::xchacha20poly1305_ietf") {
-        group.bench_function("libsodium::xchacha20poly1305_ietf", |bencher| {
-            bencher.iter(|| {
-                let mut nonce_counter: u64 = 0;
-                for ciphertext in &encrypted_tokens_sodium_xchacha {
-                    let mut nonce_bytes = [0u8; xchacha20poly1305_ietf::NONCEBYTES];
-                    nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
-                    nonce_counter = nonce_counter.wrapping_add(1);
-                    let nonce = Nonce_XChaCha(nonce_bytes);
+    {
+        let mut cursor = 0usize;
+        let mut nonce_counter: u64 = 0;
+        measure_throughput(
+            "decryption/libsodium::xchacha20poly1305_ietf",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let index = cursor % encrypted_tokens_sodium_xchacha.len();
+                cursor += 1;
+                let ciphertext = &encrypted_tokens_sodium_xchacha[index];
+                let mut nonce_bytes = [0u8; xchacha20poly1305_ietf::NONCEBYTES];
+                nonce_bytes[..8].copy_from_slice(&nonce_counter.to_le_bytes());
+                nonce_counter = nonce_counter.wrapping_add(1);
+                let nonce = Nonce_XChaCha(nonce_bytes);
 
-                    let _ = black_box(xchacha20poly1305_ietf::open(
-                        ciphertext,
-                        None,
-                        &nonce,
-                        &key_sodium_xchacha,
-                    ));
-                }
-            })
-        });
+                let _ = black_box(xchacha20poly1305_ietf::open(
+                    ciphertext,
+                    None,
+                    &nonce,
+                    &key_sodium_xchacha,
+                ));
+                WorkUnits::new(1, plaintext_lengths[index])
+            },
+        );
     }
 }
 
@@ -575,22 +640,17 @@ fn main() {
     // Load the dataset defined by the environment variables
     let tape = load_dataset().unwrap_nice();
 
-    let mut criterion = configure_bench(WallTime, 5, 10);
+    let budget = BenchBudget::from_env(5.0, 10.0);
 
     // Profile key generation and cipher initialization overhead
-    let mut group = criterion.benchmark_group("keygen");
-    bench_key_generation(&mut group);
-    group.finish();
+    println!("# keygen");
+    bench_key_generation(&budget);
 
     // Profile encryption operations
-    let mut group = criterion.benchmark_group("encryption");
-    bench_encryption(&mut group, &tape);
-    group.finish();
+    println!("# encryption");
+    bench_encryption(&budget, &tape);
 
     // Profile decryption operations
-    let mut group = criterion.benchmark_group("decryption");
-    bench_decryption(&mut group, &tape);
-    group.finish();
-
-    criterion.final_summary();
+    println!("# decryption");
+    bench_decryption(&budget, &tape);
 }
