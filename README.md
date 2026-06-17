@@ -318,18 +318,37 @@ To install dependencies for individual benchmarks:
 
 ```sh
 PIP_EXTRA_INDEX_URL=https://pypi.nvidia.com \
-uv pip install '.[find,hash,sequence,fingerprints,similarities]'
+uv pip install '.[find,hash,memory,sequence,fingerprints,similarities,tokenization,normalization]'
 ```
 
 To run individual benchmarks, you can call:
 
 ```sh
-uv run --no-project python hash/bench.py --help
 uv run --no-project python find/bench.py --help
+uv run --no-project python hash/bench.py --help
 uv run --no-project python memory/bench.py --help
 uv run --no-project python sequence/bench.py --help
 uv run --no-project python similarities/bench.py --help
 uv run --no-project python fingerprints/bench.py --help
+uv run --no-project python tokenization/bench.py --help
+uv run --no-project python normalization/bench.py --help
+```
+
+### Running Without Cloning
+
+The Python benchmarks are self-contained [PEP 723](https://peps.python.org/pep-0723/) scripts, so `uv` can fetch a script and resolve its dependencies straight from a URL — no clone, no manual `pip install`:
+
+```sh
+uv run https://raw.githubusercontent.com/ashvardanian/StringWars/main/tokenization/bench.py \
+    --dataset README.md --tokens file
+```
+
+The Rust benchmarks are a Cargo workspace with a path dependency on StringZilla, so there is no exact zero-clone equivalent — `cargo install --git` only installs `[[bin]]`/`[[example]]` targets, not `[[bench]]`.
+The lightest path is a shallow clone:
+
+```sh
+git clone --depth 1 https://github.com/ashvardanian/StringWars && cd StringWars
+RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_hash bench_hash --jobs $(nproc)
 ```
 
 ## Datasets

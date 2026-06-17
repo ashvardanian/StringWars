@@ -1,10 +1,40 @@
 # Case Folding & Normalization Benchmarks
 
-Benchmarks for Unicode case-insensitive operations and normalization — case folding,
-case-insensitive comparison and substring search, and NFC/NFD/NFKC/NFKD normalization — across
-different languages and hardware platforms.
+Benchmarks for Unicode case-insensitive operations and normalization — case folding, case-insensitive comparison and substring search, and NFC/NFD/NFKC/NFKD normalization — across different languages and hardware platforms.
 
 ## Case Folding
+
+Measured on the full Leipzig corpora (`STRINGWARS_TOKENS=file`), single-threaded.
+`Standard` is `std::to_lowercase` and `str.casefold()`, `StringZilla` is `utf8_uncased_fold`.
+
+### Intel Xeon4 Sapphire Rapids
+
+| Language     | Standard 🦀 | StringZilla 🦀 |      | Standard 🐍 | StringZilla 🐍 |      |
+| :----------- | ---------: | ------------: | ---: | ---------: | ------------: | ---: |
+| Arabic 🇸🇦     |   115 MB/s |     3.39 GB/s |  29x |   318 MB/s |     1.51 GB/s |   5x |
+| Armenian 🇦🇲   |   112 MB/s |      551 MB/s |   5x |   320 MB/s |      543 MB/s |   2x |
+| Bengali 🇧🇩    |   155 MB/s |     3.23 GB/s |  21x |   464 MB/s |     1.47 GB/s |   3x |
+| Chinese 🇨🇳    |   163 MB/s |      622 MB/s |   4x |   464 MB/s |      452 MB/s |   1x |
+| Czech 🇨🇿      |   137 MB/s |     1.87 GB/s |  14x |   196 MB/s |     1.11 GB/s |   6x |
+| Dutch 🇳🇱      |   223 MB/s |     5.09 GB/s |  23x |   174 MB/s |     1.74 GB/s |  10x |
+| English 🇬🇧    |   219 MB/s |     4.72 GB/s |  22x |   178 MB/s |     1.85 GB/s |  10x |
+| Farsi 🇮🇷      |   116 MB/s |     1.62 GB/s |  14x |   317 MB/s |      933 MB/s |   3x |
+| French 🇫🇷     |   194 MB/s |     2.45 GB/s |  13x |   182 MB/s |     1.23 GB/s |   7x |
+| German 🇩🇪     |   207 MB/s |     2.99 GB/s |  14x |   179 MB/s |     1.34 GB/s |   7x |
+| Greek 🇬🇷      |   112 MB/s |     2.05 GB/s |  18x |   293 MB/s |     1.22 GB/s |   4x |
+| Hebrew 🇮🇱     |   115 MB/s |     3.52 GB/s |  31x |   309 MB/s |     1.49 GB/s |   5x |
+| Hindi 🇮🇳      |   150 MB/s |     3.26 GB/s |  22x |   453 MB/s |     1.48 GB/s |   3x |
+| Italian 🇮🇹    |   214 MB/s |     4.19 GB/s |  20x |   184 MB/s |     1.62 GB/s |   9x |
+| Japanese 🇯🇵   |   163 MB/s |     1.70 GB/s |  10x |   491 MB/s |     1.05 GB/s |   2x |
+| Korean 🇰🇷     |   155 MB/s |     2.27 GB/s |  15x |   429 MB/s |     1.44 GB/s |   3x |
+| Polish 🇵🇱     |   178 MB/s |     1.72 GB/s |  10x |   186 MB/s |     1.01 GB/s |   5x |
+| Portuguese 🇧🇷 |   199 MB/s |     3.22 GB/s |  16x |   182 MB/s |     1.32 GB/s |   7x |
+| Russian 🇷🇺    |   110 MB/s |     1.87 GB/s |  17x |   313 MB/s |     1.06 GB/s |   3x |
+| Spanish 🇪🇸    |   205 MB/s |     3.07 GB/s |  15x |   180 MB/s |     1.35 GB/s |   7x |
+| Tamil 🇮🇳      |   157 MB/s |     3.32 GB/s |  21x |   467 MB/s |     1.35 GB/s |   3x |
+| Turkish 🇹🇷    |   153 MB/s |     1.69 GB/s |  11x |   193 MB/s |      979 MB/s |   5x |
+| Ukrainian 🇺🇦  |   110 MB/s |     1.77 GB/s |  16x |   316 MB/s |      996 MB/s |   3x |
+| Vietnamese 🇻🇳 |   135 MB/s |     2.00 GB/s |  15x |   227 MB/s |     1.12 GB/s |   5x |
 
 ### AMD Zen5 Turin
 
@@ -35,6 +65,7 @@ different languages and hardware platforms.
 | Tamil 🇮🇳      |   306 MB/s |     6.05 GB/s |  20x |   712 MB/s |     3.03 GB/s |   4x |
 | Turkish 🇹🇷    |   326 MB/s |      852 MB/s |   3x |   284 MB/s |      706 MB/s |   2x |
 | Ukrainian 🇺🇦  |   217 MB/s |     2.09 GB/s |  10x |   476 MB/s |     1.58 GB/s |   3x |
+
 
 To rerun the benchmarks for all languages:
 

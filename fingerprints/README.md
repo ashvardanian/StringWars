@@ -17,23 +17,21 @@ Adjusting all implementations to the same tokenization scheme, one may experienc
 
 ## Performance and Quality Metrics
 
-| Library                                  |  ~100 bytes lines | ~1,000 bytes lines |
-| ---------------------------------------- | ----------------: | -----------------: |
-| serial `<ByteGrams>` on 1x SPR           |         0.44 MB/s |          0.47 MB/s |
-|                                          | 92.81% collisions |  94.58% collisions |
-|                                          |    0.8528 entropy |     0.7979 entropy |
-|                                          |                   |                    |
-| `pc::MinHash<ByteGrams>` on 1x SPR       |         2.41 MB/s |          3.16 MB/s |
-|                                          | 91.80% collisions |  93.17% collisions |
-|                                          |    0.9343 entropy |     0.8779 entropy |
-|                                          |                   |                    |
-| `stringzillas::Fingerprints` on 1x SPR   |         0.56 MB/s |          0.51 MB/s |
-| `stringzillas::Fingerprints` on 16x SPR  |         6.62 MB/s |          8.03 MB/s |
-| `stringzillas::Fingerprints` on 384x GNR |   **231.13 MB/s** |    **302.30 MB/s** |
-| `stringzillas::Fingerprints` on RTX6000  |      **138 MB/s** |        162.99 MB/s |
-| `stringzillas::Fingerprints` on H100     |       102.07 MB/s |    **392.37 MB/s** |
-|                                          | 86.80% collisions |  93.21% collisions |
-|                                          |    0.9992 entropy |     0.9967 entropy |
+| Library                                 |  ~100 bytes lines | ~1,000 bytes lines |
+| --------------------------------------- | ----------------: | -----------------: |
+| serial `<ByteGrams>` on 1x SPR          |         0.43 MB/s |          0.39 MB/s |
+|                                         | 91.25% collisions |  94.70% collisions |
+|                                         |    0.8529 entropy |     0.7980 entropy |
+|                                         |                   |                    |
+| `pc::MinHash<ByteGrams>` on 1x SPR      |         3.12 MB/s |          2.62 MB/s |
+|                                         | 88.82% collisions |  93.05% collisions |
+|                                         |    0.9346 entropy |     0.8775 entropy |
+|                                         |                   |                    |
+| `stringzillas::Fingerprints` on 1x SPR  |         0.57 MB/s |          0.52 MB/s |
+| `stringzillas::Fingerprints` on 16x SPR |         7.32 MB/s |          7.66 MB/s |
+| `stringzillas::Fingerprints` on H100    |   **632.41 MB/s** |   **2630.00 MB/s** |
+|                                         | 86.08% collisions |  90.12% collisions |
+|                                         |    0.9978 entropy |     0.9968 entropy |
 
 ## Quality Analysis
 
