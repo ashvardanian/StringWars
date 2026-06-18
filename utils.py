@@ -298,7 +298,7 @@ def report_stats(
 ) -> None:
     """Print the single canonical result line for one variant.
 
-    `report` selects the primary unit: "bytes", "cups", "hashes", or "comparisons". bytes/s is
+    `report` selects the primary unit: "bytes", "cups", "hashes", "bits", or "comparisons". bytes/s is
     always shown as the secondary metric (unless the primary already is bytes/s). Columns are
     joined by " | " in a fixed order, and columns that cannot be computed are omitted, never
     reformatted, so the layout matches the Rust harness line-for-line.
@@ -314,6 +314,8 @@ def report_stats(
         columns.append(format_si_rate(elements_per_second, "CUPS", False))
     elif report == "hashes":
         columns.append(format_si_rate(elements_per_second, "hashes/s", True))
+    elif report == "bits":
+        columns.append(format_si_rate(elements_per_second, "bits/s", True))
     elif report == "comparisons":
         columns.append(format_si_rate(elements_per_second, "cmp/s", True))
     else:

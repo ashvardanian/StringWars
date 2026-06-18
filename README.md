@@ -52,17 +52,19 @@ See [hash/README.md](hash/README.md) for details
 
 ### Multi-Way Hashing
 
-Bloom and cuckoo filters need many hashes of the same key; StringZilla's `hash_multiseed` emits them from a single input preparation.
-Throughput at 16 hashes per word:
+Bloom and cuckoo filters need many independent hashes of the same key; StringZilla's `hash_multiseed` prepares the key once and replays cheap per-seed rounds, while the alternatives re-prepare it every 64–128 bits.
+Digest throughput at a 1024-bit digest (16 independent hashes per word):
 
 ```
 Rust:
-stringzilla::hash_multiseed ████████████████████ 1,030  M hashes/s
-stringzilla::hash           █████▋               290    M hashes/s
+stringzilla::hash_multiseed ████████████████████ 71.85 G bits/s
+xxh3::xxh3_128              ████████▏            29.30 G bits/s
+stringzilla::hash           ██████               21.77 G bits/s
 
 Python:
-stringzilla.hash_multiseed  ████████████████████ 60.9   M hashes/s
-stringzilla.hash            ██▌                  7.6    M hashes/s
+stringzilla.hash_multiseed  ████████████████████ 6.48 G bits/s
+stringzilla.hash            █▌                   0.51 G bits/s
+xxhash.xxh3_128             ▉                    0.31 G bits/s
 ```
 
 See [containers/README.md](containers/README.md) for details

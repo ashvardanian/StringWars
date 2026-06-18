@@ -554,6 +554,8 @@ pub enum ReportAs {
     Cups,
     /// Hashes per second (fingerprinting, hashing).
     Hashes,
+    /// Hash-digest bits per second (multi-hash generation).
+    Bits,
     /// Comparisons per second (sorting / sequence operations).
     Comparisons,
 }
@@ -658,6 +660,7 @@ impl BenchStats {
             ReportAs::Bytes => format_byte_rate(bytes_per_second),
             ReportAs::Cups => format_si_rate(elements_per_second, "CUPS", false),
             ReportAs::Hashes => format_si_rate(elements_per_second, "hashes/s", true),
+            ReportAs::Bits => format_si_rate(elements_per_second, "bits/s", true),
             ReportAs::Comparisons => format_si_rate(elements_per_second, "cmp/s", true),
         });
 

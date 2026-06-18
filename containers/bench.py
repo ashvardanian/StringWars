@@ -2,21 +2,25 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #   "stringzilla",
-#   "rbloom",
-#   "cuckoofilter",
+#   "pyprobables",
 #   "xxhash",
+#   "numpy",
 # ]
 # ///
 """
 Multi-way word hashing and probabilistic membership benchmarks, mirroring containers/bench.rs.
 
-Layer 1 produces `k` hashes per word for `k` in {2, 4, 8, 16}:
-- StringZilla `hash_multiseed` emits all `k` hashes from one input preparation.
-- StringZilla `hash` called once per seed, isolating what the multi-seed path amortizes.
-- One 128-bit `xxh3_128` split into `(h1, h2)` with `g_i = h1 + i*h2` (the double-hashing baseline).
+Layer 1 produces a {128, 256, 512, 1024}-bit digest of independent hash bits per word, reported as
+digest bits/s. Every variant writes into one preallocated NumPy buffer (no per-call list), so only
+the hashing differs:
+- StringZilla `hash_multiseed` fills `digest_bits / 64` 64-bit slots in one native call.
+- StringZilla `hash` called once per seed, re-preparing the input every 64 bits.
+- `xxh3_128` once per seed, using the full 128 bits, re-preparing the input every 128 bits. The cheap
+  double-hashing shortcut is not measured — its extra bits are linearly dependent.
 
-Layer 2 builds a Bloom filter (rbloom, default vs StringZilla-fed) and a cuckoo filter (cuckoofilter),
-then queries a held-out set to measure the false-positive rate.
+Layer 2 builds a pyprobables Bloom filter two ways — its default FNV-1a hashing versus StringZilla's
+`hash_multiseed` handed to `add_alt`/`check_alt` as precomputed hashes (the same filter, hash source
+swapped) — then queries a held-out set to measure the false-positive rate.
 
 Environment variables:
 - STRINGWARS_DATASET: Path to input dataset file
@@ -33,10 +37,10 @@ import sys
 from array import array
 from collections.abc import Callable
 
+import numpy as np
 import stringzilla as sz
 import xxhash
-from cuckoofilter import CuckooFilter
-from rbloom import Bloom
+from probables import BloomFilter
 
 from utils import (
     add_common_args,
@@ -73,12 +77,6 @@ MASK_64 = (1 << 64) - 1
 TARGET_FALSE_POSITIVE_RATE = 0.01
 
 
-def stringzilla_hash_128(data: bytes) -> int:
-    """Two seeded StringZilla hashes combined into the signed 128-bit integer rbloom expects."""
-    value = (sz.hash(data, SEEDS[0]) << 64) | sz.hash(data, SEEDS[1])
-    return value - (1 << 128) if value >= (1 << 127) else value
-
-
 def log_system_info():
     print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
     print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
@@ -86,8 +84,14 @@ def log_system_info():
     print()
 
 
-def bench_multihash(name: str, tokens: list[bytes], produce: Callable[[bytes], object], k: int, time_limit: float):
-    """Time one multi-hash variant, calling `produce` once per word to emit `k` hashes."""
+def bench_multihash(
+    name: str,
+    tokens: list[bytes],
+    produce: Callable[[bytes], object],
+    digest_bits: int,
+    time_limit: float,
+):
+    """Time one multi-hash variant, calling `produce` once per word to emit `digest_bits` digest bits."""
     start = now_nanoseconds()
     deadline = start + int(time_limit * 1e9)
     count = 0
@@ -97,7 +101,7 @@ def bench_multihash(name: str, tokens: list[bytes], produce: Callable[[bytes], o
         count += 1
         total_bytes += len(token)
     seconds = (now_nanoseconds() - start) / 1e9
-    report_stats(name, "hashes", seconds, count * k, total_bytes)
+    report_stats(name, "bits", seconds, count * digest_bits, total_bytes)
 
 
 def bench_build(name: str, count: int, total_bytes: int, build: Callable[[], object], time_limit: float):
@@ -139,35 +143,39 @@ def report_quality(
 
 
 def run_multihash(tokens: list[bytes], filter_pattern: re.Pattern | None, time_limit: float):
-    for k in (2, 4, 8, 16):
-        print(f"# multihash (k={k})")
-        seeds = array("Q", SEEDS[:k])
-        out = array("Q", [0] * k)
+    for digest_bits in (128, 256, 512, 1024):
+        print(f"# multihash ({digest_bits}-bit digest)")
+        sz_hashes = digest_bits // 64
+        xxh3_calls = digest_bits // 128
+        seeds = array("Q", SEEDS[:sz_hashes])
+        # One preallocated digest buffer reused every call, so no variant pays per-call allocation.
+        out = np.empty(sz_hashes, dtype=np.uint64)
 
         if should_run("multihash/stringzilla.hash_multiseed", filter_pattern):
             bench_multihash(
                 "multihash/stringzilla.hash_multiseed",
                 tokens,
                 lambda token, seeds=seeds, out=out: sz.hash_multiseed(token, seeds, out),
-                k,
+                digest_bits,
                 time_limit,
             )
         if should_run("multihash/stringzilla.hash", filter_pattern):
-            bench_multihash(
-                "multihash/stringzilla.hash",
-                tokens,
-                lambda token, seeds=seeds: [sz.hash(token, seed) for seed in seeds],
-                k,
-                time_limit,
-            )
+
+            def sz_hash_fill(token, seeds=seeds, out=out):
+                for index, seed in enumerate(seeds):
+                    out[index] = sz.hash(token, seed)
+
+            bench_multihash("multihash/stringzilla.hash", tokens, sz_hash_fill, digest_bits, time_limit)
         if should_run("multihash/xxhash.xxh3_128", filter_pattern):
+            # One full 128-bit xxh3 hash per seed — every bit is independent, no double-hashing —
+            # split across two 64-bit slots of the shared buffer.
+            def xxh3_fill(token, n=xxh3_calls, out=out):
+                for index in range(n):
+                    wide = xxhash.xxh3_128_intdigest(token, seed=SEEDS[index])
+                    out[2 * index] = wide & MASK_64
+                    out[2 * index + 1] = wide >> 64
 
-            def double_hash(token, k=k):
-                wide = xxhash.xxh3_128(token).intdigest()
-                first, second = wide & MASK_64, wide >> 64
-                return [(first + index * second) & MASK_64 for index in range(k)]
-
-            bench_multihash("multihash/xxhash.xxh3_128", tokens, double_hash, k, time_limit)
+            bench_multihash("multihash/xxhash.xxh3_128", tokens, xxh3_fill, digest_bits, time_limit)
 
 
 def run_filters(unique: list[bytes], filter_pattern: re.Pattern | None, time_limit: float):
@@ -177,52 +185,53 @@ def run_filters(unique: list[bytes], filter_pattern: re.Pattern | None, time_lim
     inserted_bytes = sum(len(token) for token in inserted)
     print(f"# filters ({inserted_count} inserted, {len(absent)} held-out absent)")
 
-    # Bloom filter (rbloom): default Python hash versus a StringZilla-fed hash function.
-    bloom = Bloom(inserted_count, TARGET_FALSE_POSITIVE_RATE)
+    # pyprobables Bloom filter, hashing each key with its default FNV-1a internally.
+    bloom = BloomFilter(est_elements=inserted_count, false_positive_rate=TARGET_FALSE_POSITIVE_RATE)
     for token in inserted:
         bloom.add(token)
-    report_quality("bloom/rbloom<siphash>", bloom.size_in_bits, inserted_count, absent, lambda t: t in bloom)
-    if should_run("bloom/rbloom.insert<siphash>", filter_pattern):
+    report_quality("bloom/pyprobables<fnv>", bloom.number_bits, inserted_count, absent, bloom.check)
+    if should_run("bloom/pyprobables.add<fnv>", filter_pattern):
 
         def build_bloom():
-            filter_ = Bloom(inserted_count, TARGET_FALSE_POSITIVE_RATE)
+            filter_ = BloomFilter(est_elements=inserted_count, false_positive_rate=TARGET_FALSE_POSITIVE_RATE)
             for token in inserted:
                 filter_.add(token)
 
-        bench_build("bloom/rbloom.insert<siphash>", inserted_count, inserted_bytes, build_bloom, time_limit)
-    if should_run("bloom/rbloom.contains<siphash>", filter_pattern):
-        bench_query("bloom/rbloom.contains<siphash>", inserted, lambda t: t in bloom, time_limit)
+        bench_build("bloom/pyprobables.add<fnv>", inserted_count, inserted_bytes, build_bloom, time_limit)
+    if should_run("bloom/pyprobables.check<fnv>", filter_pattern):
+        bench_query("bloom/pyprobables.check<fnv>", inserted, bloom.check, time_limit)
 
-    bloom_sz = Bloom(inserted_count, TARGET_FALSE_POSITIVE_RATE, stringzilla_hash_128)
+    # Same filter, fed StringZilla's `hash_multiseed` digest through the precomputed-hash API: one
+    # native call fills the reused buffer, then `add_alt`/`check_alt` consume it — no per-key callback.
+    bloom_sz = BloomFilter(est_elements=inserted_count, false_positive_rate=TARGET_FALSE_POSITIVE_RATE)
+    seeds = array("Q", SEEDS[: bloom_sz.number_hashes])
+    out = np.empty(bloom_sz.number_hashes, dtype=np.uint64)
+
+    def sz_digest(token):
+        sz.hash_multiseed(token, seeds, out)
+        return out
+
     for token in inserted:
-        bloom_sz.add(token)
-    report_quality("bloom/rbloom<stringzilla>", bloom_sz.size_in_bits, inserted_count, absent, lambda t: t in bloom_sz)
-    if should_run("bloom/rbloom.insert<stringzilla>", filter_pattern):
+        bloom_sz.add_alt(sz_digest(token))
+    report_quality(
+        "bloom/pyprobables<stringzilla>",
+        bloom_sz.number_bits,
+        inserted_count,
+        absent,
+        lambda t: bloom_sz.check_alt(sz_digest(t)),
+    )
+    if should_run("bloom/pyprobables.add<stringzilla>", filter_pattern):
 
         def build_bloom_sz():
-            filter_ = Bloom(inserted_count, TARGET_FALSE_POSITIVE_RATE, stringzilla_hash_128)
+            filter_ = BloomFilter(est_elements=inserted_count, false_positive_rate=TARGET_FALSE_POSITIVE_RATE)
             for token in inserted:
-                filter_.add(token)
+                filter_.add_alt(sz_digest(token))
 
-        bench_build("bloom/rbloom.insert<stringzilla>", inserted_count, inserted_bytes, build_bloom_sz, time_limit)
-    if should_run("bloom/rbloom.contains<stringzilla>", filter_pattern):
-        bench_query("bloom/rbloom.contains<stringzilla>", inserted, lambda t: t in bloom_sz, time_limit)
-
-    # Cuckoo filter (cuckoofilter): pure-Python, hashes each key internally.
-    cuckoo = CuckooFilter(capacity=inserted_count, fingerprint_size=2)
-    for token in inserted:
-        cuckoo.insert(token)
-    report_quality("cuckoo/cuckoofilter", 0, inserted_count, absent, lambda t: cuckoo.contains(t))
-    if should_run("cuckoo/cuckoofilter.insert", filter_pattern):
-
-        def build_cuckoo():
-            filter_ = CuckooFilter(capacity=inserted_count, fingerprint_size=2)
-            for token in inserted:
-                filter_.insert(token)
-
-        bench_build("cuckoo/cuckoofilter.insert", inserted_count, inserted_bytes, build_cuckoo, time_limit)
-    if should_run("cuckoo/cuckoofilter.contains", filter_pattern):
-        bench_query("cuckoo/cuckoofilter.contains", inserted, lambda t: cuckoo.contains(t), time_limit)
+        bench_build("bloom/pyprobables.add<stringzilla>", inserted_count, inserted_bytes, build_bloom_sz, time_limit)
+    if should_run("bloom/pyprobables.check<stringzilla>", filter_pattern):
+        bench_query(
+            "bloom/pyprobables.check<stringzilla>", inserted, lambda t: bloom_sz.check_alt(sz_digest(t)), time_limit
+        )
 
 
 def main():

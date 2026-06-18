@@ -29,7 +29,6 @@ stringzilla = {version = "4.5.0", default-features = false}
 bench_containers = [
   "xxhash-rust", # xxh3_128 for the double-hashing baseline
   "fastbloom", # SIMD Bloom filter with pluggable hasher
-  "cuckoofilter", # Cuckoo filter generic over the hasher
   "xorf", # Binary-fuse filter built from pre-hashed u64 keys
 ]
 bench_encryption = [
@@ -211,10 +210,6 @@ version = "57.0.0"
 [dependencies.fastbloom]
 optional = true
 version = "0.17"
-
-[dependencies.cuckoofilter]
-optional = true
-version = "0.5"
 
 [dependencies.xorf]
 optional = true

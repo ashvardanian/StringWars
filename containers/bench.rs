@@ -1,16 +1,19 @@
 #![doc = r#"
 # StringWars: Multi-Way Word Hashing & Probabilistic Membership Benchmarks
 
-Probabilistic membership structures — Bloom, cuckoo, and XOR/binary-fuse filters — need several independent hashes of
-the same short key. This file benchmarks that operation in two layers.
+Probabilistic membership structures — Bloom and XOR/binary-fuse filters — need several independent hashes of the same
+short key. This file benchmarks that operation in two layers.
 
-**Layer 1 — multi-hash generation** produces `k` hashes per word for `k` in `{2, 4, 8, 16}`:
+**Layer 1 — multi-hash generation** produces a `{128, 256, 512, 1024}`-bit digest of independent hash bits per word,
+reported as digest bits/s so hashes of different widths line up:
 
 - StringZilla `hash_multiseed` normalizes the input into AES blocks once, then replays cheap per-seed rounds, emitting
-  all `k` hashes in a single pass.
-- StringZilla `hash` called once per seed, isolating what the multi-seed path amortizes.
-- One 128-bit `xxh3_128` split into `(h1, h2)` with `g_i = h1 + i*h2` (Kirsch–Mitzenmacher) — the double-hashing scheme
-  production Bloom and cuckoo filters actually use.
+  all `digest_bits / 64` independent 64-bit hashes in a single pass.
+- StringZilla `hash` called once per seed, re-preparing the input every 64 bits, isolating what the multi-seed path
+  amortizes.
+- `xxh3_128` with one seed per call, using the full 128-bit output, so it re-prepares the input only every 128 bits. The
+  cheap `g_i = h1 + i*h2` double-hashing shortcut that production Bloom filters use is not measured: its extra bits are
+  linearly dependent, so counting them as digest bits would overstate the throughput.
 
 **Layer 2 — probabilistic membership** builds each filter from the unique words and queries a held-out set to measure
 the false-positive rate, comparing a StringZilla-fed variant against the practical default while holding the filter
@@ -25,17 +28,15 @@ STRINGWARS_DATASET=xlsum.csv \
 ```
 "#]
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hint::black_box;
 
 use stringtape::{BytesCowsAuto, BytesTape};
 
-use cuckoofilter::CuckooFilter;
 use fastbloom::BloomFilter;
 use stringzilla::sz;
 use xorf::{BinaryFuse8, Filter};
-use xxhash_rust::xxh3::{xxh3_128, xxh3_64};
+use xxhash_rust::xxh3::{xxh3_128_with_seed, xxh3_64};
 
 #[path = "../utils.rs"]
 mod utils;
@@ -44,8 +45,8 @@ use utils::{
     measure_throughput, should_run, BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
 
-/// Sixteen fixed odd seeds, enough for the largest `k`, shared across every multi-hash variant so
-/// each produces the same family of hashes.
+/// Sixteen fixed odd seeds, enough for the widest 1024-bit digest, shared across every multi-hash
+/// variant so each produces the same family of hashes.
 const SEEDS: [u64; 16] = [
     0x9E37_79B9_7F4A_7C15,
     0xC2B2_AE3D_27D4_EB4F,
@@ -65,14 +66,15 @@ const SEEDS: [u64; 16] = [
     0x4CF5_AD43_2745_937F,
 ];
 
-/// The target false-positive rate configured for the Bloom and cuckoo filters.
+/// The target false-positive rate configured for the Bloom filter.
 const TARGET_FALSE_POSITIVE_RATE: f64 = 0.01;
 
-/// Times one multi-hash variant, calling `fill` once per word to produce `k` hashes.
+/// Times one multi-hash variant, calling `fill` once per word to produce `digest_bits` bits of
+/// independent hash digest, reporting digest bits/s.
 fn measure_multihash<Fill: FnMut(&[u8])>(
     name: &str,
     budget: &BenchBudget,
-    k: usize,
+    digest_bits: usize,
     slices: &[&[u8]],
     mut fill: Fill,
 ) {
@@ -80,11 +82,11 @@ fn measure_multihash<Fill: FnMut(&[u8])>(
         return;
     }
     let mut cursor = 0usize;
-    measure_throughput(name, ReportAs::Hashes, budget, || {
+    measure_throughput(name, ReportAs::Bits, budget, || {
         let token = slices[cursor % slices.len()];
         cursor += 1;
         fill(token);
-        WorkUnits::new(k as u64, token.len() as u64)
+        WorkUnits::new(digest_bits as u64, token.len() as u64)
     });
 }
 
@@ -145,36 +147,42 @@ fn report_quality<Contains: FnMut(&[u8]) -> bool>(
     );
 }
 
-/// Layer 1: produce `k` hashes per word, reporting hashes/s.
-fn bench_multihash(budget: &BenchBudget, k: usize, slices: &[&[u8]]) {
-    println!("# multihash (k={})", k);
+/// Layer 1: produce `digest_bits` bits of independent hash digest per word, reporting bits/s.
+/// StringZilla emits 64-bit hashes, so it needs `digest_bits / 64` of them; `xxh3_128` emits the
+/// full 128 bits per call and needs only `digest_bits / 128`. Every value is independent — the
+/// cheap `g_i = h1 + i*h2` double-hashing shortcut is intentionally not measured here, since its
+/// extra bits are linearly dependent (see the prose in `containers/README.md`).
+fn bench_multihash(budget: &BenchBudget, digest_bits: usize, slices: &[&[u8]]) {
+    println!("# multihash ({}-bit digest)", digest_bits);
+    let sz_hashes = digest_bits / 64;
+    let xxh3_calls = digest_bits / 128;
     let mut hashes = [0u64; 16];
 
     measure_multihash(
         "multihash/stringzilla::hash_multiseed",
         budget,
-        k,
+        digest_bits,
         slices,
         |token| {
-            sz::hash_multiseed_into(token, &SEEDS[..k], &mut hashes[..k]);
-            black_box(&hashes[..k]);
+            sz::hash_multiseed_into(token, &SEEDS[..sz_hashes], &mut hashes[..sz_hashes]);
+            black_box(&hashes[..sz_hashes]);
         },
     );
 
-    measure_multihash("multihash/stringzilla::hash", budget, k, slices, |token| {
-        for (slot, seed) in hashes[..k].iter_mut().zip(&SEEDS[..k]) {
+    measure_multihash("multihash/stringzilla::hash", budget, digest_bits, slices, |token| {
+        for (slot, seed) in hashes[..sz_hashes].iter_mut().zip(&SEEDS[..sz_hashes]) {
             *slot = sz::hash_with_seed(token, *seed);
         }
-        black_box(&hashes[..k]);
+        black_box(&hashes[..sz_hashes]);
     });
 
-    measure_multihash("multihash/xxh3::xxh3_128", budget, k, slices, |token| {
-        let wide = xxh3_128(token);
-        let (first, second) = (wide as u64, (wide >> 64) as u64);
-        for (index, slot) in hashes[..k].iter_mut().enumerate() {
-            *slot = first.wrapping_add((index as u64).wrapping_mul(second));
+    measure_multihash("multihash/xxh3::xxh3_128", budget, digest_bits, slices, |token| {
+        for (index, pair) in hashes[..xxh3_calls * 2].chunks_mut(2).enumerate() {
+            let wide = xxh3_128_with_seed(token, SEEDS[index]);
+            pair[0] = wide as u64;
+            pair[1] = (wide >> 64) as u64;
         }
-        black_box(&hashes[..k]);
+        black_box(&hashes[..xxh3_calls * 2]);
     });
 }
 
@@ -246,35 +254,6 @@ fn bench_bloom(budget: &BenchBudget, inserted: &[&[u8]], absent: &[&[u8]], bytes
         inserted,
         |token| bloom_sz.contains_hash(sz::hash(token)),
     );
-}
-
-/// Cuckoo filter (cuckoofilter): SipHash default. `cuckoofilter` hashes the key twice per op
-/// (once for the fingerprint, once for the alternate bucket) through the `Hasher` trait and exposes
-/// no precomputed-hash entry point, so there is no StringZilla-fed variant to compare here.
-fn bench_cuckoo(budget: &BenchBudget, inserted: &[&[u8]], absent: &[&[u8]], bytes: u64) {
-    let count = inserted.len();
-
-    let mut cuckoo = CuckooFilter::<DefaultHasher>::with_capacity(count);
-    for token in inserted {
-        let _ = cuckoo.add(token);
-    }
-    report_quality(
-        "cuckoo/cuckoofilter",
-        cuckoo.memory_usage() * 8,
-        count,
-        absent,
-        |token| cuckoo.contains(token),
-    );
-    measure_build("cuckoo/cuckoofilter::insert", budget, count, bytes, || {
-        let mut filter = CuckooFilter::<DefaultHasher>::with_capacity(count);
-        for token in inserted {
-            let _ = filter.add(token);
-        }
-        black_box(&filter);
-    });
-    measure_query("cuckoo/cuckoofilter::contains", budget, inserted, |token| {
-        cuckoo.contains(token)
-    });
 }
 
 /// Collects the keys into a sorted, deduplicated `u64` array — the shape `xorf` consumes.
@@ -358,7 +337,6 @@ fn bench_filters(budget: &BenchBudget, unique: &[&[u8]]) {
         absent.len()
     );
     bench_bloom(budget, inserted, absent, inserted_bytes);
-    bench_cuckoo(budget, inserted, absent, inserted_bytes);
     bench_xorf(budget, inserted, absent, inserted_bytes);
 }
 
@@ -399,8 +377,8 @@ fn main() {
 
     let budget = BenchBudget::from_env(2.0, 10.0);
 
-    for k in [2usize, 4, 8, 16] {
-        bench_multihash(&budget, k, &slices);
+    for digest_bits in [128usize, 256, 512, 1024] {
+        bench_multihash(&budget, digest_bits, &slices);
     }
     bench_filters(&budget, &unique);
 }

@@ -1,13 +1,13 @@
 [project]
-name = "stringwars"
-version = "1.8.3"
+authors = [
+  {name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com"},
+]
 description = "Comparing performance-oriented string-processing libraries for substring search, multi-pattern matching, hashing, edit-distances, sketching, and sorting across CPUs and GPUs in Python 🐍"
+license = {text = "Apache 2.0"}
+name = "stringwars"
 readme = "README.md"
 requires-python = ">=3.13"
-authors = [
-  { name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com" },
-]
-license = { text = "Apache 2.0" }
+version = "1.8.3"
 
 # Keep the base install minimal; opt into extras per-bench
 dependencies = []
@@ -65,8 +65,8 @@ tokenization = ["stringzilla>=4.5.0", "regex", "PyICU"]
 # Case folding + Unicode normalization
 normalization = ["stringzilla>=4.5.0", "regex", "PyICU"]
 
-# Multi-way hashing + probabilistic membership (Bloom/cuckoo filters)
-containers = ["stringzilla>=4.5.0", "rbloom", "cuckoofilter", "xxhash"]
+# Multi-way hashing + probabilistic membership
+containers = ["stringzilla>=4.5.0", "pyprobables", "xxhash", "numpy"]
 
 # AEAD encryption/decryption (ChaCha20-Poly1305, AES-256-GCM)
 encryption = ["cryptography", "pycryptodome", "pynacl"]
@@ -77,17 +77,17 @@ line-length = 120
 target-version = "py313"
 
 [tool.ruff.lint]
-select = [
-  "E",  # pycodestyle (errors)
-  "W",  # pycodestyle (warnings)
-  "F",  # pyflakes
-  "I",  # isort
-  "UP", # pyupgrade
-  "B",  # flake8-bugbear
-]
 ignore = [
   # Allow module-level prints in bench scripts
   "T201",
+]
+select = [
+  "E", # pycodestyle (errors)
+  "W", # pycodestyle (warnings)
+  "F", # pyflakes
+  "I", # isort
+  "UP", # pyupgrade
+  "B", # flake8-bugbear
 ]
 
 [tool.ruff.lint.isort]
@@ -95,10 +95,10 @@ ignore = [
 known-first-party = ["utils"]
 
 [tool.ruff.format]
-quote-style = "preserve"
 indent-style = "space"
-skip-magic-trailing-comma = false
 line-ending = "auto"
+quote-style = "preserve"
+skip-magic-trailing-comma = false
 
 # If you prefer Black interoperability, mirror line length
 [tool.black]
@@ -106,5 +106,5 @@ line-length = 120
 target-version = ["py313"]
 
 [build-system]
-requires = ["hatchling>=1.21.1"]
 build-backend = "hatchling.build"
+requires = ["hatchling>=1.21.1"]
