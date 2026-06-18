@@ -317,7 +317,7 @@ pub fn load_dataset_with_default_mode(
                 let unique_tokens: Vec<&'static [u8]> =
                     iter.filter(|token| seen.insert(*token)).collect();
                 BytesCowsAuto::from_iter_and_data(
-                    unique_tokens.into_iter(),
+                    unique_tokens,
                     Cow::Borrowed(content_static),
                 )
             } else {
@@ -334,7 +334,7 @@ pub fn load_dataset_with_default_mode(
                 let unique_tokens: Vec<&'static [u8]> =
                     iter.filter(|token| seen.insert(*token)).collect();
                 BytesCowsAuto::from_iter_and_data(
-                    unique_tokens.into_iter(),
+                    unique_tokens,
                     Cow::Borrowed(content_static),
                 )
             } else {
@@ -929,11 +929,11 @@ impl PerfSection {
             .kind(kind)
             .build()
             .ok()
-            .and_then(|mut counter| {
+            .map(|mut counter| {
                 if counter.enable().is_err() {
                     eprintln!("Warning: Failed to enable counter {:?}", kind);
                 }
-                Some(counter)
+                counter
             })
     }
 

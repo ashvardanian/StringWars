@@ -1,8 +1,8 @@
 #![doc = r#"
 # StringWars: Low-level Memory-related Benchmarks
 
-This file benchmarks low-level memory operations. The input file is treated as a collection
-of size-representative tokens and for every token the following operations are benchmarked:
+This file benchmarks low-level memory operations. The input file is treated as a collection of size-representative
+tokens and for every token the following operations are benchmarked:
 
 - case inversion using Lookup Table Transforms (LUT), common in image processing
 - memory obfuscation using Pseudo-Random Number Generators (PRNG), common in sensitive apps
@@ -22,7 +22,7 @@ To run the benchmarks with the appropriate CPU features enabled, you can use the
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_memory bench_memory --jobs $(nproc)
+    cargo bench --features bench_memory --bench bench_memory
 ```
 "#]
 use std::env;
@@ -32,20 +32,40 @@ use std::hint::black_box;
 use std::ptr;
 use std::slice;
 
-use getrandom;
-use rand;
 use rand::{RngCore, SeedableRng};
-use rand_chacha;
-use rand_xoshiro;
 use stringzilla::sz;
 use zeroize::Zeroize;
 
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    install_panic_hook, log_stringzilla_metadata, measure_throughput, BenchBudget, ReportAs,
-    ResultExt, WorkUnits,
+    install_panic_hook, log_stringzilla_metadata, measure_throughput, should_run, BenchBudget,
+    ReportAs, ResultExt, WorkUnits,
 };
+
+/// Cycles `tokens` by a local cursor, calls `work` on the current mutable token, and
+/// reports throughput as bytes equal to the token length.  This avoids repeating the
+/// `{ let mut cursor = 0usize; measure_throughput(…) }` block for every single-buffer
+/// variant that transforms one token in place.
+fn measure_mut_token<Work: FnMut(&mut [u8])>(
+    name: &str,
+    budget: &BenchBudget,
+    tokens: &mut [&mut [u8]],
+    mut work: Work,
+) {
+    if !should_run(name) {
+        return;
+    }
+    let count = tokens.len();
+    let mut cursor = 0usize;
+    measure_throughput(name, ReportAs::Bytes, budget, || {
+        let token = &mut tokens[cursor % count];
+        cursor += 1;
+        let token_bytes = token.len() as u64;
+        work(token);
+        WorkUnits::new(1, token_bytes)
+    });
+}
 
 /// Reads the raw dataset bytes named by `STRINGWARS_DATASET`.
 ///
@@ -61,7 +81,7 @@ pub fn load_dataset_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
 
 /// Tokenizes the haystack into mutable slices based on `STRINGWARS_TOKENS`.
 /// Supported modes: "lines", "words", and "file".
-pub fn tokenize_mut<'a>(haystack: &'a mut [u8]) -> Result<Vec<&'a mut [u8]>, Box<dyn Error>> {
+pub fn tokenize_mut(haystack: &mut [u8]) -> Result<Vec<&mut [u8]>, Box<dyn Error>> {
     let mode = env::var("STRINGWARS_TOKENS").unwrap_or_else(|_| "lines".to_string());
     let tokens = match mode.as_str() {
         "lines" => haystack
@@ -97,138 +117,80 @@ fn bench_lookup_table(budget: &BenchBudget, tokens: &mut [&mut [u8]]) {
         lookup_invert_case[lower as usize] = upper as u8;
     }
 
-    let token_count = tokens.len();
-
     // Benchmark using StringZilla's `lookup_inplace`.
-    {
-        let mut cursor = 0usize;
-        measure_throughput(
-            "lookup-table/stringzilla::lookup_inplace",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let token = &mut tokens[cursor % token_count];
-                cursor += 1;
-                let token_bytes = token.len() as u64;
-                sz::lookup_inplace(&mut **token, lookup_invert_case);
-                black_box(token);
-                WorkUnits::new(1, token_bytes)
-            },
-        );
-    }
+    measure_mut_token(
+        "lookup-table/stringzilla::lookup_inplace",
+        budget,
+        tokens,
+        |token| {
+            sz::lookup_inplace(token, lookup_invert_case);
+            black_box(token);
+        },
+    );
 
     // Benchmark a plain serial mapping using the same lookup table.
-    {
-        let mut cursor = 0usize;
-        measure_throughput("lookup-table/serial", ReportAs::Bytes, budget, || {
-            let token = &mut tokens[cursor % token_count];
-            cursor += 1;
-            let token_bytes = token.len() as u64;
-            for byte in token.iter_mut() {
-                *byte = lookup_invert_case[*byte as usize];
-            }
-            black_box(&token);
-            WorkUnits::new(1, token_bytes)
-        });
-    }
+    measure_mut_token("lookup-table/serial", budget, tokens, |token| {
+        for byte in token.iter_mut() {
+            *byte = lookup_invert_case[*byte as usize];
+        }
+        black_box(&token);
+    });
 }
 
 /// Benchmarks random-string generation, filling one token per call and cycling the dataset.
 /// Throughput is reported as bytes/s, matching the original `Throughput::Bytes` over the sum of
 /// token lengths.
 fn bench_generate_random(budget: &BenchBudget, tokens: &mut [&mut [u8]]) {
-    let token_count = tokens.len();
-
     // Benchmark for StringZilla AES-based PRNG.
-    {
-        let mut cursor = 0usize;
-        measure_throughput(
-            "generate-random/stringzilla::fill_random",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let token = &mut tokens[cursor % token_count];
-                cursor += 1;
-                let token_bytes = token.len() as u64;
-                sz::fill_random(&mut **token, 0);
-                WorkUnits::new(1, token_bytes)
-            },
-        );
-    }
+    measure_mut_token(
+        "generate-random/stringzilla::fill_random",
+        budget,
+        tokens,
+        |token| {
+            sz::fill_random(token, 0);
+        },
+    );
 
     // Benchmark using zeroize to obfuscate (zero out) the buffer.
-    {
-        let mut cursor = 0usize;
-        measure_throughput(
-            "generate-random/zeroize::zeroize",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let token = &mut tokens[cursor % token_count];
-                cursor += 1;
-                let token_bytes = token.len() as u64;
-                token.zeroize();
-                black_box(&token);
-                WorkUnits::new(1, token_bytes)
-            },
-        );
-    }
+    measure_mut_token(
+        "generate-random/zeroize::zeroize",
+        budget,
+        tokens,
+        |token| {
+            token.zeroize();
+            black_box(&token);
+        },
+    );
 
     // Benchmark using `getrandom` to randomize the buffer via the OS.
-    {
-        let mut cursor = 0usize;
-        measure_throughput(
-            "generate-random/getrandom::fill",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let token = &mut tokens[cursor % token_count];
-                cursor += 1;
-                let token_bytes = token.len() as u64;
-                getrandom::fill(&mut **token).expect("getrandom failed");
-                black_box(&token);
-                WorkUnits::new(1, token_bytes)
-            },
-        );
-    }
+    measure_mut_token("generate-random/getrandom::fill", budget, tokens, |token| {
+        getrandom::fill(token).expect("getrandom failed");
+        black_box(&token);
+    });
 
     // Benchmark using `rand_chacha::ChaCha20Rng`.
-    {
-        let mut cursor = 0usize;
-        measure_throughput(
-            "generate-random/rand_chacha::ChaCha20Rng",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let token = &mut tokens[cursor % token_count];
-                cursor += 1;
-                let token_bytes = token.len() as u64;
-                let mut random_generator = rand_chacha::ChaCha20Rng::from_seed([0u8; 32]);
-                random_generator.fill_bytes(&mut **token);
-                black_box(&token);
-                WorkUnits::new(1, token_bytes)
-            },
-        );
-    }
+    measure_mut_token(
+        "generate-random/rand_chacha::ChaCha20Rng",
+        budget,
+        tokens,
+        |token| {
+            let mut random_generator = rand_chacha::ChaCha20Rng::from_seed([0u8; 32]);
+            random_generator.fill_bytes(token);
+            black_box(&token);
+        },
+    );
 
     // Benchmark using `rand_xoshiro::Xoshiro128Plus`.
-    {
-        let mut cursor = 0usize;
-        measure_throughput(
-            "generate-random/rand_xoshiro::Xoshiro128Plus",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let token = &mut tokens[cursor % token_count];
-                cursor += 1;
-                let token_bytes = token.len() as u64;
-                let mut random_generator = rand_xoshiro::Xoshiro128Plus::from_seed([0u8; 16]);
-                random_generator.fill_bytes(&mut **token);
-                black_box(&token);
-                WorkUnits::new(1, token_bytes)
-            },
-        );
-    }
+    measure_mut_token(
+        "generate-random/rand_xoshiro::Xoshiro128Plus",
+        budget,
+        tokens,
+        |token| {
+            let mut random_generator = rand_xoshiro::Xoshiro128Plus::from_seed([0u8; 16]);
+            random_generator.fill_bytes(token);
+            black_box(&token);
+        },
+    );
 }
 
 /// Benchmarks memory-fill operations, filling one buffer per call and cycling the dataset.

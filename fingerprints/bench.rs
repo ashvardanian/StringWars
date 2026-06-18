@@ -1,24 +1,24 @@
 #![doc = r#"# StringWars: Text Fingerprinting Benchmarks
 
-This benchmark compares fingerprinting implementations using multi-width byte n-grams
-across CPU (1x, Nx) and GPU architectures.
+This benchmark compares fingerprinting implementations using multi-width byte n-grams across CPU (1x, Nx) and GPU
+architectures.
 
 It evaluates:
-- StringZilla Fingerprints (`szs::Fingerprints`) with configurable window widths [3,5,7,15] bytes  
+- StringZilla Fingerprints (`szs::Fingerprints`) with configurable window widths [5, 9, 17, 33] bytes
 - Custom MinHash with byte n-grams (baseline comparison)
 
-Both use NDIM hash functions distributed evenly across the 4 window widths.
-Work is reported in bytes/sec (average bytes per line × batch size).
+Both use NDIM hash functions distributed evenly across the 4 window widths. Work is reported in bytes/sec (average bytes
+per line × batch size).
 
 ## Usage Examples
 
 Environment variables control dataset and processing:
 
 - `STRINGWARS_DATASET`: Path to the input dataset file.
-- `STRINGWARS_BATCH_PER_CORE`: Number of lines processed per core (default: 128). A CPU core is one
-  core and a GPU streaming multiprocessor (SM) is one core, so the actual batch is auto-derived as
-  `STRINGWARS_BATCH_PER_CORE * cores`: `cores` is 1 for the single-core variant, the logical core
-  count for the multi-core variant, and the device's SM count for the GPU variant.
+- `STRINGWARS_BATCH_PER_CORE`: Number of lines processed per core (default: 128). A CPU core is one core and a GPU
+  streaming multiprocessor (SM) is one core, so the actual batch is auto-derived as `STRINGWARS_BATCH_PER_CORE * cores`:
+  `cores` is 1 for the single-core variant, the logical core count for the multi-core variant, and the device's SM count
+  for the GPU variant.
 - `STRINGWARS_MAX_TOKENS`: Optional cap for total lines to process.
 - `STRINGWARS_NDIM`: Total hash functions distributed across n-gram widths (default: 256).
 
@@ -35,18 +35,19 @@ RUSTFLAGS="-C target-cpu=native" \
     cargo run --release --features bench_fingerprints --bin bench_fingerprints
 ```
 
-To run on a GPU-capable machine, enable the CUDA feature; the GPU batch is auto-derived from the
-device's streaming-multiprocessor count:
+To run on a GPU-capable machine, enable the CUDA feature; the GPU batch is auto-derived from the device's
+streaming-multiprocessor count:
 
 ```sh
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_BATCH_PER_CORE=128 \
     STRINGWARS_NDIM=256 \
-    STRINGWARS_FILTER=1xGPU \
+    STRINGWARS_FILTER=1gpu \
     cargo run --release --features "cuda bench_fingerprints" --bin bench_fingerprints
 ```
 "#]
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 
 use core::convert::TryInto;
 use std::collections::hash_map::DefaultHasher;
@@ -167,6 +168,56 @@ fn tokens_tape_slice<'a>(
     (batch_bytes_view, batch_chars_view, actual_batch_size)
 }
 
+/// Runs one `measure_throughput` block for `Fingerprints::compute_into`. Allocates
+/// `UnifiedVec<u32>` buffers for min-hashes and min-counts (each of length
+/// `batch_size * dimensions`), cycles through `tokens_count` tokens, and calls
+/// `compute` for each timing iteration. After filling the buffers, `quality_callback`
+/// (if `Some`) is called with `(actual_batch_size, min_hashes_slice)` so the caller
+/// can populate quality-analysis matrices without duplicating the buffer allocation.
+fn measure_fingerprints(
+    name: &str,
+    budget: &BenchBudget,
+    bytes_view: &BytesTapeView<u64>,
+    chars_view: &CharsTapeView<u64>,
+    batch_size: usize,
+    dimensions: usize,
+    tokens_count: usize,
+    hash_ops_per_token: u64,
+    avg_token_bytes: u64,
+    mut compute: impl FnMut(BytesTapeView<'_, u64>, usize, &mut [u32], &mut [u32]),
+    mut quality_callback: impl FnMut(usize, &[u32]),
+) {
+    let mut min_hashes = UnifiedVec::<u32>::with_capacity_in(batch_size * dimensions, UnifiedAlloc);
+    min_hashes.resize(batch_size * dimensions, 0);
+    let mut min_counts = UnifiedVec::<u32>::with_capacity_in(batch_size * dimensions, UnifiedAlloc);
+    min_counts.resize(batch_size * dimensions, 0);
+    let mut start_index = 0usize;
+    measure_throughput(name, ReportAs::Hashes, budget, || {
+        let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
+            bytes_view,
+            chars_view,
+            &mut start_index,
+            batch_size,
+            tokens_count,
+        );
+        compute(
+            batch_bytes_view,
+            dimensions,
+            &mut min_hashes[..actual * dimensions],
+            &mut min_counts[..actual * dimensions],
+        );
+        quality_callback(actual, &min_hashes[..actual * dimensions]);
+        std::hint::black_box((
+            &min_hashes[..actual * dimensions],
+            &min_counts[..actual * dimensions],
+        ));
+        WorkUnits::new(
+            actual as u64 * hash_ops_per_token,
+            actual as u64 * avg_token_bytes,
+        )
+    });
+}
+
 fn bench_fingerprints(budget: &BenchBudget) {
     // Load dataset using unified loader
     let tape_bytes = load_dataset().unwrap_nice();
@@ -225,9 +276,9 @@ fn bench_fingerprints(budget: &BenchBudget) {
             panic!("Fingerprint dimensions must be greater than zero.");
         }
         println!("\nBenchmark configuration:");
-        println!("- 1xCPU batch size (for StringZilla): {}", batch_single_cpu);
+        println!("- Single-core batch size (for StringZilla): {}", batch_single_cpu);
         println!(
-            "- {}xCPU batch size (for StringZilla): {}",
+            "- {}-core batch size (for StringZilla): {}",
             num_cores, batch_multi_cpu
         );
         println!("- GPU batch size (for StringZilla): {}", batch_gpu);
@@ -254,9 +305,9 @@ fn bench_fingerprints(budget: &BenchBudget) {
         let mut pc_document_index = 0usize;
         let mut sz_document_index = 0usize;
 
-        println!("# fingerprinting/ndim_{}", dimensions);
+        println!("# minhash/ndim_{}", dimensions);
 
-        // StringZilla engines and device scopes (1xCPU, NxCPU, GPU?)
+        // StringZilla engines and device scopes (1cpu, Ncpu, GPU?)
         let cpu_single = DeviceScope::cpu_cores(1).unwrap_or_else(|error| {
             panic!(
                 "Failed to create single-core CPU device scope for fingerprinting: {}",
@@ -305,152 +356,99 @@ fn bench_fingerprints(budget: &BenchBudget) {
         let tokens_count = total_documents;
 
         // StringZilla: 1x CPU. Result buffers sized to this variant's single-core batch.
-        {
-            let mut min_hashes =
-                UnifiedVec::<u32>::with_capacity_in(batch_single_cpu * dimensions, UnifiedAlloc);
-            min_hashes.resize(batch_single_cpu * dimensions, 0);
-            let mut min_counts =
-                UnifiedVec::<u32>::with_capacity_in(batch_single_cpu * dimensions, UnifiedAlloc);
-            min_counts.resize(batch_single_cpu * dimensions, 0);
-            let mut start_index = 0usize;
-            measure_throughput(
-                "fingerprinting/stringzillas/Fingerprints(1xCPU)",
-                ReportAs::Hashes,
-                budget,
-                || {
-                    let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
-                        &bytes_view,
-                        &chars_view,
-                        &mut start_index,
-                        batch_single_cpu,
-                        tokens_count,
-                    );
-
-                    // Use compute_into for zero-allocation processing
-                    sz_single
-                        .compute_into(
-                            &cpu_single,
-                            AnyBytesTape::View64(batch_bytes_view),
-                            dimensions,
-                            &mut min_hashes[..actual * dimensions],
-                            &mut min_counts[..actual * dimensions],
-                        )
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "Failed to compute StringZilla fingerprints on single CPU core: {}",
-                                error
-                            )
-                        });
-
-                    std::hint::black_box((
-                        &min_hashes[..actual * dimensions],
-                        &min_counts[..actual * dimensions],
-                    ));
-                    WorkUnits::new(
-                        actual as u64 * hash_ops_per_token,
-                        actual as u64 * avg_token_bytes,
+        measure_fingerprints(
+            "minhash/stringzillas::Fingerprints<1cpu>",
+            budget,
+            &bytes_view,
+            &chars_view,
+            batch_single_cpu,
+            dimensions,
+            tokens_count,
+            hash_ops_per_token,
+            avg_token_bytes,
+            |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
+                sz_single
+                    .compute_into(
+                        &cpu_single,
+                        AnyBytesTape::View64(batch_bytes_view),
+                        dimensions,
+                        min_hashes_slice,
+                        min_counts_slice,
                     )
-                },
-            );
-        }
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute StringZilla fingerprints on single CPU core: {}",
+                            error
+                        )
+                    });
+            },
+            |_actual, _min_hashes_slice| {},
+        );
 
         // StringZilla: Nx CPU. Result buffers sized to this variant's multi-core batch.
-        {
-            let mut min_hashes =
-                UnifiedVec::<u32>::with_capacity_in(batch_multi_cpu * dimensions, UnifiedAlloc);
-            min_hashes.resize(batch_multi_cpu * dimensions, 0);
-            let mut min_counts =
-                UnifiedVec::<u32>::with_capacity_in(batch_multi_cpu * dimensions, UnifiedAlloc);
-            min_counts.resize(batch_multi_cpu * dimensions, 0);
-            let mut start_index = 0usize;
-            measure_throughput(
-                &format!(
-                    "fingerprinting/stringzillas/Fingerprints({}xCPU)",
-                    num_cores
-                ),
-                ReportAs::Hashes,
-                budget,
-                || {
-                    let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
-                        &bytes_view,
-                        &chars_view,
-                        &mut start_index,
-                        batch_multi_cpu,
-                        tokens_count,
-                    );
-
-                    // Use compute_into for zero-allocation processing
-                    sz_parallel
-                        .compute_into(
-                            &cpu_parallel,
-                            AnyBytesTape::View64(batch_bytes_view),
-                            dimensions,
-                            &mut min_hashes[..actual * dimensions],
-                            &mut min_counts[..actual * dimensions],
-                        )
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "Failed to compute StringZilla fingerprints on {} CPU cores: {}",
-                                num_cores, error
-                            )
-                        });
-
-                    // Fill quality matrix - direct copy for StringZilla (u32 values)
-                    for document_index in 0..actual {
-                        if sz_document_index < total_documents {
-                            let start = document_index * dimensions;
-                            let end = start + dimensions;
-                            for (dimension_index, &hash_value) in
-                                min_hashes[start..end].iter().enumerate()
-                            {
-                                sz_matrix[sz_document_index][dimension_index] = hash_value;
-                            }
-                            sz_document_index += 1;
-                        }
-                    }
-
-                    std::hint::black_box((
-                        &min_hashes[..actual * dimensions],
-                        &min_counts[..actual * dimensions],
-                    ));
-                    WorkUnits::new(
-                        actual as u64 * hash_ops_per_token,
-                        actual as u64 * avg_token_bytes,
+        measure_fingerprints(
+            &format!("minhash/stringzillas::Fingerprints<{}cpu>", num_cores),
+            budget,
+            &bytes_view,
+            &chars_view,
+            batch_multi_cpu,
+            dimensions,
+            tokens_count,
+            hash_ops_per_token,
+            avg_token_bytes,
+            |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
+                sz_parallel
+                    .compute_into(
+                        &cpu_parallel,
+                        AnyBytesTape::View64(batch_bytes_view),
+                        dimensions,
+                        min_hashes_slice,
+                        min_counts_slice,
                     )
-                },
-            );
-        }
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute StringZilla fingerprints on {} CPU cores: {}",
+                            num_cores, error
+                        )
+                    });
+            },
+            |actual, min_hashes_slice| {
+                // Fill quality matrix - direct copy for StringZilla (u32 values)
+                for document_index in 0..actual {
+                    if sz_document_index < total_documents {
+                        let start = document_index * dimensions;
+                        let end = start + dimensions;
+                        for (dimension_index, &hash_value) in
+                            min_hashes_slice[start..end].iter().enumerate()
+                        {
+                            sz_matrix[sz_document_index][dimension_index] = hash_value;
+                        }
+                        sz_document_index += 1;
+                    }
+                }
+            },
+        );
 
         // StringZilla: 1x GPU (if available). Result buffers sized to the GPU batch.
         if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sz_gpu.as_ref()) {
-            let mut min_hashes =
-                UnifiedVec::<u32>::with_capacity_in(batch_gpu * dimensions, UnifiedAlloc);
-            min_hashes.resize(batch_gpu * dimensions, 0);
-            let mut min_counts =
-                UnifiedVec::<u32>::with_capacity_in(batch_gpu * dimensions, UnifiedAlloc);
-            min_counts.resize(batch_gpu * dimensions, 0);
-            let mut start_index = 0usize;
-            measure_throughput(
-                "fingerprinting/stringzillas/Fingerprints(1xGPU)",
-                ReportAs::Hashes,
+            measure_fingerprints(
+                "minhash/stringzillas::Fingerprints<1gpu>",
                 budget,
-                || {
-                    let (batch_bytes_view, _batch_chars_view, actual) = tokens_tape_slice(
-                        &bytes_view,
-                        &chars_view,
-                        &mut start_index,
-                        batch_gpu,
-                        tokens_count,
-                    );
-
-                    // Use compute_into for zero-allocation GPU processing
+                &bytes_view,
+                &chars_view,
+                batch_gpu,
+                dimensions,
+                tokens_count,
+                hash_ops_per_token,
+                avg_token_bytes,
+                |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
                     engine
                         .compute_into(
                             gpu,
                             AnyBytesTape::View64(batch_bytes_view),
                             dimensions,
-                            &mut min_hashes[..actual * dimensions],
-                            &mut min_counts[..actual * dimensions],
+                            min_hashes_slice,
+                            min_counts_slice,
                         )
                         .unwrap_or_else(|error| {
                             panic!(
@@ -458,15 +456,8 @@ fn bench_fingerprints(budget: &BenchBudget) {
                                 error
                             )
                         });
-                    std::hint::black_box((
-                        &min_hashes[..actual * dimensions],
-                        &min_counts[..actual * dimensions],
-                    ));
-                    WorkUnits::new(
-                        actual as u64 * hash_ops_per_token,
-                        actual as u64 * avg_token_bytes,
-                    )
                 },
+                |_actual, _min_hashes_slice| {},
             );
         }
 
@@ -483,7 +474,7 @@ fn bench_fingerprints(budget: &BenchBudget) {
             let mut combined_signature = Vec::with_capacity(dimensions);
             let mut start_index = 0usize;
             measure_throughput(
-                "fingerprinting/pc/MinHash<ByteGrams>()",
+                "minhash/pc::MinHash<ByteGrams>",
                 ReportAs::Hashes,
                 budget,
                 || {
@@ -552,7 +543,7 @@ fn bench_fingerprints(budget: &BenchBudget) {
 
             let mut start_index = 0usize;
             measure_throughput(
-                "fingerprinting/serial/MinHash<ByteGrams>()",
+                "minhash/serial::MinHash<ByteGrams>",
                 ReportAs::Hashes,
                 budget,
                 || {

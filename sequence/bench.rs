@@ -1,11 +1,11 @@
 #![doc = r#"# StringWars: String Sequence Operations Benchmarks
 
-This file benchmarks various libraries for processing string-identifiable collections.
-Including sorting arrays of strings:
+This file benchmarks various libraries for processing string-identifiable collections. Including sorting arrays of
+strings:
 
-- StringZilla's `sz::argsort`
-- The standard library's `sort_unstable`
-- Rayon's parallel `par_sort_unstable`
+- StringZilla's `sz::argsort` (byte order and Unicode case-folded `uncased` order)
+- The standard library's stable `sort_by_key` / `sort_by` (byte order, and `sz::utf8_uncased_order` folding comparator)
+- Apache Arrow's `lexsort_to_indices`, and Polars `Series`/`DataFrame` sorts
 
 Intersecting string collections, similar to "STRICT INNER JOIN" in SQL databases.
 
@@ -26,7 +26,7 @@ RUSTFLAGS="-C target-cpu=native" \
     POLARS_MAX_THREADS=1 \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_sequence bench_sequence --jobs $(nproc)
+    cargo bench --features bench_sequence --bench bench_sequence
 ```
 "#]
 
@@ -38,7 +38,6 @@ use stringtape::CharsCowsAuto;
 use arrow::array::{ArrayRef, LargeStringArray};
 use arrow::compute::{lexsort_to_indices, SortColumn};
 use polars::prelude::*;
-use rayon::prelude::*;
 use stringzilla::sz;
 use stringzilla::sz::ArgsortOptions;
 
@@ -49,6 +48,28 @@ use utils::{
     measure_throughput, reclaim_memory, should_run, BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
 
+fn measure_argsort<Sort: FnMut(&[&str], &mut Vec<usize>)>(
+    name: &str,
+    budget: &BenchBudget,
+    references: &[&str],
+    comparisons_estimate: u64,
+    total_bytes: u64,
+    indices: &mut Vec<usize>,
+    mut sort: Sort,
+) {
+    if !should_run(name) {
+        return;
+    }
+    let count = references.len();
+    measure_throughput(name, ReportAs::Comparisons, budget, || {
+        indices.clear();
+        indices.extend(0..count);
+        sort(references, indices);
+        black_box(&indices);
+        WorkUnits::new(comparisons_estimate, total_bytes)
+    });
+}
+
 fn bench_argsort(budget: &BenchBudget, unsorted: &CharsCowsAuto<'static>) {
     // For comparison-based sorting algorithms, we report throughput in terms of comparisons,
     // which is proportional to the number of elements in the array multiplied by the logarithm of
@@ -58,58 +79,94 @@ fn bench_argsort(budget: &BenchBudget, unsorted: &CharsCowsAuto<'static>) {
     let comparisons_estimate = (count as f64 * (count as f64).log2()) as u64;
     let total_bytes: u64 = unsorted.iter().map(|token| token.len() as u64).sum();
 
-    // Pre-allocate reusable index vector to avoid allocation on hot path
     let mut reusable_indices = Vec::with_capacity(count);
 
-    // Pre-allocate SortOptions to avoid .default() calls on hot path
+    // StringZilla's sort is always stable, so every competitor is configured for a stable sort
+    // too: Polars keeps `maintain_order: true` (its default leaves equal keys in arbitrary order).
     const POLARS_SORT_OPTIONS: SortOptions = SortOptions {
         descending: false,
         nulls_last: false,
-        multithreaded: true,
-        maintain_order: false,
+        multithreaded: false,
+        maintain_order: true,
         limit: None,
     };
-    let polars_sort_multiple_options = SortMultipleOptions::default();
+    let polars_sort_multiple_options = SortMultipleOptions::default().with_maintain_order(true);
 
-    // Pre-allocate static string for column name
     const COLUMN_NAME: &str = "strings";
 
+    // Collect StringTape into Vec<&str> for the four std/stringzilla argsort variants
+    // (zero-copy, just references). The Arrow and Polars variants build their own
+    // data structures and are handled separately below.
+    let unsorted_references: Vec<&str> = unsorted.iter().collect();
+
     // Benchmark: StringZilla's argsort
-    if should_run("argsort/stringzilla::argsort") {
-        // Collect StringTape into Vec<&str> for StringZilla (zero-copy, just references)
-        let unsorted_references: Vec<&str> = unsorted.iter().collect();
-
-        measure_throughput(
-            "argsort/stringzilla::argsort",
-            ReportAs::Comparisons,
-            budget,
-            || {
-                // Reset the index vector each call so every pass sorts the same unsorted data.
-                reusable_indices.clear();
-                reusable_indices.extend(0..count);
-                sz::argsort(
-                    &unsorted_references,
-                    &mut reusable_indices,
-                    ArgsortOptions::default(),
-                )
+    measure_argsort(
+        "argsort/stringzilla::argsort",
+        budget,
+        &unsorted_references,
+        comparisons_estimate,
+        total_bytes,
+        &mut reusable_indices,
+        |references, indices| {
+            sz::argsort(references, indices, ArgsortOptions::default())
                 .expect("StringZilla argsort failed");
-                black_box(&reusable_indices);
-                WorkUnits::new(comparisons_estimate, total_bytes)
-            },
-        );
+        },
+    );
 
-        drop(unsorted_references);
-        reclaim_memory();
-    }
+    // Benchmark: StringZilla's case-insensitive (Unicode case-folding) argsort.
+    // StringZilla orders by `sz_sequence_argsort_utf8_uncased` without materializing folded keys.
+    measure_argsort(
+        "argsort/stringzilla::argsort<uncased>",
+        budget,
+        &unsorted_references,
+        comparisons_estimate,
+        total_bytes,
+        &mut reusable_indices,
+        |references, indices| {
+            sz::argsort(references, indices, ArgsortOptions::default().uncased())
+                .expect("StringZilla uncased argsort failed");
+        },
+    );
 
-    // Benchmark: Apache Arrow's `lexsort_to_indices`
-    // https://arrow.apache.org/rust/arrow/compute/fn.lexsort.html
-    // https://arrow.apache.org/rust/arrow/compute/fn.lexsort_to_indices.html
-    // ! We can't use the conventional `StringArray` in most of our workloads, as it will
-    // ! overflow the 32-bit tape offset capacity and panic.
+    // Benchmark: Standard library argsort using the stable `sort_by_key`. StringZilla's argsort
+    // is always stable, so we compare against std's stable sort (not `sort_unstable_by_key`) to
+    // keep the head-to-head honest — both preserve the input order of equal keys.
+    measure_argsort(
+        "argsort/std::sort_by_key",
+        budget,
+        &unsorted_references,
+        comparisons_estimate,
+        total_bytes,
+        &mut reusable_indices,
+        |references, indices| {
+            indices.sort_by_key(|&index| references[index]);
+        },
+    );
+
+    // Benchmark: case-insensitive stable standard-library sort driven by StringZilla's own pairwise
+    // Unicode case-folding comparator, `sz::utf8_uncased_order`. Holding the folding
+    // implementation identical to `stringzilla::argsort_uncased` isolates the only remaining
+    // variable — the sort algorithm (std's stable mergesort vs StringZilla's radix argsort).
+    measure_argsort(
+        "argsort/std::sort_by<uncased>",
+        budget,
+        &unsorted_references,
+        comparisons_estimate,
+        total_bytes,
+        &mut reusable_indices,
+        |references, indices| {
+            indices.sort_by(|&left, &right| {
+                sz::utf8_uncased_order(references[left], references[right])
+            });
+        },
+    );
+
+    drop(unsorted_references);
+    reclaim_memory();
+
+    // Benchmark: Apache Arrow's `lexsort_to_indices`. Uses `LargeStringArray` because the
+    // dataset's tape can exceed the 32-bit offset of the standard `StringArray` and would panic.
     if should_run("argsort/arrow::lexsort_to_indices") {
-        // Lazy initialization: only create array when this benchmark runs
-        // Use from_iter_values to directly iterate from StringTape
         let array = Arc::new(LargeStringArray::from_iter_values(unsorted.iter())) as ArrayRef;
 
         measure_throughput(
@@ -134,52 +191,6 @@ fn bench_argsort(budget: &BenchBudget, unsorted: &CharsCowsAuto<'static>) {
 
         // Explicitly drop and reclaim memory (~4.7 GB)
         drop(array);
-        reclaim_memory();
-    }
-
-    // Benchmark: Standard library argsort using `sort_unstable_by_key`
-    if should_run("argsort/std::sort_unstable_by_key") {
-        // Collect StringTape into Vec<&str> for indexing
-        let unsorted_references: Vec<&str> = unsorted.iter().collect();
-
-        measure_throughput(
-            "argsort/std::sort_unstable_by_key",
-            ReportAs::Comparisons,
-            budget,
-            || {
-                // Reset the index vector each call so every pass sorts the same unsorted data.
-                reusable_indices.clear();
-                reusable_indices.extend(0..count);
-                reusable_indices.sort_unstable_by_key(|&index| unsorted_references[index]);
-                black_box(&reusable_indices);
-                WorkUnits::new(comparisons_estimate, total_bytes)
-            },
-        );
-
-        drop(unsorted_references);
-        reclaim_memory();
-    }
-
-    // Benchmark: Parallel argsort using Rayon
-    if should_run("argsort/rayon::par_sort_unstable_by_key") {
-        // Collect StringTape into Vec<&str> for indexing
-        let unsorted_references: Vec<&str> = unsorted.iter().collect();
-
-        measure_throughput(
-            "argsort/rayon::par_sort_unstable_by_key",
-            ReportAs::Comparisons,
-            budget,
-            || {
-                // Reset the index vector each call so every pass sorts the same unsorted data.
-                reusable_indices.clear();
-                reusable_indices.extend(0..count);
-                reusable_indices.par_sort_unstable_by_key(|&index| unsorted_references[index]);
-                black_box(&reusable_indices);
-                WorkUnits::new(comparisons_estimate, total_bytes)
-            },
-        );
-
-        drop(unsorted_references);
         reclaim_memory();
     }
 
@@ -253,7 +264,7 @@ fn main() {
     log_stringzilla_metadata();
 
     // Load the dataset defined by the environment variables
-    let tokens_bytes = load_dataset_with_default_mode("words").unwrap_nice();
+    let tokens_bytes = load_dataset_with_default_mode("lines").unwrap_nice();
     // Leak BytesCowsAuto to get 'static lifetime, then cast to CharsCowsAuto for UTF-8 string benchmarks
     let tokens_bytes_static: &'static _ = Box::leak(Box::new(tokens_bytes));
     let tokens = tokens_bytes_static

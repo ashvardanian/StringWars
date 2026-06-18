@@ -65,6 +65,12 @@ tokenization = ["stringzilla>=4.5.0", "regex", "PyICU"]
 # Case folding + Unicode normalization
 normalization = ["stringzilla>=4.5.0", "regex", "PyICU"]
 
+# Multi-way hashing + probabilistic membership (Bloom/cuckoo filters)
+containers = ["stringzilla>=4.5.0", "rbloom", "cuckoofilter", "xxhash"]
+
+# AEAD encryption/decryption (ChaCha20-Poly1305, AES-256-GCM)
+encryption = ["cryptography", "pycryptodome", "pynacl"]
+
 [tool.ruff]
 # Enforce 120-column lines across formatting and linting
 line-length = 120

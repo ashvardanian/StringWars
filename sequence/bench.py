@@ -25,6 +25,7 @@ Examples:
 """
 
 import argparse
+import functools
 import math
 import re
 import sys
@@ -67,7 +68,7 @@ def log_system_info():
     print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
     print(f"- Pandas: {pd.__version__}")
     print(f"- PyArrow: {pa.__version__}")
-    print(f"- Polars: {pl.__version__}")
+    print(f"- Polars: {pl.__version__} ({pl.thread_pool_size()} threads)")
     if CUDF_AVAILABLE:
         print(f"- CuDF: {cudf.__version__}")
     print()  # Add blank line
@@ -149,7 +150,7 @@ def main():
 
     # Load and tokenize dataset
     dataset = load_dataset(args.dataset, size_limit=args.dataset_limit)
-    tokens_mode = resolve_tokens(args.tokens, "words")
+    tokens_mode = resolve_tokens(args.tokens, "lines")
     tokens = tokenize_dataset(dataset, tokens_mode)
 
     if not tokens:
@@ -167,45 +168,96 @@ def main():
 
     # Python list.sort — mutates in place, so rebuild a fresh copy of the unsorted
     # tokens before every timed pass.
-    if should_run("argsort/std.list.sort()", filter_pattern):
+    if should_run("argsort/list.sort", filter_pattern):
 
         def std_sort(py_list):
             py_list.sort()
             return py_list
 
-        bench_sort_operation("std.list.sort()", lambda: list(tokens), std_sort, n_items, args.time_limit)
+        bench_sort_operation("list.sort", lambda: list(tokens), std_sort, n_items, args.time_limit)
+
+    # Case-insensitive list.sort driven by StringZilla's own pairwise Unicode case-folding
+    # comparator, `sz.utf8_uncased_order`, adapted to a sort key via `functools.cmp_to_key`.
+    # CPython's sort takes only a key (no `cmp=`), so the comparator is wrapped per element;
+    # holding the folding identical to `stringzilla.Strs.sorted(uncased=True)` isolates the sort
+    # algorithm itself (CPython's Timsort vs StringZilla's radix sort).
+    if should_run("argsort/list.sort<uncased>", filter_pattern):
+        uncased_key = functools.cmp_to_key(sz.utf8_uncased_order)
+
+        def std_sort_uncased(py_list):
+            py_list.sort(key=uncased_key)
+            return py_list
+
+        bench_sort_operation("list.sort<uncased>", lambda: list(tokens), std_sort_uncased, n_items, args.time_limit)
 
     # StringZilla — rebuild the Strs view each pass so every pass sorts identical data.
-    if should_run("argsort/stringzilla.Strs.sorted()", filter_pattern):
+    if should_run("argsort/stringzilla.Strs.sorted", filter_pattern):
         bench_sort_operation(
-            "stringzilla.Strs.sorted()", lambda: sz.Strs(tokens), lambda strs: strs.sorted(), n_items, args.time_limit
+            "stringzilla.Strs.sorted", lambda: sz.Strs(tokens), lambda strs: strs.sorted(), n_items, args.time_limit
+        )
+
+    # StringZilla case-insensitive sort: orders by Unicode case-folding natively.
+    if should_run("argsort/stringzilla.Strs.sorted<uncased>", filter_pattern):
+        bench_sort_operation(
+            "stringzilla.Strs.sorted<uncased>",
+            lambda: sz.Strs(tokens),
+            lambda strs: strs.sorted(uncased=True),
+            n_items,
+            args.time_limit,
+        )
+
+    # StringZilla argsort: writes the index permutation into a caller-owned NumPy buffer
+    # (`out=`), so no per-pass allocation — the same zero-copy reuse the other argsort engines
+    # get. The buffer holds `sz_sorted_idx_t` indices (pointer-sized unsigned), i.e. `np.uintp`.
+    if should_run("argsort/stringzilla.Strs.argsort", filter_pattern):
+        argsort_out = np.empty(n_items, dtype=np.uintp)
+        bench_sort_operation(
+            "stringzilla.Strs.argsort",
+            lambda: sz.Strs(tokens),
+            lambda strs: strs.argsort(out=argsort_out),
+            n_items,
+            args.time_limit,
+        )
+
+    # StringZilla case-insensitive argsort: index permutation under Unicode case-folding, same
+    # caller-owned `out=` buffer so the only difference from the cased row is the comparator.
+    if should_run("argsort/stringzilla.Strs.argsort<uncased>", filter_pattern):
+        argsort_out_uncased = np.empty(n_items, dtype=np.uintp)
+        bench_sort_operation(
+            "stringzilla.Strs.argsort<uncased>",
+            lambda: sz.Strs(tokens),
+            lambda strs: strs.argsort(uncased=True, out=argsort_out_uncased),
+            n_items,
+            args.time_limit,
         )
 
     # NumPy (object-dtype array; the most familiar Python baseline). argsort is
     # non-mutating, so the prebuilt array is the same unsorted input every pass.
-    if should_run("argsort/numpy.argsort()", filter_pattern):
+    if should_run("argsort/numpy.argsort", filter_pattern):
         np_array = np.array(tokens, dtype=object)
         bench_sort_operation(
-            "numpy.argsort()",
+            "numpy.argsort",
             lambda: np_array,
             lambda array: np.argsort(array, kind="stable"),
             n_items,
             args.time_limit,
         )
 
-    # Pandas (sort_values returns a new Series; the source stays unsorted).
-    if should_run("argsort/pandas.Series.sort_values()", filter_pattern):
+    # Pandas (sort_values returns a new Series; the source stays unsorted). Force a stable sort
+    # (`kind="stable"`); the default `quicksort` is unstable, and StringZilla's sort is always
+    # stable, so a stable comparator keeps the head-to-head honest.
+    if should_run("argsort/pandas.Series.sort_values", filter_pattern):
         s = pd.Series(tokens)
         bench_sort_operation(
-            "pandas.Series.sort_values()",
+            "pandas.Series.sort_values",
             lambda: s,
-            lambda series: series.sort_values(ignore_index=True),
+            lambda series: series.sort_values(ignore_index=True, kind="stable"),
             n_items,
             args.time_limit,
         )
 
     # PyArrow
-    if should_run("argsort/pyarrow.compute.sort_indices()", filter_pattern):
+    if should_run("argsort/pyarrow.compute.sort_indices", filter_pattern):
         # Choose Arrow string type without timing the conversion
         INT32_MAX = 2_147_483_647
         total_bytes = 0
@@ -216,22 +268,27 @@ def main():
         use_large = total_bytes > INT32_MAX
         arr = pa.array(tokens, type=pa.large_string() if use_large else pa.string())
 
-        def pyarrow_sort(array):
-            indices = pc.sort_indices(array)
-            return pc.take(array, indices)
+        bench_sort_operation(
+            "pyarrow.compute.sort_indices", lambda: arr, lambda array: pc.sort_indices(array), n_items, args.time_limit
+        )
 
-        bench_sort_operation("pyarrow.compute.sort_indices()", lambda: arr, pyarrow_sort, n_items, args.time_limit)
-
-    # Polars (sort returns a new Series; the source stays unsorted).
-    if should_run("argsort/polars.Series.sort()", filter_pattern):
+    # Polars argsort: returns an index Series (no materialization).
+    if should_run("argsort/polars.Series.arg_sort", filter_pattern):
         ps = pl.Series(tokens)
-        bench_sort_operation("polars.Series.sort()", lambda: ps, lambda series: series.sort(), n_items, args.time_limit)
+        bench_sort_operation(
+            "polars.Series.arg_sort", lambda: ps, lambda series: series.arg_sort(), n_items, args.time_limit
+        )
+
+    # Polars full sort (returns a new materialized Series; the source stays unsorted).
+    if should_run("argsort/polars.Series.sort", filter_pattern):
+        ps = pl.Series(tokens)
+        bench_sort_operation("polars.Series.sort", lambda: ps, lambda series: series.sort(), n_items, args.time_limit)
 
     # cuDF GPU (if available; sort_values returns a new Series).
-    if CUDF_AVAILABLE and should_run("argsort/cudf.Series.sort_values(1xGPU)", filter_pattern):
+    if CUDF_AVAILABLE and should_run("argsort/cudf.Series.sort_values<1gpu>", filter_pattern):
         cs = cudf.Series(tokens)
         bench_sort_operation(
-            "cudf.Series.sort_values(1xGPU)",
+            "cudf.Series.sort_values<1gpu>",
             lambda: cs,
             lambda series: series.sort_values(ignore_index=True),
             n_items,

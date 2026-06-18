@@ -245,37 +245,37 @@ def main():
 
     # UTF-8 word segmentation (TR29) per document line, cycling the lines.
     print("Word Segmentation (TR29)")
-    if should_run("tokenize-words/stringzilla.utf8_word_iter()", filter_pattern):
-        bench_split_lines("stringzilla.utf8_word_iter()", lines, count_words_stringzilla, args.time_limit)
-    if should_run("tokenize-words/regex.finditer(\\w+)", filter_pattern):
-        bench_split_lines("regex.finditer(\\w+)", lines, count_words_regex, args.time_limit)
-    if should_run("tokenize-words/icu.BreakIterator()", filter_pattern):
-        bench_split_lines("icu.BreakIterator()", lines, make_count_words_icu(), args.time_limit)
-    if should_run("tokenize-words/std.str.split()", filter_pattern):
-        bench_split_lines("std.str.split()", lines, count_words_split, args.time_limit)
+    if should_run("tokenize-words/stringzilla.utf8_word_iter", filter_pattern):
+        bench_split_lines("stringzilla.utf8_word_iter", lines, count_words_stringzilla, args.time_limit)
+    if should_run("tokenize-words/regex.finditer", filter_pattern):
+        bench_split_lines("regex.finditer", lines, count_words_regex, args.time_limit)
+    if should_run("tokenize-words/icu.BreakIterator", filter_pattern):
+        bench_split_lines("icu.BreakIterator", lines, make_count_words_icu(), args.time_limit)
+    if should_run("tokenize-words/str.split", filter_pattern):
+        bench_split_lines("str.split", lines, count_words_split, args.time_limit)
 
     # UTF-8 whitespace splitting per document line, cycling the lines.
     print("\nWhitespace Splitting")
-    if should_run("tokenize-whitespace/stringzilla.utf8_split_iter()", filter_pattern):
-        bench_split_lines("stringzilla.utf8_split_iter()", lines, count_whitespace_stringzilla, args.time_limit)
-    if should_run("tokenize-whitespace/std.str.split()", filter_pattern):
-        bench_split_lines("std.str.split()", lines, count_whitespace_split, args.time_limit)
+    if should_run("tokenize-whitespace/stringzilla.utf8_split_iter", filter_pattern):
+        bench_split_lines("stringzilla.utf8_split_iter", lines, count_whitespace_stringzilla, args.time_limit)
+    if should_run("tokenize-whitespace/str.split", filter_pattern):
+        bench_split_lines("str.split", lines, count_whitespace_split, args.time_limit)
 
     # UTF-8 newline splitting per document line, cycling the lines.
     print("\nNewline Splitting")
-    if should_run("tokenize-newlines/stringzilla.utf8_splitlines_iter()", filter_pattern):
-        bench_split_lines("stringzilla.utf8_splitlines_iter()", lines, count_newlines_stringzilla, args.time_limit)
-    if should_run("tokenize-newlines/std.str.splitlines()", filter_pattern):
-        bench_split_lines("std.str.splitlines()", lines, count_newlines_splitlines, args.time_limit)
+    if should_run("tokenize-newlines/stringzilla.utf8_splitlines_iter", filter_pattern):
+        bench_split_lines("stringzilla.utf8_splitlines_iter", lines, count_newlines_stringzilla, args.time_limit)
+    if should_run("tokenize-newlines/str.splitlines", filter_pattern):
+        bench_split_lines("str.splitlines", lines, count_newlines_splitlines, args.time_limit)
 
     # UTF-8 codepoint counting over the raw bytes (fair O(n)-from-bytes comparison;
     # `len(str)` is O(1) in CPython, so we decode-and-count as the stdlib baseline).
     print("\nCodepoint Counting")
     document_bytes = pythonic_str.encode("utf-8")
-    if should_run("utf8-count/stringzilla.utf8_count()", filter_pattern):
-        bench_tokenize("stringzilla.utf8_count()", document_bytes, count_codepoints_stringzilla, args.time_limit)
-    if should_run("utf8-count/std.decode().len()", filter_pattern):
-        bench_tokenize("std.decode().len()", document_bytes, count_codepoints_decode, args.time_limit)
+    if should_run("utf8-count/stringzilla.utf8_count", filter_pattern):
+        bench_tokenize("stringzilla.utf8_count", document_bytes, count_codepoints_stringzilla, args.time_limit)
+    if should_run("utf8-count/str.decode.len", filter_pattern):
+        bench_tokenize("str.decode.len", document_bytes, count_codepoints_decode, args.time_limit)
 
     return 0
 

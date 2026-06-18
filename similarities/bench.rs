@@ -1,17 +1,15 @@
 #![doc = r#"# StringWars: String Similarity Benchmarks
 
-This file benchmarks different libraries implementing string alignment and edit
-distance calculation, comparing single-threaded, multi-threaded, and GPU-accelerated
-implementations across three gap cost models:
+This file benchmarks different libraries implementing string alignment and edit distance calculation, comparing
+single-threaded, multi-threaded, and GPU-accelerated implementations across three gap cost models:
 
 - **Uniform**: Classic Levenshtein distance with uniform substitution costs (match=0, mismatch=1)
 - **Linear**: Needleman-Wunsch and Smith-Waterman with linear gap penalties (open_cost == extend_cost)
 - **Affine**: Advanced alignment with different gap opening vs extension costs (open_cost != extend_cost)
 
-The input file is tokenized into lines or words and each consecutive pair of tokens
-is evaluated for similarity. As most algorithms have quadratic complexity and use
-Dynamic Programming techniques, their throughput is evaluated in the number of CUPS,
-or Cell Updates Per Second.
+The input file is tokenized into lines or words and each consecutive pair of tokens is evaluated for similarity. As most
+algorithms have quadratic complexity and use Dynamic Programming techniques, their throughput is evaluated in the number
+of CUPS, or Cell Updates Per Second.
 
 ## Usage Examples
 
@@ -21,10 +19,10 @@ The benchmarks use environment variables to control the input dataset and mode:
 - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
   - `lines`: Process the dataset line by line.
   - `words`: Process the dataset word by word.
-- `STRINGWARS_BATCH_PER_CORE`: Number of pairs processed per core (default: 256). A CPU core is one
-  core and a GPU streaming multiprocessor (SM) is one core, so the actual batch is auto-derived as
-  `STRINGWARS_BATCH_PER_CORE * cores`: `cores` is 1 for the single-core variant, the logical core
-  count for the multi-core variant, and the device's SM count for the GPU variant.
+- `STRINGWARS_BATCH_PER_CORE`: Number of pairs processed per core (default: 256). A CPU core is one core and a GPU
+  streaming multiprocessor (SM) is one core, so the actual batch is auto-derived as `STRINGWARS_BATCH_PER_CORE * cores`:
+  `cores` is 1 for the single-core variant, the logical core count for the multi-core variant, and the device's SM count
+  for the GPU variant.
 
 ```sh
 RUSTFLAGS="-C target-cpu=native" \
@@ -34,18 +32,19 @@ RUSTFLAGS="-C target-cpu=native" \
     cargo run --release --features bench_similarities --bin bench_similarities
 ```
 
-To run on a GPU-capable machine, enable the CUDA feature; the GPU batch is auto-derived from the
-device's streaming-multiprocessor count:
+To run on a GPU-capable machine, enable the CUDA feature; the GPU batch is auto-derived from the device's
+streaming-multiprocessor count:
 
 ```sh
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_BATCH_PER_CORE=128 \
     STRINGWARS_TOKENS=lines \
-    STRINGWARS_FILTER=1xGPU \
+    STRINGWARS_FILTER=1gpu \
     cargo run --release --features "cuda bench_similarities" --bin bench_similarities
 ```
 "#]
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::unnecessary_unwrap)]
 use core::convert::TryInto;
 
 use fork_union::count_logical_cores;
@@ -148,6 +147,109 @@ fn chars_tape_slice<'a>(
     (first_batch, second_batch, count)
 }
 
+/// Runs one `measure_throughput` block for a bytes-tape pairwise engine that writes `usize`
+/// results (e.g. `LevenshteinDistances`). Allocates a `UnifiedVec<usize>` of `batch_size`,
+/// cycles through `pairs_count` pairs, and calls `compute` for each iteration.
+/// `compute` receives `(first_view, second_view, results_slice)` and must fill `results_slice`.
+fn measure_pairwise_bytes_usize(
+    name: &str,
+    budget: &BenchBudget,
+    first: &BytesTapeView<u64>,
+    second: &BytesTapeView<u64>,
+    batch_size: usize,
+    pairs_count: usize,
+    avg_cells: u64,
+    avg_pair_bytes: u64,
+    mut compute: impl FnMut(BytesTapeView<'_, u64>, BytesTapeView<'_, u64>, &mut [usize]),
+) {
+    let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
+    results.resize(batch_size, 0);
+    let mut start_index = 0;
+    measure_throughput(name, ReportAs::Cups, budget, || {
+        let (batch_first_view, batch_second_view, actual_batch_size) =
+            bytes_tape_slice(first, second, &mut start_index, batch_size, pairs_count);
+        compute(
+            batch_first_view,
+            batch_second_view,
+            &mut results[..actual_batch_size],
+        );
+        std::hint::black_box(&results);
+        WorkUnits::new(
+            actual_batch_size as u64 * avg_cells,
+            actual_batch_size as u64 * avg_pair_bytes,
+        )
+    });
+}
+
+/// Runs one `measure_throughput` block for a chars-tape pairwise engine that writes `usize`
+/// results (e.g. `LevenshteinDistancesUtf8`). Allocates a `UnifiedVec<usize>` of `batch_size`,
+/// cycles through `pairs_count` pairs, and calls `compute` for each iteration.
+/// `compute` receives `(first_view, second_view, results_slice)` and must fill `results_slice`.
+fn measure_pairwise_chars_usize(
+    name: &str,
+    budget: &BenchBudget,
+    first: &CharsTapeView<u64>,
+    second: &CharsTapeView<u64>,
+    batch_size: usize,
+    pairs_count: usize,
+    avg_cells: u64,
+    avg_pair_bytes: u64,
+    mut compute: impl FnMut(CharsTapeView<'_, u64>, CharsTapeView<'_, u64>, &mut [usize]),
+) {
+    let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
+    results.resize(batch_size, 0);
+    let mut start_index = 0;
+    measure_throughput(name, ReportAs::Cups, budget, || {
+        let (batch_first_view, batch_second_view, actual_batch_size) =
+            chars_tape_slice(first, second, &mut start_index, batch_size, pairs_count);
+        compute(
+            batch_first_view,
+            batch_second_view,
+            &mut results[..actual_batch_size],
+        );
+        std::hint::black_box(&results);
+        WorkUnits::new(
+            actual_batch_size as u64 * avg_cells,
+            actual_batch_size as u64 * avg_pair_bytes,
+        )
+    });
+}
+
+/// Runs one `measure_throughput` block for a bytes-tape pairwise engine that writes `isize`
+/// results (e.g. `NeedlemanWunschScores`, `SmithWatermanScores`). Allocates a
+/// `UnifiedVec<isize>` of `batch_size`, cycles through `pairs_count` pairs, and calls `compute`
+/// for each iteration. `compute` receives `(first_view, second_view, results_slice)` and must
+/// fill `results_slice`.
+fn measure_pairwise_bytes_isize(
+    name: &str,
+    budget: &BenchBudget,
+    first: &BytesTapeView<u64>,
+    second: &BytesTapeView<u64>,
+    batch_size: usize,
+    pairs_count: usize,
+    avg_cells: u64,
+    avg_pair_bytes: u64,
+    mut compute: impl FnMut(BytesTapeView<'_, u64>, BytesTapeView<'_, u64>, &mut [isize]),
+) {
+    let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
+    results.resize(batch_size, 0);
+    let mut start_index = 0;
+    measure_throughput(name, ReportAs::Cups, budget, || {
+        let (batch_first_view, batch_second_view, actual_batch_size) =
+            bytes_tape_slice(first, second, &mut start_index, batch_size, pairs_count);
+        compute(
+            batch_first_view,
+            batch_second_view,
+            &mut results[..actual_batch_size],
+        );
+        std::hint::black_box(&results);
+        WorkUnits::new(
+            actual_batch_size as u64 * avg_cells,
+            actual_batch_size as u64 * avg_pair_bytes,
+        )
+    });
+}
+
 fn bench_similarities(budget: &BenchBudget) {
     // Load dataset using unified loader
     let tape_bytes = load_dataset_with_default_mode("words").unwrap_nice();
@@ -171,8 +273,8 @@ fn bench_similarities(budget: &BenchBudget) {
 
     // Log benchmark-specific configuration
     println!("Benchmark configuration:");
-    println!("- 1xCPU batch size: {}", batch_single_cpu);
-    println!("- {}xCPU batch size: {}", num_cores, batch_multi_cpu);
+    println!("- Single-core batch size: {}", batch_single_cpu);
+    println!("- {}-core batch size: {}", num_cores, batch_multi_cpu);
     println!("- GPU batch size: {}", batch_gpu);
 
     // Create BytesTape and populate it with all tokens (already limited by STRINGWARS_MAX_TOKENS in load_dataset)
@@ -316,7 +418,7 @@ fn perform_uniform_benchmarks(
     {
         let mut pair_index = 0;
         measure_throughput(
-            "uniform/rapidfuzz::levenshtein<Bytes>(1xCPU)",
+            "uniform/rapidfuzz::levenshtein<Bytes,1cpu>",
             ReportAs::Cups,
             budget,
             || {
@@ -335,7 +437,7 @@ fn perform_uniform_benchmarks(
     {
         let mut pair_index = 0;
         measure_throughput(
-            "uniform/rapidfuzz::levenshtein<Chars>(1xCPU)",
+            "uniform/rapidfuzz::levenshtein<Chars,1cpu>",
             ReportAs::Cups,
             budget,
             || {
@@ -351,7 +453,7 @@ fn perform_uniform_benchmarks(
     {
         let mut pair_index = 0;
         measure_throughput(
-            "uniform/bio::levenshtein(1xCPU)",
+            "uniform/bio::levenshtein<1cpu>",
             ReportAs::Cups,
             budget,
             || {
@@ -364,195 +466,140 @@ fn perform_uniform_benchmarks(
         );
     }
 
-    {
-        let mut results = UnifiedVec::<usize>::with_capacity_in(batch_single_cpu, UnifiedAlloc);
-        results.resize(batch_single_cpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            "uniform/stringzillas::LevenshteinDistances(1xCPU)",
-            ReportAs::Cups,
-            budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    &tape_first_view,
-                    &tape_second_view,
-                    &mut start_index,
-                    batch_single_cpu,
-                    pairs_count,
-                );
-                lev_single
-                    .compute_into(
-                        &cpu_single,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute LevenshteinDistances on CPU (single-threaded): {}",
-                            error
-                        );
-                    });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
+    measure_pairwise_bytes_usize(
+        "uniform/stringzillas::LevenshteinDistances<1cpu>",
+        budget,
+        tape_first_view,
+        tape_second_view,
+        batch_single_cpu,
+        pairs_count,
+        avg_cells_bytes,
+        avg_pair_bytes,
+        |first_view, second_view, results_slice| {
+            lev_single
+                .compute_into(
+                    &cpu_single,
+                    AnyBytesTape::View64(first_view),
+                    AnyBytesTape::View64(second_view),
+                    results_slice,
                 )
-            },
-        );
-    }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to compute LevenshteinDistances on CPU (single-threaded): {}",
+                        error
+                    );
+                });
+        },
+    );
 
-    {
-        let mut results = UnifiedVec::<usize>::with_capacity_in(batch_multi_cpu, UnifiedAlloc);
-        results.resize(batch_multi_cpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            &format!(
-                "uniform/stringzillas::LevenshteinDistances({}xCPU)",
-                num_cores
-            ),
-            ReportAs::Cups,
-            budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    &tape_first_view,
-                    &tape_second_view,
-                    &mut start_index,
-                    batch_multi_cpu,
-                    pairs_count,
-                );
-                lev_parallel
-                    .compute_into(
-                        &cpu_parallel,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute LevenshteinDistances on CPU (multi-threaded): {}",
-                            error
-                        );
-                    });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
+    measure_pairwise_bytes_usize(
+        &format!(
+            "uniform/stringzillas::LevenshteinDistances<{}cpu>",
+            num_cores
+        ),
+        budget,
+        tape_first_view,
+        tape_second_view,
+        batch_multi_cpu,
+        pairs_count,
+        avg_cells_bytes,
+        avg_pair_bytes,
+        |first_view, second_view, results_slice| {
+            lev_parallel
+                .compute_into(
+                    &cpu_parallel,
+                    AnyBytesTape::View64(first_view),
+                    AnyBytesTape::View64(second_view),
+                    results_slice,
                 )
-            },
-        );
-    }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to compute LevenshteinDistances on CPU (multi-threaded): {}",
+                        error
+                    );
+                });
+        },
+    );
 
     // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
-    {
-        let mut results = UnifiedVec::<usize>::with_capacity_in(batch_single_cpu, UnifiedAlloc);
-        results.resize(batch_single_cpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            "uniform/stringzillas::LevenshteinDistancesUtf8(1xCPU)",
-            ReportAs::Cups,
-            budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = chars_tape_slice(
-                    &chars_first_view,
-                    &chars_second_view,
-                    &mut start_index,
-                    batch_single_cpu,
-                    pairs_count,
-                );
-                lev_utf8_single
-                    .compute_into(
-                        &cpu_single,
-                        AnyCharsTape::View64(batch_first_view),
-                        AnyCharsTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute LevenshteinDistancesUtf8 on CPU (single-threaded): {}",
-                            error
-                        );
-                    });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_utf8,
-                    actual_batch_size as u64 * avg_pair_bytes,
+    measure_pairwise_chars_usize(
+        "uniform/stringzillas::LevenshteinDistancesUtf8<1cpu>",
+        budget,
+        chars_first_view,
+        chars_second_view,
+        batch_single_cpu,
+        pairs_count,
+        avg_cells_utf8,
+        avg_pair_bytes,
+        |first_view, second_view, results_slice| {
+            lev_utf8_single
+                .compute_into(
+                    &cpu_single,
+                    AnyCharsTape::View64(first_view),
+                    AnyCharsTape::View64(second_view),
+                    results_slice,
                 )
-            },
-        );
-    }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to compute LevenshteinDistancesUtf8 on CPU (single-threaded): {}",
+                        error
+                    );
+                });
+        },
+    );
 
-    {
-        let mut results = UnifiedVec::<usize>::with_capacity_in(batch_multi_cpu, UnifiedAlloc);
-        results.resize(batch_multi_cpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            &format!(
-                "uniform/stringzillas::LevenshteinDistancesUtf8({}xCPU)",
-                num_cores
-            ),
-            ReportAs::Cups,
-            budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = chars_tape_slice(
-                    &chars_first_view,
-                    &chars_second_view,
-                    &mut start_index,
-                    batch_multi_cpu,
-                    pairs_count,
-                );
-                lev_utf8_parallel
-                    .compute_into(
-                        &cpu_parallel,
-                        AnyCharsTape::View64(batch_first_view),
-                        AnyCharsTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!("Failed to compute LevenshteinDistancesUtf8 on CPU (multi-threaded): {}", error);
-                    });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_utf8,
-                    actual_batch_size as u64 * avg_pair_bytes,
+    measure_pairwise_chars_usize(
+        &format!(
+            "uniform/stringzillas::LevenshteinDistancesUtf8<{}cpu>",
+            num_cores
+        ),
+        budget,
+        chars_first_view,
+        chars_second_view,
+        batch_multi_cpu,
+        pairs_count,
+        avg_cells_utf8,
+        avg_pair_bytes,
+        |first_view, second_view, results_slice| {
+            lev_utf8_parallel
+                .compute_into(
+                    &cpu_parallel,
+                    AnyCharsTape::View64(first_view),
+                    AnyCharsTape::View64(second_view),
+                    results_slice,
                 )
-            },
-        );
-    }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to compute LevenshteinDistancesUtf8 on CPU (multi-threaded): {}",
+                        error
+                    );
+                });
+        },
+    );
 
     if maybe_gpu.is_ok() && maybe_lev_gpu.is_some() {
-        let gpu = maybe_gpu.as_ref().unwrap();
+        let gpu = maybe_gpu.as_ref().ok().unwrap();
         let engine = maybe_lev_gpu.as_ref().unwrap();
-        let mut results = UnifiedVec::<usize>::with_capacity_in(batch_gpu, UnifiedAlloc);
-        results.resize(batch_gpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            "uniform/stringzillas::LevenshteinDistances(1xGPU)",
-            ReportAs::Cups,
+        measure_pairwise_bytes_usize(
+            "uniform/stringzillas::LevenshteinDistances<1gpu>",
             budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    &tape_first_view,
-                    &tape_second_view,
-                    &mut start_index,
-                    batch_gpu,
-                    pairs_count,
-                );
+            tape_first_view,
+            tape_second_view,
+            batch_gpu,
+            pairs_count,
+            avg_cells_bytes,
+            avg_pair_bytes,
+            |first_view, second_view, results_slice| {
                 engine
                     .compute_into(
                         gpu,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
+                        AnyBytesTape::View64(first_view),
+                        AnyBytesTape::View64(second_view),
+                        results_slice,
                     )
                     .unwrap_or_else(|error| {
                         panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", error);
                     });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
-                )
             },
         );
     }
@@ -677,7 +724,7 @@ fn align_score_benchmarks<GpuError>(
             });
         let mut pair_index = 0;
         measure_throughput(
-            &format!("{group_name}/bio::pairwise::global(1xCPU)"),
+            &format!("{group_name}/bio::pairwise::global<1cpu>"),
             ReportAs::Cups,
             budget,
             || {
@@ -701,7 +748,7 @@ fn align_score_benchmarks<GpuError>(
             });
         let mut pair_index = 0;
         measure_throughput(
-            &format!("{group_name}/bio::pairwise::local(1xCPU)"),
+            &format!("{group_name}/bio::pairwise::local<1cpu>"),
             ReportAs::Cups,
             budget,
             || {
@@ -715,229 +762,161 @@ fn align_score_benchmarks<GpuError>(
     }
 
     // Needleman-Wunsch (Global alignment)
-    {
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_single_cpu, UnifiedAlloc);
-        results.resize(batch_single_cpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            "stringzillas::NeedlemanWunschScores(1xCPU)",
-            ReportAs::Cups,
-            budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    tape_first_view,
-                    tape_second_view,
-                    &mut start_index,
-                    batch_single_cpu,
-                    pairs_count,
-                );
-                nw_single
-                    .compute_into(
-                        cpu_single,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute NeedlemanWunschScores on CPU (single-threaded): {}",
-                            error
-                        );
-                    });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
+    measure_pairwise_bytes_isize(
+        "stringzillas::NeedlemanWunschScores<1cpu>",
+        budget,
+        tape_first_view,
+        tape_second_view,
+        batch_single_cpu,
+        pairs_count,
+        avg_cells_bytes,
+        avg_pair_bytes,
+        |first_view, second_view, results_slice| {
+            nw_single
+                .compute_into(
+                    cpu_single,
+                    AnyBytesTape::View64(first_view),
+                    AnyBytesTape::View64(second_view),
+                    results_slice,
                 )
-            },
-        );
-    }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to compute NeedlemanWunschScores on CPU (single-threaded): {}",
+                        error
+                    );
+                });
+        },
+    );
 
-    {
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_multi_cpu, UnifiedAlloc);
-        results.resize(batch_multi_cpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            &format!("stringzillas::NeedlemanWunschScores({}xCPU)", num_cores),
-            ReportAs::Cups,
-            budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    tape_first_view,
-                    tape_second_view,
-                    &mut start_index,
-                    batch_multi_cpu,
-                    pairs_count,
-                );
-                nw_parallel
-                    .compute_into(
-                        cpu_parallel,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
-                            error
-                        );
-                    });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
+    measure_pairwise_bytes_isize(
+        &format!("stringzillas::NeedlemanWunschScores<{}cpu>", num_cores),
+        budget,
+        tape_first_view,
+        tape_second_view,
+        batch_multi_cpu,
+        pairs_count,
+        avg_cells_bytes,
+        avg_pair_bytes,
+        |first_view, second_view, results_slice| {
+            nw_parallel
+                .compute_into(
+                    cpu_parallel,
+                    AnyBytesTape::View64(first_view),
+                    AnyBytesTape::View64(second_view),
+                    results_slice,
                 )
-            },
-        );
-    }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
+                        error
+                    );
+                });
+        },
+    );
 
     if maybe_gpu.is_ok() && maybe_nw_gpu.is_some() {
         let gpu = maybe_gpu.as_ref().ok().unwrap();
         let engine = maybe_nw_gpu.as_ref().unwrap();
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_gpu, UnifiedAlloc);
-        results.resize(batch_gpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            "stringzillas::NeedlemanWunschScores(1xGPU)",
-            ReportAs::Cups,
+        measure_pairwise_bytes_isize(
+            "stringzillas::NeedlemanWunschScores<1gpu>",
             budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    tape_first_view,
-                    tape_second_view,
-                    &mut start_index,
-                    batch_gpu,
-                    pairs_count,
-                );
+            tape_first_view,
+            tape_second_view,
+            batch_gpu,
+            pairs_count,
+            avg_cells_bytes,
+            avg_pair_bytes,
+            |first_view, second_view, results_slice| {
                 engine
                     .compute_into(
                         gpu,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
+                        AnyBytesTape::View64(first_view),
+                        AnyBytesTape::View64(second_view),
+                        results_slice,
                     )
                     .unwrap_or_else(|error| {
                         panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", error);
                     });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
-                )
             },
         );
     }
 
     // Smith-Waterman (Local alignment)
-    {
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_single_cpu, UnifiedAlloc);
-        results.resize(batch_single_cpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            "stringzillas::SmithWatermanScores(1xCPU)",
-            ReportAs::Cups,
-            budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    tape_first_view,
-                    tape_second_view,
-                    &mut start_index,
-                    batch_single_cpu,
-                    pairs_count,
-                );
-                sw_single
-                    .compute_into(
-                        cpu_single,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
-                            error
-                        );
-                    });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
+    measure_pairwise_bytes_isize(
+        "stringzillas::SmithWatermanScores<1cpu>",
+        budget,
+        tape_first_view,
+        tape_second_view,
+        batch_single_cpu,
+        pairs_count,
+        avg_cells_bytes,
+        avg_pair_bytes,
+        |first_view, second_view, results_slice| {
+            sw_single
+                .compute_into(
+                    cpu_single,
+                    AnyBytesTape::View64(first_view),
+                    AnyBytesTape::View64(second_view),
+                    results_slice,
                 )
-            },
-        );
-    }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
+                        error
+                    );
+                });
+        },
+    );
 
-    {
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_multi_cpu, UnifiedAlloc);
-        results.resize(batch_multi_cpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            &format!("stringzillas::SmithWatermanScores({}xCPU)", num_cores),
-            ReportAs::Cups,
-            budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    tape_first_view,
-                    tape_second_view,
-                    &mut start_index,
-                    batch_multi_cpu,
-                    pairs_count,
-                );
-                sw_parallel
-                    .compute_into(
-                        cpu_parallel,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
-                            error
-                        );
-                    });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
+    measure_pairwise_bytes_isize(
+        &format!("stringzillas::SmithWatermanScores<{}cpu>", num_cores),
+        budget,
+        tape_first_view,
+        tape_second_view,
+        batch_multi_cpu,
+        pairs_count,
+        avg_cells_bytes,
+        avg_pair_bytes,
+        |first_view, second_view, results_slice| {
+            sw_parallel
+                .compute_into(
+                    cpu_parallel,
+                    AnyBytesTape::View64(first_view),
+                    AnyBytesTape::View64(second_view),
+                    results_slice,
                 )
-            },
-        );
-    }
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
+                        error
+                    );
+                });
+        },
+    );
 
     if maybe_gpu.is_ok() && maybe_sw_gpu.is_some() {
         let gpu = maybe_gpu.as_ref().ok().unwrap();
         let engine = maybe_sw_gpu.as_ref().unwrap();
-        let mut results = UnifiedVec::<isize>::with_capacity_in(batch_gpu, UnifiedAlloc);
-        results.resize(batch_gpu, 0);
-        let mut start_index = 0;
-        measure_throughput(
-            "stringzillas::SmithWatermanScores(1xGPU)",
-            ReportAs::Cups,
+        measure_pairwise_bytes_isize(
+            "stringzillas::SmithWatermanScores<1gpu>",
             budget,
-            || {
-                let (batch_first_view, batch_second_view, actual_batch_size) = bytes_tape_slice(
-                    tape_first_view,
-                    tape_second_view,
-                    &mut start_index,
-                    batch_gpu,
-                    pairs_count,
-                );
+            tape_first_view,
+            tape_second_view,
+            batch_gpu,
+            pairs_count,
+            avg_cells_bytes,
+            avg_pair_bytes,
+            |first_view, second_view, results_slice| {
                 engine
                     .compute_into(
                         gpu,
-                        AnyBytesTape::View64(batch_first_view),
-                        AnyBytesTape::View64(batch_second_view),
-                        &mut results[..actual_batch_size],
+                        AnyBytesTape::View64(first_view),
+                        AnyBytesTape::View64(second_view),
+                        results_slice,
                     )
                     .unwrap_or_else(|error| {
                         panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", error);
                     });
-                std::hint::black_box(&results);
-                WorkUnits::new(
-                    actual_batch_size as u64 * avg_cells_bytes,
-                    actual_batch_size as u64 * avg_pair_bytes,
-                )
             },
         );
     }

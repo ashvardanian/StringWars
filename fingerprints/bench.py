@@ -144,19 +144,19 @@ def benchmark_stringzillas(documents, dimensions, batch_size, time_limit_seconds
             variant_batch_size,
         )
 
-    if should_run("minhash/stringzillas.Fingerprints(1xCPU)", filter_pattern):
-        run_variant("(1xCPU)", default_scope, 1)
-    if should_run(f"minhash/stringzillas.Fingerprints({cpu_cores}xCPU,batch={all_cpu_batch_size})", filter_pattern):
-        run_variant(f"({cpu_cores}xCPU,batch={all_cpu_batch_size})", cpu_scope, all_cpu_batch_size)
+    if should_run("minhash/stringzillas.Fingerprints<1cpu>", filter_pattern):
+        run_variant("<1cpu>", default_scope, 1)
+    if should_run(f"minhash/stringzillas.Fingerprints<{cpu_cores}cpu,batch={all_cpu_batch_size}>", filter_pattern):
+        run_variant(f"<{cpu_cores}cpu,batch={all_cpu_batch_size}>", cpu_scope, all_cpu_batch_size)
     if gpu_scope is not None and should_run(
-        f"minhash/stringzillas.Fingerprints(1xGPU,batch={gpu_batch_size})", filter_pattern
+        f"minhash/stringzillas.Fingerprints<1gpu,batch={gpu_batch_size}>", filter_pattern
     ):
-        run_variant(f"(1xGPU,batch={gpu_batch_size})", gpu_scope, gpu_batch_size)
+        run_variant(f"<1gpu,batch={gpu_batch_size}>", gpu_scope, gpu_batch_size)
 
 
 def benchmark_datasketch(documents, dimensions, batch_size, time_limit_seconds, filter_pattern):
     """datasketch MinHash on CPU: the common data-science baseline, n-grams built in Python."""
-    if not should_run("minhash/datasketch.MinHash()", filter_pattern):
+    if not should_run("minhash/datasketch.MinHash", filter_pattern):
         return
     cpu_batch_size = auto_batch_size(1, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE)
     per_width = max(1, dimensions // len(NGRAM_WIDTHS))
@@ -172,7 +172,7 @@ def benchmark_datasketch(documents, dimensions, batch_size, time_limit_seconds, 
                 _ = signature.hashvalues  # force materialization
 
     bench_fingerprint(
-        "datasketch.MinHash()", documents, kernel, doc_bytes, dimensions, time_limit_seconds, cpu_batch_size
+        "datasketch.MinHash", documents, kernel, doc_bytes, dimensions, time_limit_seconds, cpu_batch_size
     )
 
 
@@ -181,12 +181,12 @@ def benchmark_cudf(documents, dimensions, batch_size, time_limit_seconds, filter
     gpu_batch_size = auto_batch_size(
         gpu_multiprocessor_count(0) or 64, base=batch_size, default_base=DEFAULT_BATCH_PER_CORE
     )
-    if not should_run(f"minhash/cudf.minhash(1xGPU,batch={gpu_batch_size})", filter_pattern):
+    if not should_run(f"minhash/cudf.minhash<1gpu,batch={gpu_batch_size}>", filter_pattern):
         return
     try:
         import cupy as cp
     except ImportError:
-        print("cudf.minhash(1xGPU): SKIPPED (cupy not available)")
+        print("cudf.minhash<1gpu>: SKIPPED (cupy not available)")
         return
 
     per_width = max(1, dimensions // len(NGRAM_WIDTHS))
@@ -201,7 +201,7 @@ def benchmark_cudf(documents, dimensions, batch_size, time_limit_seconds, filter
 
     try:
         bench_fingerprint(
-            f"cudf.minhash(1xGPU,batch={gpu_batch_size})",
+            f"cudf.minhash<1gpu,batch={gpu_batch_size}>",
             series,
             kernel,
             doc_bytes,
@@ -210,7 +210,7 @@ def benchmark_cudf(documents, dimensions, batch_size, time_limit_seconds, filter
             gpu_batch_size,
         )
     except Exception as error:
-        print(f"cudf.minhash(1xGPU): SKIPPED ({type(error).__name__}: {error})")
+        print(f"cudf.minhash<1gpu>: SKIPPED ({type(error).__name__}: {error})")
 
 
 _main_epilog = """

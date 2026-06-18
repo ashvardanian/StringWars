@@ -130,7 +130,7 @@ def bench_translate(
 
 
 def sizes_from_tokens(tokens: Iterable[bytes]) -> list[int]:
-    return [len(t) for t in tokens if len(t) > 0]
+    return [len(token) for token in tokens if len(token) > 0]
 
 
 def bench_generator(
@@ -223,7 +223,7 @@ def main() -> int:
         print("No tokens found in dataset")
         return 1
 
-    total_bytes = sum(len(t) for t in tokens_b)
+    total_bytes = sum(len(token) for token in tokens_b)
     avg_len = total_bytes / len(tokens_b)
     print(f"Dataset: {len(tokens_b):,} tokens, {total_bytes:,} bytes, {avg_len:.1f} avg token length")
     log_system_info()
@@ -252,56 +252,56 @@ def main() -> int:
     tokens_mv = [memoryview(bytearray(token)) for token in tokens_b]
 
     # Python bytes.translate (always allocating)
-    if should_run("lookup-table/std.bytes.translate(new)", pattern):
-        bench_translate("std.bytes.translate(new)", tokens_b, reverse, bytes_translate, args.time_limit)
+    if should_run("lookup-table/bytes.translate<new>", pattern):
+        bench_translate("bytes.translate<new>", tokens_b, reverse, bytes_translate, args.time_limit)
 
     # OpenCV allocating
-    if should_run("lookup-table/opencv.LUT(new)", pattern):
-        bench_translate("opencv.LUT(new)", tokens_np, reverse_np, opencv_lut_allocating, args.time_limit)
+    if should_run("lookup-table/opencv.LUT<new>", pattern):
+        bench_translate("opencv.LUT<new>", tokens_np, reverse_np, opencv_lut_allocating, args.time_limit)
 
     # OpenCV in-place
-    if should_run("lookup-table/opencv.LUT(inplace)", pattern):
-        bench_translate("opencv.LUT(inplace)", tokens_np, reverse_np, opencv_lut_inplace, args.time_limit)
+    if should_run("lookup-table/opencv.LUT<inplace>", pattern):
+        bench_translate("opencv.LUT<inplace>", tokens_np, reverse_np, opencv_lut_inplace, args.time_limit)
 
     # NumPy indexing allocating
-    if should_run("lookup-table/numpy.indexing(new)", pattern):
-        bench_translate("numpy.indexing(new)", tokens_np, reverse_np, numpy_lut_indexing_allocating, args.time_limit)
+    if should_run("lookup-table/numpy.indexing<new>", pattern):
+        bench_translate("numpy.indexing<new>", tokens_np, reverse_np, numpy_lut_indexing_allocating, args.time_limit)
 
     # NumPy indexing in-place
-    if should_run("lookup-table/numpy.indexing(inplace)", pattern):
-        bench_translate("numpy.indexing(inplace)", tokens_np, reverse_np, numpy_lut_indexing_inplace, args.time_limit)
+    if should_run("lookup-table/numpy.indexing<inplace>", pattern):
+        bench_translate("numpy.indexing<inplace>", tokens_np, reverse_np, numpy_lut_indexing_inplace, args.time_limit)
 
     # NumPy take allocating
-    if should_run("lookup-table/numpy.take(new)", pattern):
-        bench_translate("numpy.take(new)", tokens_np, reverse_np, numpy_lut_take_allocating, args.time_limit)
+    if should_run("lookup-table/numpy.take<new>", pattern):
+        bench_translate("numpy.take<new>", tokens_np, reverse_np, numpy_lut_take_allocating, args.time_limit)
 
     # NumPy take in-place
-    if should_run("lookup-table/numpy.take(inplace)", pattern):
-        bench_translate("numpy.take(inplace)", tokens_np, reverse_np, numpy_lut_take_inplace, args.time_limit)
+    if should_run("lookup-table/numpy.take<inplace>", pattern):
+        bench_translate("numpy.take<inplace>", tokens_np, reverse_np, numpy_lut_take_inplace, args.time_limit)
 
     # StringZilla allocating
-    if should_run("lookup-table/stringzilla.translate(new)", pattern):
-        bench_translate("stringzilla.translate(new)", tokens_b, reverse, sz_translate_allocating, args.time_limit)
+    if should_run("lookup-table/stringzilla.translate<new>", pattern):
+        bench_translate("stringzilla.translate<new>", tokens_b, reverse, sz_translate_allocating, args.time_limit)
 
     # StringZilla in-place (need memoryviews for each token)
-    if should_run("lookup-table/stringzilla.translate(inplace)", pattern):
-        bench_translate("stringzilla.translate(inplace)", tokens_mv, reverse, sz_translate_inplace, args.time_limit)
+    if should_run("lookup-table/stringzilla.translate<inplace>", pattern):
+        bench_translate("stringzilla.translate<inplace>", tokens_mv, reverse, sz_translate_inplace, args.time_limit)
 
     # Random byte generation
     print()
     print("Random Byte Generation")
     sizes = sizes_from_tokens(tokens_b)
 
-    if should_run("generate-random/pycryptodome.AES-CTR()", pattern):
-        bench_generator("pycryptodome.AES-CTR()", sizes, make_pycryptodome_aes_ctr(), args.time_limit)
-    if should_run("generate-random/stringzilla.fill_random()", pattern):
-        bench_generator("stringzilla.fill_random()", sizes, make_stringzilla_fill_random(), args.time_limit)
-    if should_run("generate-random/stringzilla.random()", pattern):
-        bench_generator("stringzilla.random()", sizes, sz.random, args.time_limit)
-    if should_run("generate-random/numpy.PCG64()", pattern):
-        bench_generator("numpy.PCG64()", sizes, make_numpy_pcg64(), args.time_limit)
-    if should_run("generate-random/numpy.Philox()", pattern):
-        bench_generator("numpy.Philox()", sizes, make_numpy_philox(), args.time_limit)
+    if should_run("generate-random/pycryptodome.AES-CTR", pattern):
+        bench_generator("pycryptodome.AES-CTR", sizes, make_pycryptodome_aes_ctr(), args.time_limit)
+    if should_run("generate-random/stringzilla.fill_random", pattern):
+        bench_generator("stringzilla.fill_random", sizes, make_stringzilla_fill_random(), args.time_limit)
+    if should_run("generate-random/stringzilla.random", pattern):
+        bench_generator("stringzilla.random", sizes, sz.random, args.time_limit)
+    if should_run("generate-random/numpy.PCG64", pattern):
+        bench_generator("numpy.PCG64", sizes, make_numpy_pcg64(), args.time_limit)
+    if should_run("generate-random/numpy.Philox", pattern):
+        bench_generator("numpy.Philox", sizes, make_numpy_philox(), args.time_limit)
 
     return 0
 

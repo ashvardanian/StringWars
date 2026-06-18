@@ -20,7 +20,7 @@ This file benchmarks Unicode case-insensitive operations and normalization:
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_normalization bench_normalization --jobs $(nproc)
+    cargo bench --features bench_normalization --bench bench_normalization
 ```
 "#]
 use std::hint::black_box;
@@ -52,10 +52,10 @@ fn log_pcre2_metadata() {
 }
 /// Benchmarks case folding transformation throughput.
 ///
-/// Unicode case folding may expand characters (e.group., German ß -> ss).
+/// Unicode case folding may expand characters (e.g., German ß → ss).
 /// - `stringzilla::utf8_uncased_fold()`: Full Unicode case folding per Unicode Standard
 /// - `stdlib::to_lowercase()`: Full Unicode lowercasing (locale-independent, allocates)
-fn bench_case_fold(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAuto) {
+fn bench_case_fold(budget: &BenchBudget, haystack: &[u8]) {
     let haystack_length = haystack.len() as u64;
 
     let haystack_str = std::str::from_utf8(haystack).unwrap();
@@ -65,7 +65,7 @@ fn bench_case_fold(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
 
     // Benchmark for StringZilla case folding (full Unicode).
     measure_throughput(
-        "case-fold/stringzilla/utf8_uncased_fold()",
+        "case-fold/stringzilla::utf8_uncased_fold",
         ReportAs::Bytes,
         budget,
         || {
@@ -78,7 +78,7 @@ fn bench_case_fold(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
 
     // Benchmark for stdlib to_lowercase (full Unicode, allocates).
     measure_throughput(
-        "case-fold/std/to_lowercase()",
+        "case-fold/std::to_lowercase",
         ReportAs::Bytes,
         budget,
         || {
@@ -97,7 +97,7 @@ fn bench_case_fold(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
 ///
 /// Normalization is most meaningful on Indic / Arabic / Vietnamese / Korean corpora; on
 /// ASCII-heavy inputs every implementation degenerates to a near-passthrough copy.
-fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAuto) {
+fn bench_normalize(budget: &BenchBudget, haystack: &[u8]) {
     let haystack_str = match std::str::from_utf8(haystack) {
         Ok(text) => text,
         Err(_) => {
@@ -119,7 +119,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
     ];
     for (form_name, form) in stringzilla_forms {
         let identifier = format!(
-            "normalize-{}/stringzilla/utf8_norm()",
+            "normalize-{}/stringzilla::utf8_norm",
             form_name.to_lowercase()
         );
         measure_throughput(&identifier, ReportAs::Bytes, budget, || {
@@ -140,7 +140,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
     // iterator type (Decompositions vs Recompositions), so the four cases are spelled out.
     // `String::extend` consumes the iterator into the reused buffer without reallocating.
     measure_throughput(
-        "normalize-nfc/unicode-normalization/nfc()",
+        "normalize-nfc/unicode-normalization::nfc",
         ReportAs::Bytes,
         budget,
         || {
@@ -151,7 +151,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
         },
     );
     measure_throughput(
-        "normalize-nfd/unicode-normalization/nfd()",
+        "normalize-nfd/unicode-normalization::nfd",
         ReportAs::Bytes,
         budget,
         || {
@@ -162,7 +162,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
         },
     );
     measure_throughput(
-        "normalize-nfkc/unicode-normalization/nfkc()",
+        "normalize-nfkc/unicode-normalization::nfkc",
         ReportAs::Bytes,
         budget,
         || {
@@ -173,7 +173,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
         },
     );
     measure_throughput(
-        "normalize-nfkd/unicode-normalization/nfkd()",
+        "normalize-nfkd/unicode-normalization::nfkd",
         ReportAs::Bytes,
         budget,
         || {
@@ -192,7 +192,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
     let icu_nfd = DecomposingNormalizerBorrowed::new_nfd();
     let icu_nfkd = DecomposingNormalizerBorrowed::new_nfkd();
     measure_throughput(
-        "normalize-nfc/icu/ComposingNormalizer::normalize_to()",
+        "normalize-nfc/icu::ComposingNormalizer::normalize_to",
         ReportAs::Bytes,
         budget,
         || {
@@ -205,7 +205,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
         },
     );
     measure_throughput(
-        "normalize-nfd/icu/DecomposingNormalizer::normalize_to()",
+        "normalize-nfd/icu::DecomposingNormalizer::normalize_to",
         ReportAs::Bytes,
         budget,
         || {
@@ -218,7 +218,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
         },
     );
     measure_throughput(
-        "normalize-nfkc/icu/ComposingNormalizer::normalize_to()",
+        "normalize-nfkc/icu::ComposingNormalizer::normalize_to",
         ReportAs::Bytes,
         budget,
         || {
@@ -231,7 +231,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
         },
     );
     measure_throughput(
-        "normalize-nfkd/icu/DecomposingNormalizer::normalize_to()",
+        "normalize-nfkd/icu::DecomposingNormalizer::normalize_to",
         ReportAs::Bytes,
         budget,
         || {
@@ -245,7 +245,7 @@ fn bench_normalize(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAu
     );
 }
 /// Benchmarks case-insensitive string equality comparison.
-fn bench_case_insensitive_compare(budget: &BenchBudget, _haystack: &[u8], needles: &BytesCowsAuto) {
+fn bench_case_insensitive_compare(budget: &BenchBudget, needles: &BytesCowsAuto) {
     // We compare each pair of adjacent tokens
     let pairs: Vec<(&[u8], &[u8])> = needles
         .iter()
@@ -275,7 +275,7 @@ fn bench_case_insensitive_compare(budget: &BenchBudget, _haystack: &[u8], needle
     {
         let mut cursor = 0usize;
         measure_throughput(
-            "case-insensitive-compare/stringzilla/utf8_uncased_order()",
+            "case-insensitive-compare/stringzilla::utf8_uncased_order",
             ReportAs::Bytes,
             budget,
             || {
@@ -293,7 +293,7 @@ fn bench_case_insensitive_compare(budget: &BenchBudget, _haystack: &[u8], needle
     {
         let mut cursor = 0usize;
         measure_throughput(
-            "case-insensitive-compare/unicase/eq()",
+            "case-insensitive-compare/unicase::eq",
             ReportAs::Bytes,
             budget,
             || {
@@ -311,7 +311,7 @@ fn bench_case_insensitive_compare(budget: &BenchBudget, _haystack: &[u8], needle
     {
         let mut cursor = 0usize;
         measure_throughput(
-            "case-insensitive-compare/std/to_lowercase().eq()",
+            "case-insensitive-compare/std::to_lowercase.eq",
             ReportAs::Bytes,
             budget,
             || {
@@ -357,7 +357,7 @@ fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &
     {
         let mut needle_index = 0usize;
         measure_throughput(
-            "case-insensitive-find/stringzilla/utf8_uncased_find()",
+            "case-insensitive-find/stringzilla::utf8_uncased_find",
             ReportAs::Bytes,
             budget,
             || {
@@ -400,7 +400,7 @@ fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &
 
         let mut needle_index = 0usize;
         measure_throughput(
-            "case-insensitive-find/pcre2/pre-jit",
+            "case-insensitive-find/pcre2::pre-jit",
             ReportAs::Bytes,
             budget,
             || {
@@ -417,7 +417,7 @@ fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &
     {
         let mut needle_index = 0usize;
         measure_throughput(
-            "case-insensitive-find/pcre2/jit-on-fly",
+            "case-insensitive-find/pcre2::jit-on-fly",
             ReportAs::Bytes,
             budget,
             || {
@@ -453,7 +453,7 @@ fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &
 
         let mut needle_index = 0usize;
         measure_throughput(
-            "case-insensitive-find/pcre2/no-jit",
+            "case-insensitive-find/pcre2::no-jit",
             ReportAs::Bytes,
             budget,
             || {
@@ -473,7 +473,7 @@ fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &
         let case_mapper = CaseMapper::new();
         let mut needle_index = 0usize;
         measure_throughput(
-            "case-insensitive-find/icu+memchr/fold+find",
+            "case-insensitive-find/memchr::Finder<icu-fold>",
             ReportAs::Bytes,
             budget,
             || {
@@ -506,14 +506,14 @@ fn main() {
     let budget = BenchBudget::from_env(3.0, 20.0);
 
     println!("# case-fold");
-    bench_case_fold(&budget, &haystack, needles);
+    bench_case_fold(&budget, haystack);
 
     println!("# normalize");
-    bench_normalize(&budget, &haystack, needles);
+    bench_normalize(&budget, haystack);
 
     println!("# case-insensitive-compare");
-    bench_case_insensitive_compare(&budget, &haystack, needles);
+    bench_case_insensitive_compare(&budget, needles);
 
     println!("# case-insensitive-find");
-    bench_case_insensitive_find(&budget, &haystack, needles);
+    bench_case_insensitive_find(&budget, haystack, needles);
 }

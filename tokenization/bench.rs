@@ -22,7 +22,7 @@ This file benchmarks UTF-8 segmentation and codepoint iteration:
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_tokenization bench_tokenization --jobs $(nproc)
+    cargo bench --features bench_tokenization --bench bench_tokenization
 ```
 "#]
 use std::hint::black_box;
@@ -39,9 +39,32 @@ use unicode_segmentation::UnicodeSegmentation;
 #[path = "../utils.rs"]
 mod utils;
 use utils::{
-    install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput, BenchBudget,
-    ReportAs, ResultExt, WorkUnits,
+    install_panic_hook, load_dataset, log_stringzilla_metadata, measure_throughput, should_run,
+    BenchBudget, ReportAs, ResultExt, WorkUnits,
 };
+
+/// File-local helper: cycles through `needles` byte slices, passes each to `count`, and reports
+/// throughput as `WorkUnits::bytes(line.len())` — the bytes of that one line per call.
+///
+/// Only use this for benchmarks whose body is exactly "pick a line, count something,
+/// WorkUnits::bytes(line.len())". Blocks that operate on `&str` slices, use `unsafe`, or scan the
+/// whole haystack in one shot are left inline.
+fn measure_line_tokenizer<Count: FnMut(&[u8]) -> usize>(
+    name: &str,
+    budget: &BenchBudget,
+    needles: &BytesCowsAuto,
+    mut count: Count,
+) {
+    if !should_run(name) {
+        return;
+    }
+    let mut lines = needles.iter().cycle();
+    measure_throughput(name, ReportAs::Bytes, budget, || {
+        let line = black_box(lines.next().unwrap());
+        black_box(count(line));
+        WorkUnits::bytes(line.len() as u64)
+    });
+}
 
 /// Benchmarks Unicode whitespace splitting using ICU, stdlib, and StringZilla.
 ///
@@ -57,26 +80,22 @@ fn bench_tokenize_whitespace(budget: &BenchBudget, _haystack: &[u8], needles: &B
         .collect();
 
     // Benchmark for StringZilla whitespace splits.
-    {
-        let mut lines = needles.iter().cycle();
-        measure_throughput(
-            "tokenize-whitespace/stringzilla/utf8_whitespace_splits().count()",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let line = lines.next().unwrap();
-                let count: usize = black_box(line).sz_utf8_whitespace_splits().count();
-                black_box(count);
-                WorkUnits::bytes(line.len() as u64)
-            },
-        );
-    }
+    measure_line_tokenizer(
+        "tokenize-whitespace/stringzilla::utf8_whitespace_splits",
+        budget,
+        needles,
+        |line| {
+            let count: usize = line.sz_utf8_whitespace_splits().count();
+            black_box(count);
+            count
+        },
+    );
 
     // Benchmark for Rust stdlib char::is_whitespace.
     {
         let mut lines = lines_str.iter().cycle();
         measure_throughput(
-            "tokenize-whitespace/std/split(char::is_whitespace).count()",
+            "tokenize-whitespace/std::split<is_whitespace>",
             ReportAs::Bytes,
             budget,
             || {
@@ -96,7 +115,7 @@ fn bench_tokenize_whitespace(budget: &BenchBudget, _haystack: &[u8], needles: &B
         let white_space = CodePointSetData::new::<WhiteSpace>();
         let mut lines = lines_str.iter().cycle();
         measure_throughput(
-            "tokenize-whitespace/icu/WhiteSpace.split().count()",
+            "tokenize-whitespace/icu::WhiteSpace.split",
             ReportAs::Bytes,
             budget,
             || {
@@ -111,6 +130,7 @@ fn bench_tokenize_whitespace(budget: &BenchBudget, _haystack: &[u8], needles: &B
         );
     }
 }
+
 /// Benchmarks Unicode newline splitting using custom predicates and StringZilla.
 ///
 /// Each call splits a single document line, cycling through the line tokens; throughput is the
@@ -133,26 +153,22 @@ fn bench_tokenize_newlines(budget: &BenchBudget, _haystack: &[u8], needles: &Byt
         .collect();
 
     // Benchmark for StringZilla newline splits.
-    {
-        let mut lines = needles.iter().cycle();
-        measure_throughput(
-            "tokenize-newlines/stringzilla/utf8_newline_splits().count()",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let line = lines.next().unwrap();
-                let count: usize = black_box(line).sz_utf8_newline_splits().count();
-                black_box(count);
-                WorkUnits::bytes(line.len() as u64)
-            },
-        );
-    }
+    measure_line_tokenizer(
+        "tokenize-newlines/stringzilla::utf8_newline_splits",
+        budget,
+        needles,
+        |line| {
+            let count: usize = line.sz_utf8_newline_splits().count();
+            black_box(count);
+            count
+        },
+    );
 
     // Benchmark for custom newline predicate.
     {
         let mut lines = lines_str.iter().cycle();
         measure_throughput(
-            "tokenize-newlines/custom/split(is_unicode_newline).count()",
+            "tokenize-newlines/custom::split<is_unicode_newline>",
             ReportAs::Bytes,
             budget,
             || {
@@ -167,6 +183,7 @@ fn bench_tokenize_newlines(budget: &BenchBudget, _haystack: &[u8], needles: &Byt
         );
     }
 }
+
 /// Benchmarks Unicode TR29 (UAX#29) word segmentation.
 ///
 /// TR29 defines linguistically-aware word boundaries that handle complex cases like
@@ -184,26 +201,22 @@ fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &B
 
     // Benchmark for StringZilla's single-pass TR29 word iterator. `.count()` consumes the
     // iterator without materializing the segments, so no allocation taints the measurement.
-    {
-        let mut lines = needles.iter().cycle();
-        measure_throughput(
-            "tokenize-words-tr29/stringzilla/utf8_word_splits().count()",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let line = lines.next().unwrap();
-                let count: usize = black_box(line).sz_utf8_word_splits().count();
-                black_box(count);
-                WorkUnits::bytes(line.len() as u64)
-            },
-        );
-    }
+    measure_line_tokenizer(
+        "tokenize-words-tr29/stringzilla::utf8_word_splits",
+        budget,
+        needles,
+        |line| {
+            let count: usize = line.sz_utf8_word_splits().count();
+            black_box(count);
+            count
+        },
+    );
 
     // Benchmark for unicode-segmentation: unicode_words() - only word-like segments
     {
         let mut lines = lines_str.iter().cycle();
         measure_throughput(
-            "tokenize-words-tr29/unicode-segmentation/unicode_words().count()",
+            "tokenize-words-tr29/unicode-segmentation::unicode_words",
             ReportAs::Bytes,
             budget,
             || {
@@ -219,7 +232,7 @@ fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &B
     {
         let mut lines = lines_str.iter().cycle();
         measure_throughput(
-            "tokenize-words-tr29/unicode-segmentation/split_word_bounds().count()",
+            "tokenize-words-tr29/unicode-segmentation::split_word_bounds",
             ReportAs::Bytes,
             budget,
             || {
@@ -236,7 +249,7 @@ fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &B
         let segmenter = WordSegmenter::new_dictionary(Default::default());
         let mut lines = lines_str.iter().cycle();
         measure_throughput(
-            "tokenize-words-tr29/icu/WordSegmenter::new_dictionary().segment_str()",
+            "tokenize-words-tr29/icu::WordSegmenter::new_dictionary.segment_str",
             ReportAs::Bytes,
             budget,
             || {
@@ -253,7 +266,7 @@ fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &B
     {
         let mut lines = lines_str.iter().cycle();
         measure_throughput(
-            "tokenize-words-tr29/std/split_whitespace().count()",
+            "tokenize-words-tr29/std::split_whitespace",
             ReportAs::Bytes,
             budget,
             || {
@@ -265,6 +278,7 @@ fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &B
         );
     }
 }
+
 /// Benchmarks UTF-8 character counting using StringZilla, simdutf, and stdlib.
 fn bench_utf8_length(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAuto) {
     let haystack_length = haystack.len() as u64;
@@ -275,7 +289,7 @@ fn bench_utf8_length(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCows
 
     // Benchmark for StringZilla UTF-8 character counting via the lazy view.
     measure_throughput(
-        "utf8-length/stringzilla/utf8_chars().len()",
+        "utf8-length/stringzilla::utf8_chars.len",
         ReportAs::Bytes,
         budget,
         || {
@@ -289,7 +303,7 @@ fn bench_utf8_length(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCows
     // Benchmark for StringZilla's dedicated `count_utf8()` free function (direct SIMD scan,
     // without constructing a view object).
     measure_throughput(
-        "utf8-length/stringzilla/count_utf8()",
+        "utf8-length/stringzilla::count_utf8",
         ReportAs::Bytes,
         budget,
         || {
@@ -302,7 +316,7 @@ fn bench_utf8_length(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCows
 
     // Benchmark for simdutf UTF-8 character counting.
     measure_throughput(
-        "utf8-length/simdutf/count_utf8()",
+        "utf8-length/simdutf::count_utf8",
         ReportAs::Bytes,
         budget,
         || {
@@ -317,7 +331,7 @@ fn bench_utf8_length(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCows
     {
         let text = haystack_str.expect("UTF-8 text required for the stdlib codepoint counter");
         measure_throughput(
-            "utf8-length/std/chars().count()",
+            "utf8-length/std::chars.count",
             ReportAs::Bytes,
             budget,
             || {
@@ -328,13 +342,14 @@ fn bench_utf8_length(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCows
         );
     }
 }
+
 /// Benchmarks UTF-8 to UTF-32 decoding using StringZilla, simdutf, and stdlib.
 fn bench_utf8_iterate(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAuto) {
     let haystack_length = haystack.len() as u64;
 
     // Benchmark for StringZilla UTF-8 character iteration.
     measure_throughput(
-        "utf8-iterate/stringzilla/utf8_chars().iter()",
+        "utf8-iterate/stringzilla::utf8_chars.iter",
         ReportAs::Bytes,
         budget,
         || {
@@ -353,7 +368,7 @@ fn bench_utf8_iterate(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCow
         // Pre-allocate buffer for UTF-32 output (worst case: same number of codepoints as bytes)
         let mut utf32_buffer = vec![0u32; haystack.len()];
         measure_throughput(
-            "utf8-iterate/simdutf/convert_utf8_to_utf32()",
+            "utf8-iterate/simdutf::convert_utf8_to_utf32",
             ReportAs::Bytes,
             budget,
             || {
@@ -366,8 +381,8 @@ fn bench_utf8_iterate(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCow
                     )
                 };
                 let mut sum: u32 = 0;
-                for index in 0..len {
-                    sum = sum.wrapping_add(utf32_buffer[index]);
+                for value in &utf32_buffer[..len] {
+                    sum = sum.wrapping_add(*value);
                 }
                 black_box(sum);
                 WorkUnits::bytes(haystack_length)
@@ -376,7 +391,9 @@ fn bench_utf8_iterate(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCow
     }
 
     // Benchmark for stdlib UTF-8 character iteration.
-    measure_throughput("utf8-iterate/std/chars()", ReportAs::Bytes, budget, || {
+    measure_throughput("utf8-iterate/std::chars", ReportAs::Bytes, budget, || {
+        // Safety: the tokenization corpora are valid UTF-8 text; `from_utf8_unchecked` skips
+        // re-validation on the hot path so the benchmark measures iteration, not UTF-8 checking.
         let haystack_str = black_box(unsafe { std::str::from_utf8_unchecked(haystack) });
         let mut sum: u32 = 0;
         for character in haystack_str.chars() {
@@ -386,6 +403,7 @@ fn bench_utf8_iterate(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCow
         WorkUnits::bytes(haystack_length)
     });
 }
+
 /// Benchmarks locating the byte offset of the Nth UTF-8 codepoint.
 ///
 /// - `stringzilla::find_nth_utf8()`: SIMD-accelerated scan to the Nth codepoint
@@ -412,7 +430,7 @@ fn bench_find_nth_utf8(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCo
 
     // Benchmark for StringZilla's SIMD `find_nth_utf8`.
     measure_throughput(
-        "find-nth-utf8/stringzilla/find_nth_utf8()",
+        "find-nth-utf8/stringzilla::find_nth_utf8",
         ReportAs::Bytes,
         budget,
         || {
@@ -424,7 +442,7 @@ fn bench_find_nth_utf8(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCo
 
     // Benchmark for the stdlib scalar baseline.
     measure_throughput(
-        "find-nth-utf8/std/char_indices().nth()",
+        "find-nth-utf8/std::char_indices.nth",
         ReportAs::Bytes,
         budget,
         || {
@@ -451,20 +469,20 @@ fn main() {
     let budget = BenchBudget::from_env(3.0, 20.0);
 
     println!("# tokenize-whitespace");
-    bench_tokenize_whitespace(&budget, &haystack, needles);
+    bench_tokenize_whitespace(&budget, haystack, needles);
 
     println!("# tokenize-newlines");
-    bench_tokenize_newlines(&budget, &haystack, needles);
+    bench_tokenize_newlines(&budget, haystack, needles);
 
     println!("# tokenize-words-tr29");
-    bench_tokenize_words_tr29(&budget, &haystack, needles);
+    bench_tokenize_words_tr29(&budget, haystack, needles);
 
     println!("# utf8-length");
-    bench_utf8_length(&budget, &haystack, needles);
+    bench_utf8_length(&budget, haystack, needles);
 
     println!("# utf8-iterate");
-    bench_utf8_iterate(&budget, &haystack, needles);
+    bench_utf8_iterate(&budget, haystack, needles);
 
     println!("# find-nth-utf8");
-    bench_find_nth_utf8(&budget, &haystack, needles);
+    bench_find_nth_utf8(&budget, haystack, needles);
 }

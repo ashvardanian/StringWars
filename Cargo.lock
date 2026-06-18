@@ -1115,6 +1115,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuckoofilter"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b810a8449931679f64cd7eef1bbd0fa315801b6d5d9cdc1ace2804d6529eee18"
+dependencies = [
+ "byteorder",
+ "fnv",
+ "rand 0.7.3",
+]
+
+[[package]]
 name = "custom_derive"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1292,6 +1303,19 @@ name = "fast-float2"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8eb564c5c7423d25c886fb561d1e4ee69f72354d16918afa32c08811f6b6a55"
+
+[[package]]
+name = "fastbloom"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef975e30683b2d965054bb0a836f8973857c4ebf6acf274fe46617cd285060d8"
+dependencies = [
+ "foldhash 0.2.0",
+ "libm",
+ "portable-atomic",
+ "rand 0.9.2",
+ "siphasher 1.0.1",
+]
 
 [[package]]
 name = "feature-probe"
@@ -3486,9 +3510,9 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.11.1"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "portable-atomic-util"
@@ -4497,6 +4521,8 @@ dependencies = [
  "cityhash",
  "crc32fast",
  "criterion",
+ "cuckoofilter",
+ "fastbloom",
  "foldhash 0.2.0",
  "fork_union",
  "getrandom 0.3.4",
@@ -4526,6 +4552,7 @@ dependencies = [
  "unicode-normalization",
  "unicode-segmentation",
  "wyhash",
+ "xorf",
  "xxhash-rust",
  "zeroize",
 ]
@@ -4533,6 +4560,8 @@ dependencies = [
 [[package]]
 name = "stringzilla"
 version = "4.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d191b442eae1a570de2717e985d56fb3bb2a4aa91817b777ca9d0c72982d0737"
 dependencies = [
  "allocator-api2 0.3.1",
  "cc",
@@ -5465,6 +5494,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf6e163c25e3fac820b4b453185ea2dea3b6a3e0a721d4d23d75bd33734c295"
 dependencies = [
  "rand_core 0.6.4",
+]
+
+[[package]]
+name = "xorf"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45e820b97864028eb5069aabf2d90ad7bc279a0ed0292f1306451ce4b91adc13"
+dependencies = [
+ "libm",
+ "rand 0.8.5",
 ]
 
 [[package]]

@@ -288,12 +288,7 @@ def bench_normalize(
     normalize_function: Callable[[str], str | bytes],
     time_limit_seconds: float = 10.0,
 ):
-    """Benchmark Unicode normalization transformation.
-
-    Structurally identical to `bench_case_fold` (apply a per-string transform and
-    measure input-byte throughput), kept as a separate function for clarity since
-    normalization is a distinct operation family with its own reporting section.
-    """
+    """Benchmark a per-string Unicode normalization transform and report input-byte throughput."""
     if not strings:
         print(f"{name}: no strings to normalize", file=sys.stderr)
         return
@@ -413,49 +408,51 @@ def main():
 
     # Case-insensitive comparison
     print("Case-Insensitive Comparison")
-    if should_run("case-insensitive-compare/stringzilla.utf8_uncased_order()", filter_pattern):
-        bench_case_compare("stringzilla.utf8_uncased_order()", pairs, compare_stringzilla, args.time_limit)
-    if should_run("case-insensitive-compare/std.casefold().eq()", filter_pattern):
-        bench_case_compare("std.casefold().eq()", pairs, compare_casefold, args.time_limit)
-    if should_run("case-insensitive-compare/regex.fullmatch(FULLCASE)", filter_pattern):
-        bench_case_compare("regex.fullmatch(FULLCASE)", pairs, compare_regex_fullcase, args.time_limit)
-    if should_run("case-insensitive-compare/icu.CaseMap.foldCase().eq()", filter_pattern):
-        bench_case_compare("icu.CaseMap.foldCase().eq()", pairs, compare_icu, args.time_limit)
+    if should_run("case-insensitive-compare/stringzilla.utf8_uncased_order", filter_pattern):
+        bench_case_compare("stringzilla.utf8_uncased_order", pairs, compare_stringzilla, args.time_limit)
+    if should_run("case-insensitive-compare/str.casefold.eq", filter_pattern):
+        bench_case_compare("str.casefold.eq", pairs, compare_casefold, args.time_limit)
+    if should_run("case-insensitive-compare/regex.fullmatch<fullcase>", filter_pattern):
+        bench_case_compare("regex.fullmatch<fullcase>", pairs, compare_regex_fullcase, args.time_limit)
+    if should_run("case-insensitive-compare/icu.CaseMap.foldCase.eq", filter_pattern):
+        bench_case_compare("icu.CaseMap.foldCase.eq", pairs, compare_icu, args.time_limit)
 
     # Case-insensitive substring search
     print("\nCase-Insensitive Substring Search")
-    if should_run("case-insensitive-find/stringzilla.utf8_uncased_find()", filter_pattern):
+    if should_run("case-insensitive-find/stringzilla.utf8_uncased_find", filter_pattern):
         bench_case_find(
-            "stringzilla.utf8_uncased_find()", pythonic_str, search_needles, find_stringzilla, args.time_limit
+            "stringzilla.utf8_uncased_find", pythonic_str, search_needles, find_stringzilla, args.time_limit
         )
-    if should_run("case-insensitive-find/std.casefold().find()", filter_pattern):
-        bench_case_find("std.casefold().find()", pythonic_str, search_needles, find_casefold, args.time_limit)
-    if should_run("case-insensitive-find/regex.search(FULLCASE)", filter_pattern):
-        bench_case_find("regex.search(FULLCASE)", pythonic_str, search_needles, find_regex_fullcase, args.time_limit)
-    if should_run("case-insensitive-find/icu.StringSearch()", filter_pattern):
-        bench_case_find("icu.StringSearch()", pythonic_str, search_needles, find_icu, args.time_limit)
+    if should_run("case-insensitive-find/str.casefold.find", filter_pattern):
+        bench_case_find("str.casefold.find", pythonic_str, search_needles, find_casefold, args.time_limit)
+    if should_run("case-insensitive-find/regex.search<fullcase>", filter_pattern):
+        bench_case_find("regex.search<fullcase>", pythonic_str, search_needles, find_regex_fullcase, args.time_limit)
+    if should_run("case-insensitive-find/icu.StringSearch", filter_pattern):
+        bench_case_find("icu.StringSearch", pythonic_str, search_needles, find_icu, args.time_limit)
 
     # Case folding transformation
     print("\nCase Folding Transformation")
-    if should_run("case-fold/stringzilla.utf8_uncased_fold()", filter_pattern):
-        bench_case_fold("stringzilla.utf8_uncased_fold()", tokens, fold_stringzilla, args.time_limit)
-    if should_run("case-fold/std.casefold()", filter_pattern):
-        bench_case_fold("std.casefold()", tokens, fold_casefold, args.time_limit)
-    if should_run("case-fold/icu.CaseMap.foldCase()", filter_pattern):
-        bench_case_fold("icu.CaseMap.foldCase()", tokens, fold_icu, args.time_limit)
+    if should_run("case-fold/stringzilla.utf8_uncased_fold", filter_pattern):
+        bench_case_fold("stringzilla.utf8_uncased_fold", tokens, fold_stringzilla, args.time_limit)
+    if should_run("case-fold/str.casefold", filter_pattern):
+        bench_case_fold("str.casefold", tokens, fold_casefold, args.time_limit)
+    if should_run("case-fold/icu.CaseMap.foldCase", filter_pattern):
+        bench_case_fold("icu.CaseMap.foldCase", tokens, fold_icu, args.time_limit)
 
     # Unicode normalization (NFC / NFD / NFKC / NFKD) - all forms measured
     print("\nUnicode Normalization")
     for form in NORMALIZATION_FORMS:
         suffix = form.lower()
-        if should_run(f"normalize-{suffix}/stringzilla.utf8_norm()", filter_pattern):
+        if should_run(f"normalize-{suffix}/stringzilla.utf8_norm", filter_pattern):
             bench_normalize(
-                f"stringzilla.utf8_norm({form})", tokens, partial(normalize_stringzilla, form), args.time_limit
+                f"stringzilla.utf8_norm<{suffix}>", tokens, partial(normalize_stringzilla, form), args.time_limit
             )
-        if should_run(f"normalize-{suffix}/unicodedata.normalize()", filter_pattern):
-            bench_normalize(f"unicodedata.normalize({form})", tokens, partial(normalize_stdlib, form), args.time_limit)
-        if should_run(f"normalize-{suffix}/icu.Normalizer2()", filter_pattern):
-            bench_normalize(f"icu.Normalizer2({form})", tokens, make_normalize_icu(form), args.time_limit)
+        if should_run(f"normalize-{suffix}/unicodedata.normalize", filter_pattern):
+            bench_normalize(
+                f"unicodedata.normalize<{suffix}>", tokens, partial(normalize_stdlib, form), args.time_limit
+            )
+        if should_run(f"normalize-{suffix}/icu.Normalizer2", filter_pattern):
+            bench_normalize(f"icu.Normalizer2<{suffix}>", tokens, make_normalize_icu(form), args.time_limit)
 
     return 0
 
