@@ -9,40 +9,44 @@ Most of the time, programmers don't think about replacing the `str::find` method
 In many languages it's offloaded to the C standard library [`memmem`](https://man7.org/linux/man-pages/man3/memmem.3.html) or [`strstr`](https://en.cppreference.com/w/c/string/byte/strstr) for `NULL`-terminated strings.
 The C standard library is, however, also implemented by humans, and a better solution can be created.
 
-### Forward Search (find)
+### Forward Search
 
-| Library             | Short Word Queries | Long Line Queries |
-| ------------------- | -----------------: | ----------------: |
-| Rust                |                    |                   |
-| `std::str::find`    |          8.90 GB/s |        11.27 GB/s |
-| `memmem::find`      |          8.70 GB/s |        11.12 GB/s |
-| `memmem::Finder`    |          9.31 GB/s |    __11.33 GB/s__ |
-| `stringzilla::find` |     __10.32 GB/s__ |        11.24 GB/s |
-|                     |                    |                   |
-| Python              |                    |                   |
-| `str.find`          |          0.93 GB/s |         1.14 GB/s |
-| `stringzilla.find`  |      __2.32 GB/s__ |    __11.82 GB/s__ |
+### Intel Xeon4 Sapphire Rapids
 
-> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
+| Library                | Short Word Queries | Long Line Queries |
+| ---------------------- | -----------------: | ----------------: |
+| Rust                   |                    |                   |
+| `std::str::find`       |          9.34 GB/s |        11.45 GB/s |
+| `memmem::find`         |          9.52 GB/s |        11.29 GB/s |
+| `memmem::Finder`       |          9.99 GB/s |        11.33 GB/s |
+| `stringzilla::find`    |     __11.41 GB/s__ |    __11.52 GB/s__ |
+|                        |                    |                   |
+| Python                 |                    |                   |
+| `str.find`             |          0.73 GB/s |         1.14 GB/s |
+| `stringzilla.Str.find` |      __3.37 GB/s__ |    __11.64 GB/s__ |
 
-### Reverse Search (rfind)
+> Measured June 17, 2026 on an Intel Xeon4 Sapphire Rapids.
+
+### Reverse Search
 
 Interestingly, the reverse order search is almost never implemented in SIMD, assuming fewer people ever need it.
 Still, those are provided by StringZilla mostly for parsing tasks and feature parity.
 
-| Library              | Short Word Queries | Long Line Queries |
-| -------------------- | -----------------: | ----------------: |
-| Rust                 |                    |                   |
-| `std::str::rfind`    |          3.19 GB/s |         5.43 GB/s |
-| `memmem::rfind`      |          3.20 GB/s |         5.52 GB/s |
-| `memmem::FinderRev`  |          3.05 GB/s |         5.54 GB/s |
-| `stringzilla::rfind` |      __9.86 GB/s__ |    __10.87 GB/s__ |
-|                      |                    |                   |
-| Python               |                    |                   |
-| `str.rfind`          |          1.33 GB/s |         4.55 GB/s |
-| `stringzilla.rfind`  |      __8.64 GB/s__ |    __11.49 GB/s__ |
+### Intel Xeon4 Sapphire Rapids
 
-> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
+| Library                 | Short Word Queries | Long Line Queries |
+| ----------------------- | -----------------: | ----------------: |
+| Rust                    |                    |                   |
+| `std::str::rfind`       |          2.94 GB/s |         5.21 GB/s |
+| `memmem::rfind`         |          2.93 GB/s |         5.02 GB/s |
+| `memmem::FinderRev`     |          2.96 GB/s |         5.02 GB/s |
+| `stringzilla::rfind`    |     __10.79 GB/s__ |    __11.45 GB/s__ |
+|                         |                    |                   |
+| Python                  |                    |                   |
+| `str.rfind`             |          1.39 GB/s |         3.80 GB/s |
+| `stringzilla.Str.rfind` |      __7.76 GB/s__ |    __11.63 GB/s__ |
+
+> Measured June 17, 2026 on an Intel Xeon4 Sapphire Rapids.
 
 ## Byte-Set Search
 
@@ -55,19 +59,21 @@ StringWars takes a few representative examples of various character sets that ap
 It's common in such cases, to pre-construct some library-specific filter-object or Finite State Machine (FSM) to search for a set of characters.
 Once that object is constructed, all of its inclusions in each token (word or line) are counted.
 
+### Intel Xeon4 Sapphire Rapids
+
 | Library                         |   Short Words |    Long Lines |
 | ------------------------------- | ------------: | ------------: |
 | Rust                            |               |               |
-| `bstr::iter`                    |     0.24 GB/s |     0.26 GB/s |
-| `regex::find_iter`              |     0.20 GB/s |     5.28 GB/s |
-| `aho_corasick::find_iter`       |     0.35 GB/s |     0.53 GB/s |
-| `stringzilla::find_byteset`     | __1.22 GB/s__ | __8.44 GB/s__ |
+| `bstr::iter`                    |     0.26 GB/s |     0.36 GB/s |
+| `regex::find_iter`              |     0.20 GB/s |     5.07 GB/s |
+| `aho_corasick::find_iter`       |     0.34 GB/s |     0.51 GB/s |
+| `stringzilla::find_byteset`     | __1.20 GB/s__ | __8.34 GB/s__ |
 |                                 |               |               |
 | Python                          |               |               |
-| `re.finditer`                   |     0.05 GB/s |     0.20 GB/s |
-| `stringzilla.Str.find_first_of` | __0.13 GB/s__ | __8.96 GB/s__ |
+| `re.finditer`                   |     0.05 GB/s |     0.21 GB/s |
+| `stringzilla.Str.find_first_of` | __0.12 GB/s__ | __9.35 GB/s__ |
 
-> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
+> Measured June 17, 2026 on an Intel Xeon4 Sapphire Rapids.
 
 ---
 

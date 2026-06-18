@@ -9,6 +9,8 @@ That's true not only for strings but for any data type, and StringZilla has been
 
 ## Random Byte Generation
 
+### Intel Xeon4 Sapphire Rapids
+
 | Library                        |   Short Words |     Long Lines |
 | ------------------------------ | ------------: | -------------: |
 | Rust                           |               |                |
@@ -24,27 +26,29 @@ That's true not only for strings but for any data type, and StringZilla has been
 | `pycryptodome.AES-CTR`         |     0.01 GB/s |      0.37 GB/s |
 | `stringzilla.random`           | __0.11 GB/s__ | __18.46 GB/s__ |
 
-> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
+> Measured June 17, 2026 on an Intel Xeon4 Sapphire Rapids.
 
 ## Lookup Tables
 
 Performing in-place lookups in a precomputed table of 256 bytes:
 
-| Library                         |   Short Words |    Long Lines |
-| ------------------------------- | ------------: | ------------: |
-| Rust                            |               |               |
-| serial code                     | __0.47 GB/s__ |     4.06 GB/s |
-| `stringzilla::lookup_inplace`   |     0.42 GB/s | __10.22 GB/s__|
-|                                 |               |               |
-| Python                          |               |               |
-| `bytes.translate`               |     0.12 GB/s |     2.68 GB/s |
-| `numpy.take`                    |     0.01 GB/s |     0.86 GB/s |
-| `opencv.LUT`                    |     0.01 GB/s |     2.00 GB/s |
-| `opencv.LUT` inplace            |     0.01 GB/s |     2.16 GB/s |
-| `stringzilla.translate`         |     0.09 GB/s |     7.94 GB/s |
-| `stringzilla.translate` inplace | __0.07 GB/s__ |  __8.02 GB/s__|
+### Intel Xeon4 Sapphire Rapids
 
-> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
+| Library                          |   Short Words |     Long Lines |
+| -------------------------------- | ------------: | -------------: |
+| Rust                             |               |                |
+| serial code                      | __0.47 GB/s__ |      4.06 GB/s |
+| `stringzilla::lookup_inplace`    |     0.42 GB/s | __10.22 GB/s__ |
+|                                  |               |                |
+| Python                           |               |                |
+| `bytes.translate<new>`           | __0.12 GB/s__ |      2.68 GB/s |
+| `numpy.take<new>`                |     0.01 GB/s |      0.86 GB/s |
+| `opencv.LUT<new>`                |     0.01 GB/s |      2.00 GB/s |
+| `opencv.LUT<inplace>`            |     0.01 GB/s |      2.16 GB/s |
+| `stringzilla.translate<new>`     |     0.09 GB/s |      7.94 GB/s |
+| `stringzilla.translate<inplace>` |     0.07 GB/s |  __8.02 GB/s__ |
+
+> Measured June 17, 2026 on an Intel Xeon4 Sapphire Rapids.
 
 ---
 

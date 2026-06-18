@@ -15,25 +15,36 @@ Those are directly compatible with arbitrary string-comparable collection types 
 
 ## String Sorting
 
-| Library                                     |               Short Words |              Long Lines |
-| ------------------------------------------- | ------------------------: | ----------------------: |
-| Rust                                        |                           |                         |
-| `std::sort_unstable_by_key`                 |        71.30 M compares/s |     106.49 M compares/s |
-| `rayon::par_sort_unstable_by_key` on 1x SPR |       392.73 M compares/s |     254.81 M compares/s |
-| `polars::Series::sort`                      |   __711.06 M compares/s__ | __264.07 M compares/s__ |
-| `polars::Series::arg_sort`                  |       223.34 M compares/s |     168.70 M compares/s |
-| `arrow::lexsort_to_indices`                 |       112.81 M compares/s |     145.98 M compares/s |
-| `stringzilla::argsort_permutation`          |       204.64 M compares/s |     136.18 M compares/s |
-|                                             |                           |                         |
-| Python                                      |                           |                         |
-| `list.sort` on 1x SPR                       |        50.69 M compares/s |      30.27 M compares/s |
-| `pandas.Series.sort_values` on 1x SPR       |        58.72 M compares/s |      12.62 M compares/s |
-| `pyarrow.compute.sort_indices` on 1x SPR    |        63.04 M compares/s |      13.17 M compares/s |
-| `polars.Series.sort` on 1x SPR              |       998.24 M compares/s | __300.14 M compares/s__ |
-| `cudf.Series.sort_values` on H100           | __9'463.59 M compares/s__ |      66.44 M compares/s |
-| `stringzilla.Strs.sorted` on 1x SPR         |       191.79 M compares/s |      41.33 M compares/s |
+Sorting short whitespace-delimited words from `xlsum.csv` on a single core, in plain __byte order__ and in __Unicode case-folded__ order (where `ß` sorts as `ss`).
+The table fuses both index sorts and full sorts: `argsort` / `arg_sort` / `lexsort_to_indices` / `sort_indices` return only the index permutation, while `sort` / `sorted` / `sort_values` return the reordered sequence.
+StringZilla's `argsort` writes that permutation into a caller-owned buffer — in Python a NumPy `out=` array — so it allocates nothing per call, and `Strs.sorted` hands back a reordered _view_ over the shared bytes instead of copying the strings.
+Every engine builds its container outside the timed region and reuses its output buffer where the API allows.
+StringZilla's sort is always stable, so each competitor is configured for a stable sort where it exposes one: NumPy and pandas use `kind="stable"`, Rust's `std` uses the stable `sort_by_key` / `sort_by`, and Polars keeps `maintain_order` on in Rust — its Python `Series.sort` has no stability flag, so that row runs Polars' default order.
+For the case-folded column every folding sort shares one comparator, StringZilla's `sz_utf8_uncased_order`, so the gap measures the sort algorithm rather than differing Unicode tables; in Python that comparator is reached through `functools.cmp_to_key`, whose per-element proxy dispatch dominates the `list.sort` row.
 
-> Measured 2026-06-17 on an Intel Xeon Platinum 8468 (Sapphire Rapids).
+### Intel Xeon4 Sapphire Rapids
+
+| Library                        |              Byte Order |     Unicode Case-Folded |
+| ------------------------------ | ----------------------: | ----------------------: |
+| Rust                           |                         |                         |
+| `stringzilla::argsort`         | __209.32 M compares/s__ |  __97.34 M compares/s__ |
+| `polars::DataFrame::sort`      |     208.12 M compares/s |                       — |
+| `polars::Series::sort`         |     205.21 M compares/s |                       — |
+| `arrow::lexsort_to_indices`    |     122.58 M compares/s |                       — |
+| `polars::Series::arg_sort`     |      58.06 M compares/s |                       — |
+| `std::sort_by_key`             |      37.46 M compares/s |      24.72 M compares/s |
+|                                |                         |                         |
+| Python                         |                         |                         |
+| `polars.Series.sort`           | __229.90 M compares/s__ |                       — |
+| `stringzilla.Strs.argsort`     |     219.92 M compares/s | __105.76 M compares/s__ |
+| `stringzilla.Strs.sorted`      |     178.71 M compares/s |      95.62 M compares/s |
+| `pyarrow.compute.sort_indices` |      72.99 M compares/s |                       — |
+| `pandas.Series.sort_values`    |      59.44 M compares/s |                       — |
+| `list.sort`                    |      51.10 M compares/s |      10.21 M compares/s |
+| `polars.Series.arg_sort`       |      31.47 M compares/s |                       — |
+| `numpy.argsort`                |      21.65 M compares/s |                       — |
+
+> Measured June 17, 2026 on an Intel Xeon4 Sapphire Rapids, single-threaded (Polars pinned to one thread), sorting short words from `xlsum.csv`.
 
 ---
 

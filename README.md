@@ -50,6 +50,23 @@ xxhash.xxh3_64      █████▋               0.04    ██████�
 
 See [hash/README.md](hash/README.md) for details
 
+### Multi-Way Hashing
+
+Bloom and cuckoo filters need many hashes of the same key; StringZilla's `hash_multiseed` emits them from a single input preparation.
+Throughput at 16 hashes per word:
+
+```
+Rust:
+stringzilla::hash_multiseed ████████████████████ 1,030  M hashes/s
+stringzilla::hash           █████▋               290    M hashes/s
+
+Python:
+stringzilla.hash_multiseed  ████████████████████ 60.9   M hashes/s
+stringzilla.hash            ██▌                  7.6    M hashes/s
+```
+
+See [containers/README.md](containers/README.md) for details
+
 ### Case-Insensitive UTF-8 Search
 
 Unicode-aware case-insensitive search with full case folding (ß↔SS, σ↔ς).
@@ -153,26 +170,36 @@ stringzilla           ███████████████████�
 stdlib                █████████████▏        265   █████▍                325 MB/s
 ```
 
+Codepoint indexing — the byte offset of the Nth codepoint — is where SIMD pays off most: the standard library rescans the buffer byte-by-byte, while StringZilla jumps to it with a single SIMD scan.
+
+```
+Byte offset of the Nth codepoint, full corpora:
+                      English                      Korean
+stringzilla::find_nth ████████████████████  7.14   ████████████████████ 12.14 GB/s
+std::char_indices     ██▎                   0.83   █▏                   0.72 GB/s
+```
+
 See [tokenization/README.md](tokenization/README.md) and [normalization/README.md](normalization/README.md) for details
 
 ### Sequence Operations
 
 Dataframe libraries and search engines rely heavily on string sorting.
 SIMD-accelerated comparisons and specialized radix sorts can outperform generic algorithms.
+Every competitor is configured for a stable sort to match StringZilla, whose argsort writes the permutation into a caller-owned buffer — a NumPy `out=` array in Python — for a zero-allocation index sort.
 Throughput on short words:
 
 ```
 Rust:
-stringzilla         ████████████████████  213.73 M cmp/s
-polars::sort        ██████████████████▊   200.34 M cmp/s
-arrow::lexsort      ███████████▍          122.20 M cmp/s
-std::sort           █████                  54.35 M cmp/s
+stringzilla.argsort ████████████████████  209.32 M cmp/s
+polars::sort        ███████████████████▋  205.21 M cmp/s
+arrow::lexsort      ███████████▊          122.58 M cmp/s
+std::sort_by_key    ███▌                   37.46 M cmp/s
 
 Python:
-polars.sort         ████████████████████  223.38 M cmp/s
-stringzilla.sorted  ███████████████▎      171.13 M cmp/s
-pyarrow.sort        █████▌                 62.17 M cmp/s
-list.sort           ████▏                  47.06 M cmp/s
+polars.sort         ████████████████████  229.90 M cmp/s
+stringzilla.argsort ███████████████████▏  219.92 M cmp/s
+pyarrow.sort        ██████▎                72.99 M cmp/s
+list.sort           ████▍                  51.10 M cmp/s
 ```
 
 GPU: `cudf` on H100 reaches __9,463 M cmp/s__ on short words.
@@ -209,9 +236,9 @@ Rust:
                         1 Core                       1 Socket
 bio::levenshtein        █▏                      823
 rapidfuzz               ████████████████████ 14,316
-stringzilla (384x GNR)  ██████████████████▎  13,084  ████████████████████ 3,084,270 MCUPS
-stringzilla (B200)                                   ██████▍                998,620 MCUPS
-stringzilla (H100)                                   ██████                 925,890 MCUPS
+stringzilla<384x GNR>   ██████████████████▎  13,084  ████████████████████ 3,084,270 MCUPS
+stringzilla<B200>                                    ██████▍                998,620 MCUPS
+stringzilla<H100>                                    ██████                 925,890 MCUPS
 ```
 
 See [similarities/README.md](similarities/README.md) for details
@@ -225,8 +252,8 @@ Throughput on ~1,000 byte lines:
 Rust:
                         1 Core                       1 Socket
 pc::MinHash             ████████████████████   3.16
-stringzilla (384x GNR)  ███▏                   0.51  ███████████████▍      302.30 MB/s
-stringzilla (H100)                                   ████████████████████  392.37 MB/s
+stringzilla<384xGNR>    ███▏                   0.51  ███████████████▍      302.30 MB/s
+stringzilla<H100>                                    ████████████████████  392.37 MB/s
 ```
 
 See [fingerprints/README.md](fingerprints/README.md) for details
@@ -318,7 +345,7 @@ To install dependencies for individual benchmarks:
 
 ```sh
 PIP_EXTRA_INDEX_URL=https://pypi.nvidia.com \
-uv pip install '.[find,hash,memory,sequence,fingerprints,similarities,tokenization,normalization]'
+uv pip install '.[find,hash,memory,sequence,fingerprints,similarities,tokenization,normalization,containers,encryption]'
 ```
 
 To run individual benchmarks, you can call:
