@@ -385,7 +385,14 @@ To download, unpack, and run the benchmarks, execute the following bash script i
 ```bash
 curl -fL -o xlsum.csv.gz https://github.com/ashvardanian/xl-sum/releases/download/v1.0.0/xlsum.csv.gz
 gzip -d xlsum.csv.gz
-STRINGWARS_DATASET=xlsum.csv cargo criterion --jobs $(nproc)
+STRINGWARS_DATASET=xlsum.csv cargo bench --features bench_hash --bench bench_hash --jobs $(nproc)
+```
+
+Alternatively, for a much smaller and faster run, check out the Big List of Naughty Strings (BLNS):
+
+```bash
+curl -fL -o blns.txt https://raw.githubusercontent.com/minimaxir/big-list-of-naughty-strings/master/blns.txt
+STRINGWARS_DATASET=blns.txt cargo bench --features bench_hash --bench bench_hash --jobs $(nproc)
 ```
 
 ### Multilingual Wikipedia Corpus
@@ -531,6 +538,36 @@ curl -fL -o acgt_10k.txt 'https://huggingface.co/datasets/ashvardanian/StringWar
 curl -fL -o acgt_100k.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_100k.txt?download=true'
 curl -fL -o acgt_1m.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_1m.txt?download=true'
 curl -fL -o acgt_10m.txt 'https://huggingface.co/datasets/ashvardanian/StringWars/resolve/main/acgt_10m.txt?download=true'
+```
+
+### Unicode Testing Data
+
+The Unicode Project comes with many adversarial string examples for case folding, grapheme segmentation, word, and sentence breaks.
+The following script, downloads all of them and composes them ino a single randomly shuffled document:
+
+```bash
+source_urls=(
+    https://www.unicode.org/Public/UCD/latest/ucd/NormalizationTest.txt
+    https://www.unicode.org/Public/UCD/latest/ucd/CaseFolding.txt
+    https://www.unicode.org/Public/UCD/latest/ucd/SpecialCasing.txt
+    https://www.unicode.org/Public/UCD/latest/ucd/auxiliary/GraphemeBreakTest.txt
+    https://www.unicode.org/Public/UCD/latest/ucd/auxiliary/WordBreakTest.txt
+    https://www.unicode.org/Public/UCD/latest/ucd/auxiliary/SentenceBreakTest.txt
+    https://www.unicode.org/Public/UCD/latest/ucd/auxiliary/LineBreakTest.txt
+    https://www.unicode.org/Public/emoji/latest/emoji-test.txt
+    https://www.unicode.org/Public/security/latest/confusables.txt
+)
+
+for url in "${source_urls[@]}"; do
+    curl -fL --create-dirs -o "unicode/${url##*/}" "$url"
+done
+
+# Concatenate every file and shuffle all lines into one adversarial document. The shuffle is
+# reproducible: a seeded AES-CTR keystream feeds `shuf --random-source`, so the same STRINGWARS_SEED
+# always yields the same ordering (default 42, matching the benchmark harnesses).
+seed="${STRINGWARS_SEED:-42}"
+seeded_random() { openssl enc -aes-256-ctr -pass "pass:$1" -nosalt </dev/zero 2>/dev/null; }
+cat unicode/*.txt | shuf --random-source=<(seeded_random "$seed") > unicode_tests.txt
 ```
 
 ## Deep Profiling
