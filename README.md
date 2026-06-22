@@ -277,12 +277,6 @@ See [encryption/README.md](encryption/README.md) for details
 
 ### Replicating the Results in Rust
 
-Before running benchmarks, you can test your Rust environment running:
-
-```bash
-cargo install cargo-criterion --locked
-```
-
 To pull and compile all the dependencies, you can call:
 
 ```bash
@@ -298,7 +292,7 @@ RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
     STRINGWARS_FILTER=GPU \
-    cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1
+    cargo bench --features "cuda bench_similarities" --bench bench_similarities --jobs 1
 ```
 
 Wars always take long, and so do these benchmarks.
@@ -322,14 +316,14 @@ Here is an example of a common benchmark run on a Unix-like system:
 RUSTFLAGS="-C target-cpu=native" \
     STRINGWARS_DATASET=README.md \
     STRINGWARS_TOKENS=lines \
-    cargo criterion --features bench_hash bench_hash --jobs $(nproc)
+    cargo bench --features bench_hash --bench bench_hash --jobs $(nproc)
 ```
 
 On Windows using PowerShell you'd need to set the environment variable differently:
 
 ```powershell
 $env:STRINGWARS_DATASET="README.md"
-cargo criterion --jobs $(nproc)
+cargo bench --features bench_hash --bench bench_hash --jobs $(nproc)
 ```
 
 ### Replicating the Results in Python
@@ -377,7 +371,7 @@ The lightest path is a shallow clone:
 
 ```sh
 git clone --depth 1 https://github.com/ashvardanian/StringWars && cd StringWars
-RUSTFLAGS="-C target-cpu=native" cargo criterion --features bench_hash bench_hash --jobs $(nproc)
+RUSTFLAGS="-C target-cpu=native" cargo bench --features bench_hash --bench bench_hash --jobs $(nproc)
 ```
 
 ## Datasets
@@ -551,13 +545,13 @@ Such as using `ncu` for NVIDIA GPUs to evaluate the register usage and occupancy
   --kernel-name "levenshtein_on_each_cuda_thread" \
   --launch-skip 5 \
   --launch-count 1 \
-  bash -c 'STRINGWARS_DATASET=acgt_100.txt STRINGWARS_BATCH_PER_CORE=65536 STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU\)" cargo criterion --features "cuda bench_similarities" bench_similarities --jobs 1'
+  bash -c 'STRINGWARS_DATASET=acgt_100.txt STRINGWARS_BATCH_PER_CORE=65536 STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU\)" cargo bench --features "cuda bench_similarities" --bench bench_similarities --jobs 1'
 ```
 
 Using `perf` on Linux to analyze the CPU-side performance of SIMD-accelerated substring search:
 
 ```bash
-perf record -e cpu-clock -g graph,0x400000 -o perf.data -- cargo criterion --features "bench_similarities" bench_similarities --jobs 1
+perf record -e cpu-clock -g graph,0x400000 -o perf.data -- cargo bench --features "bench_similarities" --bench bench_similarities --jobs 1
 perf report -i perf.data
 ```
 

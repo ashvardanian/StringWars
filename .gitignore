@@ -6,8 +6,11 @@ __pycache__
 /.cargo
 
 # Datasets
-/xlsum.csv
+/xlsum*.csv
 /leipzig*.txt
 /cc100_*.txt
 /wiki_*.jsonl
 /acgt_*.txt
+/blns.txt
+/unicode/
+/unicode_tests.txt

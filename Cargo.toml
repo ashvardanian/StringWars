@@ -12,7 +12,6 @@ repository = "https://github.com/ashvardanian/StringWars"
 version = "1.8.3"
 
 [dependencies]
-criterion = "0.8.1"
 stringtape = "2.4.1"
 
 # Published crate by default. For local StringZilla R&D, override it with a working copy through a
@@ -85,9 +84,10 @@ bench_similarities = [
   "fork_union", # Parallelizing RapidFuzz calls
 ]
 bench_tokenization = [
-  "icu", # Unicode properties, TR29 word segmentation
+  "icu", # Unicode properties, TR29 word/grapheme/sentence + UAX#14 line segmentation
   "simdutf", # SIMD UTF-8 validation and transcoding
-  "unicode-segmentation", # UAX#29 word/grapheme segmentation
+  "unicode-segmentation", # UAX#29 word/grapheme/sentence segmentation
+  "unicode-linebreak", # UAX#14 line-break opportunity segmentation
 ]
 cuda = ["stringzilla/cuda"]
 default = ["stringzilla/cpus"]
@@ -133,6 +133,10 @@ version = "2.7"
 [dependencies.unicode-segmentation]
 optional = true
 version = "1.12"
+
+[dependencies.unicode-linebreak]
+optional = true
+version = "0.1.5"
 
 [dependencies.unicode-normalization]
 optional = true
