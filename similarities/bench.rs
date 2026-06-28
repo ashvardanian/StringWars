@@ -7,9 +7,10 @@ single-threaded, multi-threaded, and GPU-accelerated implementations across thre
 - **Linear**: Needleman-Wunsch and Smith-Waterman with linear gap penalties (open_cost == extend_cost)
 - **Affine**: Advanced alignment with different gap opening vs extension costs (open_cost != extend_cost)
 
-The input file is tokenized into lines or words and each consecutive pair of tokens is evaluated for similarity. As most
-algorithms have quadratic complexity and use Dynamic Programming techniques, their throughput is evaluated in the number
-of CUPS, or Cell Updates Per Second.
+The input file is tokenized into lines or words. The StringZilla engines evaluate a square `side x side`
+cross-product: the first `side` tokens (queries) against the next `side` disjoint tokens (candidates), producing
+a dense `side x side` similarity matrix. As most algorithms have quadratic complexity and use Dynamic Programming
+techniques, their throughput is evaluated in the number of CUPS, or Cell Updates Per Second.
 
 ## Usage Examples
 
@@ -19,10 +20,16 @@ The benchmarks use environment variables to control the input dataset and mode:
 - `STRINGWARS_TOKENS`: Specifies how to interpret the input. Allowed values:
   - `lines`: Process the dataset line by line.
   - `words`: Process the dataset word by word.
+  - `file`: Process the entire file as a single token.
+- `STRINGWARS_MAX_TOKENS`: Optional cap on the number of tokens loaded.
 - `STRINGWARS_BATCH_PER_CORE`: Number of pairs processed per core (default: 256). A CPU core is one core and a GPU
   streaming multiprocessor (SM) is one core, so the actual batch is auto-derived as `STRINGWARS_BATCH_PER_CORE * cores`:
   `cores` is 1 for the single-core variant, the logical core count for the multi-core variant, and the device's SM count
-  for the GPU variant.
+  for the GPU variant. The square cross-product side is `round(sqrt(batch))`, so a `side x side` matrix holds about
+  `STRINGWARS_BATCH_PER_CORE * cores` pairs.
+- `STRINGWARS_TIME`: Wall-time budget per benchmark variant (seconds).
+- `STRINGWARS_WARMUP`: Uncounted warm-up budget per variant (seconds).
+- `STRINGWARS_FILTER`: Regex selecting which benchmark variants run.
 
 ```sh
 RUSTFLAGS="-C target-cpu=native" \
@@ -54,7 +61,7 @@ use bio::alignment::{distance as bio_distance, pairwise::Aligner};
 use rapidfuzz::distance::levenshtein;
 use stringzilla::szs::{
     AnyBytesTape, AnyCharsTape, DeviceScope, LevenshteinDistances, LevenshteinDistancesUtf8,
-    NeedlemanWunschScores, SmithWatermanScores, UnifiedAlloc, UnifiedVec,
+    NeedlemanWunschScores, SmithWatermanScores, UnifiedAlloc, UnifiedMat,
 };
 
 #[path = "../utils.rs"]
@@ -83,171 +90,163 @@ fn unary_class_costs(match_cost: i8, mismatch_cost: i8) -> ([u8; 256], [[i8; 32]
     (byte_to_class, class_costs)
 }
 
-/// Returns the next `batch_size` pairs from the two byte tapes, cycling back to the start once
-/// exhausted, plus the actual batch length.
-fn bytes_tape_slice<'a>(
-    first: &'a BytesTapeView<u64>,
-    second: &'a BytesTapeView<u64>,
-    start: &mut usize,
-    batch_size: usize,
-    pairs_count: usize,
-) -> (BytesTapeView<'a, u64>, BytesTapeView<'a, u64>, usize) {
-    assert!(
-        pairs_count > 0 && batch_size > 0,
-        "pairs_count and batch_size must be positive"
-    );
-    let begin = *start % pairs_count;
-    let count = batch_size.min(pairs_count - begin);
-    let end = begin + count;
-    let first_batch = first.subview(begin, end).unwrap_or_else(|error| {
-        panic!(
-            "first subview({begin}, {end}) failed: {error} (len={})",
-            first.len()
-        )
-    });
-    let second_batch = second.subview(begin, end).unwrap_or_else(|error| {
-        panic!(
-            "second subview({begin}, {end}) failed: {error} (len={})",
-            second.len()
-        )
-    });
-    *start = end % pairs_count;
-    (first_batch, second_batch, count)
+/// Computes the square cross-product side for a per-device pair `budget` and an available token
+/// `tape_len`. A `side x side` cross-product holds ~`budget` pairs, clamped so queries `[0, side)`
+/// and candidates `[side, 2*side)` are disjoint, i.e. `2 * side <= tape_len`.
+fn crossproduct_side(budget: usize, tape_len: usize) -> usize {
+    let target = ((budget as f64).sqrt().round() as usize).max(1);
+    let max_side = tape_len / 2;
+    target.min(max_side).max(1)
 }
 
-/// Returns the next `batch_size` pairs from the two character tapes, cycling back to the start
-/// once exhausted, plus the actual batch length.
-fn chars_tape_slice<'a>(
-    first: &'a CharsTapeView<u64>,
-    second: &'a CharsTapeView<u64>,
-    start: &mut usize,
-    batch_size: usize,
-    pairs_count: usize,
-) -> (CharsTapeView<'a, u64>, CharsTapeView<'a, u64>, usize) {
-    assert!(
-        pairs_count > 0 && batch_size > 0,
-        "pairs_count and batch_size must be positive"
-    );
-    let begin = *start % pairs_count;
-    let count = batch_size.min(pairs_count - begin);
-    let end = begin + count;
-    let first_batch = first.subview(begin, end).unwrap_or_else(|error| {
-        panic!(
-            "first subview({begin}, {end}) failed: {error} (len={})",
-            first.len()
-        )
-    });
-    let second_batch = second.subview(begin, end).unwrap_or_else(|error| {
-        panic!(
-            "second subview({begin}, {end}) failed: {error} (len={})",
-            second.len()
-        )
-    });
-    *start = end % pairs_count;
-    (first_batch, second_batch, count)
-}
-
-/// Runs one `measure_throughput` block for a bytes-tape pairwise engine that writes `usize`
-/// results (e.g. `LevenshteinDistances`). Allocates a `UnifiedVec<usize>` of `batch_size`,
-/// cycles through `pairs_count` pairs, and calls `compute` for each iteration.
-/// `compute` receives `(first_view, second_view, results_slice)` and must fill `results_slice`.
-fn measure_pairwise_bytes_usize(
+/// Runs one `measure_throughput` block for a bytes-tape cross-product engine that writes `usize`
+/// results (e.g. `LevenshteinDistances`). The disjoint query slice `[0, side)` and candidate
+/// slice `[side, 2*side)` are rebuilt from `full_view` each iteration (views are not `Clone`),
+/// wrapped as `AnyBytesTape::View64`, and written into the pre-allocated `matrix` via `compute`.
+fn measure_crossproduct_bytes_usize(
     name: &str,
     budget: &BenchBudget,
-    first: &BytesTapeView<u64>,
-    second: &BytesTapeView<u64>,
-    batch_size: usize,
-    pairs_count: usize,
-    avg_cells: u64,
-    avg_pair_bytes: u64,
-    mut compute: impl FnMut(BytesTapeView<'_, u64>, BytesTapeView<'_, u64>, &mut [usize]),
+    full_view: &BytesTapeView<u64>,
+    side: usize,
+    total_cells: u64,
+    total_bytes: u64,
+    matrix: &mut UnifiedMat<usize>,
+    mut compute: impl FnMut(AnyBytesTape<'_>, Option<AnyBytesTape<'_>>, &mut UnifiedMat<usize>),
 ) {
-    let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
-    results.resize(batch_size, 0);
-    let mut start_index = 0;
     measure_throughput(name, ReportAs::Cups, budget, || {
-        let (batch_first_view, batch_second_view, actual_batch_size) =
-            bytes_tape_slice(first, second, &mut start_index, batch_size, pairs_count);
+        let query_view = full_view
+            .subview(0, side)
+            .expect("Failed to create query subview");
+        let candidate_view = full_view
+            .subview(side, 2 * side)
+            .expect("Failed to create candidate subview");
         compute(
-            batch_first_view,
-            batch_second_view,
-            &mut results[..actual_batch_size],
+            AnyBytesTape::View64(query_view),
+            Some(AnyBytesTape::View64(candidate_view)),
+            matrix,
         );
-        std::hint::black_box(&results);
-        WorkUnits::new(
-            actual_batch_size as u64 * avg_cells,
-            actual_batch_size as u64 * avg_pair_bytes,
-        )
+        std::hint::black_box(&matrix);
+        WorkUnits::new(total_cells, total_bytes)
     });
 }
 
-/// Runs one `measure_throughput` block for a chars-tape pairwise engine that writes `usize`
-/// results (e.g. `LevenshteinDistancesUtf8`). Allocates a `UnifiedVec<usize>` of `batch_size`,
-/// cycles through `pairs_count` pairs, and calls `compute` for each iteration.
-/// `compute` receives `(first_view, second_view, results_slice)` and must fill `results_slice`.
-fn measure_pairwise_chars_usize(
+/// Runs one `measure_throughput` block for a chars-tape cross-product engine that writes `usize`
+/// results (e.g. `LevenshteinDistancesUtf8`). The disjoint query slice `[0, side)` and candidate
+/// slice `[side, 2*side)` are rebuilt from `full_view` each iteration (views are not `Clone`),
+/// wrapped as `AnyCharsTape::View64`, and written into the pre-allocated `matrix` via `compute`.
+fn measure_crossproduct_chars_usize(
     name: &str,
     budget: &BenchBudget,
-    first: &CharsTapeView<u64>,
-    second: &CharsTapeView<u64>,
-    batch_size: usize,
-    pairs_count: usize,
-    avg_cells: u64,
-    avg_pair_bytes: u64,
-    mut compute: impl FnMut(CharsTapeView<'_, u64>, CharsTapeView<'_, u64>, &mut [usize]),
+    full_view: &CharsTapeView<u64>,
+    side: usize,
+    total_cells: u64,
+    total_bytes: u64,
+    matrix: &mut UnifiedMat<usize>,
+    mut compute: impl FnMut(AnyCharsTape<'_>, Option<AnyCharsTape<'_>>, &mut UnifiedMat<usize>),
 ) {
-    let mut results = UnifiedVec::<usize>::with_capacity_in(batch_size, UnifiedAlloc);
-    results.resize(batch_size, 0);
-    let mut start_index = 0;
     measure_throughput(name, ReportAs::Cups, budget, || {
-        let (batch_first_view, batch_second_view, actual_batch_size) =
-            chars_tape_slice(first, second, &mut start_index, batch_size, pairs_count);
+        let query_view = full_view
+            .subview(0, side)
+            .expect("Failed to create query subview");
+        let candidate_view = full_view
+            .subview(side, 2 * side)
+            .expect("Failed to create candidate subview");
         compute(
-            batch_first_view,
-            batch_second_view,
-            &mut results[..actual_batch_size],
+            AnyCharsTape::View64(query_view),
+            Some(AnyCharsTape::View64(candidate_view)),
+            matrix,
         );
-        std::hint::black_box(&results);
-        WorkUnits::new(
-            actual_batch_size as u64 * avg_cells,
-            actual_batch_size as u64 * avg_pair_bytes,
-        )
+        std::hint::black_box(&matrix);
+        WorkUnits::new(total_cells, total_bytes)
     });
 }
 
-/// Runs one `measure_throughput` block for a bytes-tape pairwise engine that writes `isize`
-/// results (e.g. `NeedlemanWunschScores`, `SmithWatermanScores`). Allocates a
-/// `UnifiedVec<isize>` of `batch_size`, cycles through `pairs_count` pairs, and calls `compute`
-/// for each iteration. `compute` receives `(first_view, second_view, results_slice)` and must
-/// fill `results_slice`.
-fn measure_pairwise_bytes_isize(
+/// Runs one `measure_throughput` block for a bytes-tape cross-product engine that writes `isize`
+/// results (e.g. `NeedlemanWunschScores`, `SmithWatermanScores`). The disjoint query slice
+/// `[0, side)` and candidate slice `[side, 2*side)` are rebuilt from `full_view` each iteration
+/// (views are not `Clone`), wrapped as `AnyBytesTape::View64`, and written into the pre-allocated
+/// `matrix` via `compute`.
+fn measure_crossproduct_bytes_isize(
     name: &str,
     budget: &BenchBudget,
-    first: &BytesTapeView<u64>,
-    second: &BytesTapeView<u64>,
-    batch_size: usize,
-    pairs_count: usize,
-    avg_cells: u64,
-    avg_pair_bytes: u64,
-    mut compute: impl FnMut(BytesTapeView<'_, u64>, BytesTapeView<'_, u64>, &mut [isize]),
+    full_view: &BytesTapeView<u64>,
+    side: usize,
+    total_cells: u64,
+    total_bytes: u64,
+    matrix: &mut UnifiedMat<isize>,
+    mut compute: impl FnMut(AnyBytesTape<'_>, Option<AnyBytesTape<'_>>, &mut UnifiedMat<isize>),
 ) {
-    let mut results = UnifiedVec::<isize>::with_capacity_in(batch_size, UnifiedAlloc);
-    results.resize(batch_size, 0);
-    let mut start_index = 0;
     measure_throughput(name, ReportAs::Cups, budget, || {
-        let (batch_first_view, batch_second_view, actual_batch_size) =
-            bytes_tape_slice(first, second, &mut start_index, batch_size, pairs_count);
+        let query_view = full_view
+            .subview(0, side)
+            .expect("Failed to create query subview");
+        let candidate_view = full_view
+            .subview(side, 2 * side)
+            .expect("Failed to create candidate subview");
         compute(
-            batch_first_view,
-            batch_second_view,
-            &mut results[..actual_batch_size],
+            AnyBytesTape::View64(query_view),
+            Some(AnyBytesTape::View64(candidate_view)),
+            matrix,
         );
-        std::hint::black_box(&results);
-        WorkUnits::new(
-            actual_batch_size as u64 * avg_cells,
-            actual_batch_size as u64 * avg_pair_bytes,
-        )
+        std::hint::black_box(&matrix);
+        WorkUnits::new(total_cells, total_bytes)
     });
+}
+
+/// Sums the byte lengths of a `[0, side)` query slice and `[side, 2*side)` candidate slice of a
+/// bytes view, returning `(cross_product_cells, total_bytes)` where
+/// `cells = sum_query_bytes * sum_candidate_bytes` and `total_bytes = sum_query_bytes + sum_candidate_bytes`.
+fn crossproduct_metrics_bytes(full_view: &BytesTapeView<u64>, side: usize) -> (u64, u64) {
+    let mut sum_query = 0u64;
+    let mut sum_candidate = 0u64;
+    for index in 0..side {
+        sum_query += full_view[index].len() as u64;
+        sum_candidate += full_view[side + index].len() as u64;
+    }
+    (sum_query * sum_candidate, sum_query + sum_candidate)
+}
+
+/// Sums the character lengths of a `[0, side)` query slice and `[side, 2*side)` candidate slice of
+/// a chars view, returning `(cross_product_cells, total_bytes)` where
+/// `cells = sum_query_chars * sum_candidate_chars`. The byte total mirrors the bytes view (UTF-8
+/// byte length) for the secondary GB/s metric.
+fn crossproduct_metrics_chars(full_view: &CharsTapeView<u64>, side: usize) -> (u64, u64) {
+    let mut sum_query_chars = 0u64;
+    let mut sum_candidate_chars = 0u64;
+    let mut sum_query_bytes = 0u64;
+    let mut sum_candidate_bytes = 0u64;
+    for index in 0..side {
+        let query = &full_view[index];
+        let candidate = &full_view[side + index];
+        sum_query_chars += query.chars().count() as u64;
+        sum_candidate_chars += candidate.chars().count() as u64;
+        sum_query_bytes += query.len() as u64;
+        sum_candidate_bytes += candidate.len() as u64;
+    }
+    (
+        sum_query_chars * sum_candidate_chars,
+        sum_query_bytes + sum_candidate_bytes,
+    )
+}
+
+/// Collects the `[0, side)` query slice of a bytes view into an owned `Vec<&[u8]>`.
+fn bytes_query_vec<'a>(full_view: &'a BytesTapeView<u64>, side: usize) -> Vec<&'a [u8]> {
+    (0..side).map(|index| &full_view[index]).collect()
+}
+
+/// Collects the `[side, 2*side)` candidate slice of a bytes view into an owned `Vec<&[u8]>`.
+fn bytes_candidate_vec<'a>(full_view: &'a BytesTapeView<u64>, side: usize) -> Vec<&'a [u8]> {
+    (0..side).map(|index| &full_view[side + index]).collect()
+}
+
+/// Collects the `[0, side)` query slice of a chars view into an owned `Vec<&str>`.
+fn chars_query_vec<'a>(full_view: &'a CharsTapeView<u64>, side: usize) -> Vec<&'a str> {
+    (0..side).map(|index| &full_view[index]).collect()
+}
+
+/// Collects the `[side, 2*side)` candidate slice of a chars view into an owned `Vec<&str>`.
+fn chars_candidate_vec<'a>(full_view: &'a CharsTapeView<u64>, side: usize) -> Vec<&'a str> {
+    (0..side).map(|index| &full_view[side + index]).collect()
 }
 
 fn bench_similarities(budget: &BenchBudget) {
@@ -271,128 +270,86 @@ fn bench_similarities(budget: &BenchBudget) {
         DEFAULT_BATCH_PER_CORE,
     );
 
-    // Log benchmark-specific configuration
-    println!("Benchmark configuration:");
-    println!("- Single-core batch size: {}", batch_single_cpu);
-    println!("- {}-core batch size: {}", num_cores, batch_multi_cpu);
-    println!("- GPU batch size: {}", batch_gpu);
-
     // Create BytesTape and populate it with all tokens (already limited by STRINGWARS_MAX_TOKENS in load_dataset)
     let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
     units_tape
         .extend(tape.iter().map(|string| string.as_bytes()))
         .expect("Failed to extend BytesTape");
 
-    // Create zero-copy views for consecutive pairs
-    // tape_first_view: elements 0..n-1 (all except last)
-    // tape_second_view: elements 1..n (all except first)
-    let tape_first_view = units_tape
-        .subview(0, units_tape.len() - 1)
-        .expect("Failed to create tape_first_view");
-    let tape_second_view = units_tape
-        .subview(1, units_tape.len())
-        .expect("Failed to create tape_second_view");
-
-    // Create CharsTapeView from the full tape view (zero-copy view casting)
-    let full_chars_view: CharsTapeView<u64> = units_tape
+    // Full zero-copy bytes view over every token (the cross-product slices disjoint halves of it).
+    let tape_bytes_view = units_tape
+        .view()
+        .try_into()
+        .expect("Failed to create bytes view");
+    // Full zero-copy chars view over every token (UTF-8 variant of the same tape).
+    let chars_view: CharsTapeView<u64> = units_tape
         .view()
         .try_into()
         .expect("Failed to convert to CharsTapeView");
-    let chars_first_view = full_chars_view
-        .subview(0, full_chars_view.len() - 1)
-        .expect("Failed to create chars_first_view");
-    let chars_second_view = full_chars_view
-        .subview(1, full_chars_view.len())
-        .expect("Failed to create chars_second_view");
 
-    let pairs_count = tape_first_view.len();
-    println!("- Consecutive pairs to process: {}", pairs_count);
+    let tape_len = units_tape.len();
+    let side_single_cpu = crossproduct_side(batch_single_cpu, tape_len);
+    let side_multi_cpu = crossproduct_side(batch_multi_cpu, tape_len);
+    let side_gpu = crossproduct_side(batch_gpu, tape_len);
+
+    // Log benchmark-specific configuration
+    println!("Benchmark configuration:");
+    println!(
+        "- Single-core batch: {} ({}x{} cross-product)",
+        batch_single_cpu, side_single_cpu, side_single_cpu
+    );
+    println!(
+        "- {}-core batch: {} ({}x{} cross-product)",
+        num_cores, batch_multi_cpu, side_multi_cpu, side_multi_cpu
+    );
+    println!(
+        "- GPU batch: {} ({}x{} cross-product)",
+        batch_gpu, side_gpu, side_gpu
+    );
+    println!("- Tokens available: {}", tape_len);
     println!();
-
-    // Calculate average matrix sizes (CUPS cells) and byte spans for throughput reporting.
-    let mut total_cells_bytes = 0u64;
-    let mut total_cells_utf8 = 0u64;
-    let mut total_pair_bytes = 0u64;
-
-    for pair_index in 0..pairs_count {
-        let a_bytes = &tape_first_view[pair_index];
-        let b_bytes = &tape_second_view[pair_index];
-        total_cells_bytes += (a_bytes.len() * b_bytes.len()) as u64;
-        total_pair_bytes += (a_bytes.len() + b_bytes.len()) as u64;
-
-        let a_str = &chars_first_view[pair_index];
-        let b_str = &chars_second_view[pair_index];
-        total_cells_utf8 += (a_str.chars().count() as u64) * (b_str.chars().count() as u64);
-    }
-
-    let avg_cells_bytes = total_cells_bytes / pairs_count as u64;
-    let avg_cells_utf8 = total_cells_utf8 / pairs_count as u64;
-    // Average bytes spanned by one pair (both sides), for the secondary GB/s metric.
-    let avg_pair_bytes = total_pair_bytes / pairs_count as u64;
 
     // Uniform cost benchmarks (classic Levenshtein: match=0, mismatch=1, open=1, extend=1)
     println!("# uniform");
     perform_uniform_benchmarks(
         budget,
-        &tape_first_view,
-        &tape_second_view,
-        &chars_first_view,
-        &chars_second_view,
-        batch_single_cpu,
-        batch_multi_cpu,
-        batch_gpu,
-        avg_cells_bytes,
-        avg_cells_utf8,
-        avg_pair_bytes,
-        pairs_count,
+        &tape_bytes_view,
+        &chars_view,
+        side_single_cpu,
+        side_multi_cpu,
+        side_gpu,
     );
 
     // Linear gap cost benchmarks (NW/SW: match=2, mismatch=-1, open=-2, extend=-2)
     println!("# linear");
     perform_linear_benchmarks(
         budget,
-        &tape_first_view,
-        &tape_second_view,
-        batch_single_cpu,
-        batch_multi_cpu,
-        batch_gpu,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        pairs_count,
+        &tape_bytes_view,
+        side_single_cpu,
+        side_multi_cpu,
+        side_gpu,
     );
 
     // Affine gap cost benchmarks (NW/SW: match=2, mismatch=-1, open=-5, extend=-1)
     println!("# affine");
     perform_affine_benchmarks(
         budget,
-        &tape_first_view,
-        &tape_second_view,
-        batch_single_cpu,
-        batch_multi_cpu,
-        batch_gpu,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        pairs_count,
+        &tape_bytes_view,
+        side_single_cpu,
+        side_multi_cpu,
+        side_gpu,
     );
 }
 
 /// Uniform cost benchmarks: Classic Levenshtein distance (match=0, mismatch=1, open=1, extend=1)
 fn perform_uniform_benchmarks(
     budget: &BenchBudget,
-    tape_first_view: &BytesTapeView<u64>,
-    tape_second_view: &BytesTapeView<u64>,
-    chars_first_view: &CharsTapeView<u64>,
-    chars_second_view: &CharsTapeView<u64>,
-    batch_single_cpu: usize,
-    batch_multi_cpu: usize,
-    batch_gpu: usize,
-    avg_cells_bytes: u64,
-    avg_cells_utf8: u64,
-    avg_pair_bytes: u64,
-    pairs_count: usize,
+    tape_bytes_view: &BytesTapeView<u64>,
+    chars_view: &CharsTapeView<u64>,
+    side_single_cpu: usize,
+    side_multi_cpu: usize,
+    side_gpu: usize,
 ) {
-    // No tapes needed - use simple string arrays
-
     // Create device scopes
     let num_cores = count_logical_cores();
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
@@ -413,8 +370,16 @@ fn perform_uniform_benchmarks(
         .as_ref()
         .ok()
         .and_then(|gpu| LevenshteinDistances::new(gpu, 0, 1, 1, 1).ok());
+    // GPU UTF-8 Levenshtein: the engine may decline inputs beyond its supported length, returning an error we skip
+    // on rather than aborting the suite.
+    let maybe_lev_utf8_gpu = maybe_gpu
+        .as_ref()
+        .ok()
+        .and_then(|gpu| LevenshteinDistancesUtf8::new(gpu, 0, 1, 1, 1).ok());
 
-    // RapidFuzz baselines (no batching; scan one-by-one). One pair per call.
+    // RapidFuzz baselines (no batching; scan one-by-one). One pair per call across the
+    // query/candidate diagonal of the single-core cross-product.
+    let baseline_side = side_single_cpu;
     {
         let mut pair_index = 0;
         measure_throughput(
@@ -422,14 +387,16 @@ fn perform_uniform_benchmarks(
             ReportAs::Cups,
             budget,
             || {
-                let a_bytes = &tape_first_view[pair_index % pairs_count];
-                let b_bytes = &tape_second_view[pair_index % pairs_count];
-                pair_index = (pair_index + 1) % pairs_count;
+                let a_bytes = &tape_bytes_view[pair_index % baseline_side];
+                let b_bytes = &tape_bytes_view[baseline_side + (pair_index % baseline_side)];
+                let cells = (a_bytes.len() * b_bytes.len()) as u64;
+                let bytes = (a_bytes.len() + b_bytes.len()) as u64;
+                pair_index = (pair_index + 1) % baseline_side;
                 std::hint::black_box(levenshtein::distance(
                     a_bytes.iter().copied(),
                     b_bytes.iter().copied(),
                 ));
-                WorkUnits::new(avg_cells_bytes, avg_pair_bytes)
+                WorkUnits::new(cells, bytes)
             },
         );
     }
@@ -441,11 +408,13 @@ fn perform_uniform_benchmarks(
             ReportAs::Cups,
             budget,
             || {
-                let a_str = &chars_first_view[pair_index % pairs_count];
-                let b_str = &chars_second_view[pair_index % pairs_count];
-                pair_index = (pair_index + 1) % pairs_count;
+                let a_str = &chars_view[pair_index % baseline_side];
+                let b_str = &chars_view[baseline_side + (pair_index % baseline_side)];
+                let cells = (a_str.chars().count() * b_str.chars().count()) as u64;
+                let bytes = (a_str.len() + b_str.len()) as u64;
+                pair_index = (pair_index + 1) % baseline_side;
                 std::hint::black_box(levenshtein::distance(a_str.chars(), b_str.chars()));
-                WorkUnits::new(avg_cells_utf8, avg_pair_bytes)
+                WorkUnits::new(cells, bytes)
             },
         );
     }
@@ -457,165 +426,201 @@ fn perform_uniform_benchmarks(
             ReportAs::Cups,
             budget,
             || {
-                let a_bytes = &tape_first_view[pair_index % pairs_count];
-                let b_bytes = &tape_second_view[pair_index % pairs_count];
-                pair_index = (pair_index + 1) % pairs_count;
+                let a_bytes = &tape_bytes_view[pair_index % baseline_side];
+                let b_bytes = &tape_bytes_view[baseline_side + (pair_index % baseline_side)];
+                let cells = (a_bytes.len() * b_bytes.len()) as u64;
+                let bytes = (a_bytes.len() + b_bytes.len()) as u64;
+                pair_index = (pair_index + 1) % baseline_side;
                 std::hint::black_box(bio_distance::levenshtein(a_bytes, b_bytes));
-                WorkUnits::new(avg_cells_bytes, avg_pair_bytes)
+                WorkUnits::new(cells, bytes)
             },
         );
     }
 
-    measure_pairwise_bytes_usize(
-        "uniform/stringzillas::LevenshteinDistances<1cpu>",
-        budget,
-        tape_first_view,
-        tape_second_view,
-        batch_single_cpu,
-        pairs_count,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        |first_view, second_view, results_slice| {
-            lev_single
-                .compute_into(
-                    &cpu_single,
-                    AnyBytesTape::View64(first_view),
-                    AnyBytesTape::View64(second_view),
-                    results_slice,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "Failed to compute LevenshteinDistances on CPU (single-threaded): {}",
-                        error
-                    );
-                });
-        },
-    );
+    // StringZilla byte-level Levenshtein distance (uniform costs: 0,1,1,1)
+    {
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_single_cpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_single_cpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_single_cpu);
+        let mut matrix = lev_single
+            .compute(&cpu_single, &queries, &candidates)
+            .expect("Failed to allocate LevenshteinDistances matrix (single)");
+        measure_crossproduct_bytes_usize(
+            "uniform/stringzillas::LevenshteinDistances<1cpu>",
+            budget,
+            tape_bytes_view,
+            side_single_cpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
+                lev_single
+                    .compute_into(&cpu_single, queries, candidates, matrix)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute LevenshteinDistances on CPU (single-threaded): {}",
+                            error
+                        );
+                    });
+            },
+        );
+    }
 
-    measure_pairwise_bytes_usize(
-        &format!(
-            "uniform/stringzillas::LevenshteinDistances<{}cpu>",
-            num_cores
-        ),
-        budget,
-        tape_first_view,
-        tape_second_view,
-        batch_multi_cpu,
-        pairs_count,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        |first_view, second_view, results_slice| {
-            lev_parallel
-                .compute_into(
-                    &cpu_parallel,
-                    AnyBytesTape::View64(first_view),
-                    AnyBytesTape::View64(second_view),
-                    results_slice,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "Failed to compute LevenshteinDistances on CPU (multi-threaded): {}",
-                        error
-                    );
-                });
-        },
-    );
+    {
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_multi_cpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_multi_cpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_multi_cpu);
+        let mut matrix = lev_parallel
+            .compute(&cpu_parallel, &queries, &candidates)
+            .expect("Failed to allocate LevenshteinDistances matrix (parallel)");
+        measure_crossproduct_bytes_usize(
+            &format!(
+                "uniform/stringzillas::LevenshteinDistances<{}cpu>",
+                num_cores
+            ),
+            budget,
+            tape_bytes_view,
+            side_multi_cpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
+                lev_parallel
+                    .compute_into(&cpu_parallel, queries, candidates, matrix)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute LevenshteinDistances on CPU (multi-threaded): {}",
+                            error
+                        );
+                    });
+            },
+        );
+    }
 
     // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
-    measure_pairwise_chars_usize(
-        "uniform/stringzillas::LevenshteinDistancesUtf8<1cpu>",
-        budget,
-        chars_first_view,
-        chars_second_view,
-        batch_single_cpu,
-        pairs_count,
-        avg_cells_utf8,
-        avg_pair_bytes,
-        |first_view, second_view, results_slice| {
-            lev_utf8_single
-                .compute_into(
-                    &cpu_single,
-                    AnyCharsTape::View64(first_view),
-                    AnyCharsTape::View64(second_view),
-                    results_slice,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "Failed to compute LevenshteinDistancesUtf8 on CPU (single-threaded): {}",
-                        error
-                    );
-                });
-        },
-    );
+    {
+        let (cells, bytes) = crossproduct_metrics_chars(chars_view, side_single_cpu);
+        let queries = chars_query_vec(chars_view, side_single_cpu);
+        let candidates = chars_candidate_vec(chars_view, side_single_cpu);
+        let mut matrix = lev_utf8_single
+            .compute(&cpu_single, &queries, &candidates)
+            .expect("Failed to allocate LevenshteinDistancesUtf8 matrix (single)");
+        measure_crossproduct_chars_usize(
+            "uniform/stringzillas::LevenshteinDistancesUtf8<1cpu>",
+            budget,
+            chars_view,
+            side_single_cpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
+                lev_utf8_single
+                    .compute_into(&cpu_single, queries, candidates, matrix)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute LevenshteinDistancesUtf8 on CPU (single-threaded): {}",
+                            error
+                        );
+                    });
+            },
+        );
+    }
 
-    measure_pairwise_chars_usize(
-        &format!(
-            "uniform/stringzillas::LevenshteinDistancesUtf8<{}cpu>",
-            num_cores
-        ),
-        budget,
-        chars_first_view,
-        chars_second_view,
-        batch_multi_cpu,
-        pairs_count,
-        avg_cells_utf8,
-        avg_pair_bytes,
-        |first_view, second_view, results_slice| {
-            lev_utf8_parallel
-                .compute_into(
-                    &cpu_parallel,
-                    AnyCharsTape::View64(first_view),
-                    AnyCharsTape::View64(second_view),
-                    results_slice,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "Failed to compute LevenshteinDistancesUtf8 on CPU (multi-threaded): {}",
-                        error
-                    );
-                });
-        },
-    );
+    {
+        let (cells, bytes) = crossproduct_metrics_chars(chars_view, side_multi_cpu);
+        let queries = chars_query_vec(chars_view, side_multi_cpu);
+        let candidates = chars_candidate_vec(chars_view, side_multi_cpu);
+        let mut matrix = lev_utf8_parallel
+            .compute(&cpu_parallel, &queries, &candidates)
+            .expect("Failed to allocate LevenshteinDistancesUtf8 matrix (parallel)");
+        measure_crossproduct_chars_usize(
+            &format!(
+                "uniform/stringzillas::LevenshteinDistancesUtf8<{}cpu>",
+                num_cores
+            ),
+            budget,
+            chars_view,
+            side_multi_cpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
+                lev_utf8_parallel
+                    .compute_into(&cpu_parallel, queries, candidates, matrix)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute LevenshteinDistancesUtf8 on CPU (multi-threaded): {}",
+                            error
+                        );
+                    });
+            },
+        );
+    }
 
     if maybe_gpu.is_ok() && maybe_lev_gpu.is_some() {
         let gpu = maybe_gpu.as_ref().ok().unwrap();
         let engine = maybe_lev_gpu.as_ref().unwrap();
-        measure_pairwise_bytes_usize(
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_gpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_gpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_gpu);
+        let mut matrix = engine
+            .compute(gpu, &queries, &candidates)
+            .expect("Failed to allocate LevenshteinDistances matrix (GPU)");
+        measure_crossproduct_bytes_usize(
             "uniform/stringzillas::LevenshteinDistances<1gpu>",
             budget,
-            tape_first_view,
-            tape_second_view,
-            batch_gpu,
-            pairs_count,
-            avg_cells_bytes,
-            avg_pair_bytes,
-            |first_view, second_view, results_slice| {
+            tape_bytes_view,
+            side_gpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
                 engine
-                    .compute_into(
-                        gpu,
-                        AnyBytesTape::View64(first_view),
-                        AnyBytesTape::View64(second_view),
-                        results_slice,
-                    )
+                    .compute_into(gpu, queries, candidates, matrix)
                     .unwrap_or_else(|error| {
                         panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", error);
                     });
             },
         );
     }
+
+    // GPU UTF-8 Levenshtein: the engine may decline inputs beyond its supported length, returning an error we skip on.
+    if maybe_gpu.is_ok() && maybe_lev_utf8_gpu.is_some() {
+        let gpu = maybe_gpu.as_ref().ok().unwrap();
+        let engine = maybe_lev_utf8_gpu.as_ref().unwrap();
+        let (cells, bytes) = crossproduct_metrics_chars(chars_view, side_gpu);
+        let queries = chars_query_vec(chars_view, side_gpu);
+        let candidates = chars_candidate_vec(chars_view, side_gpu);
+        match engine.compute(gpu, &queries, &candidates) {
+            Ok(mut matrix) => measure_crossproduct_chars_usize(
+                "uniform/stringzillas::LevenshteinDistancesUtf8<1gpu>",
+                budget,
+                chars_view,
+                side_gpu,
+                cells,
+                bytes,
+                &mut matrix,
+                |queries, candidates, matrix| {
+                    engine
+                        .compute_into(gpu, queries, candidates, matrix)
+                        .unwrap_or_else(|error| panic!("Failed to compute UTF-8 Levenshtein on GPU: {}", error));
+                },
+            ),
+            Err(error) => eprintln!(
+                "uniform/stringzillas::LevenshteinDistancesUtf8<1gpu>: SKIPPED ({})",
+                error
+            ),
+        }
+    }
 }
 
 /// Linear gap cost benchmarks: NW/SW with linear penalties (match=2, mismatch=-1, open=-2, extend=-2)
 fn perform_linear_benchmarks(
     budget: &BenchBudget,
-    tape_first_view: &BytesTapeView<u64>,
-    tape_second_view: &BytesTapeView<u64>,
-    batch_single_cpu: usize,
-    batch_multi_cpu: usize,
-    batch_gpu: usize,
-    avg_cells_bytes: u64,
-    avg_pair_bytes: u64,
-    pairs_count: usize,
+    tape_bytes_view: &BytesTapeView<u64>,
+    side_single_cpu: usize,
+    side_multi_cpu: usize,
+    side_gpu: usize,
 ) {
     let num_cores = count_logical_cores();
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
@@ -645,24 +650,12 @@ fn perform_linear_benchmarks(
         .ok()
         .and_then(|gpu| SmithWatermanScores::new(gpu, &byte_to_class, &class_costs, -2, -2).ok());
 
-    let mut max_len = 0usize;
-    for pair_index in 0..pairs_count {
-        let a_len = tape_first_view[pair_index].len();
-        let b_len = tape_second_view[pair_index].len();
-        if a_len > max_len {
-            max_len = a_len;
-        }
-        if b_len > max_len {
-            max_len = b_len;
-        }
-    }
-    let max_len = std::cmp::max(1, max_len);
+    let max_len = max_token_len(tape_bytes_view, side_single_cpu, side_multi_cpu, side_gpu);
 
     align_score_benchmarks(
         "linear",
         budget,
-        tape_first_view,
-        tape_second_view,
+        tape_bytes_view,
         &cpu_single,
         &cpu_parallel,
         &maybe_gpu,
@@ -675,14 +668,30 @@ fn perform_linear_benchmarks(
         max_len,
         -2,
         -2,
-        batch_single_cpu,
-        batch_multi_cpu,
-        batch_gpu,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        pairs_count,
+        side_single_cpu,
+        side_multi_cpu,
+        side_gpu,
         num_cores,
     );
+}
+
+/// Largest token byte length across the union of the query/candidate slices of every variant,
+/// used to pre-size the `bio` aligner capacity.
+fn max_token_len(
+    tape_bytes_view: &BytesTapeView<u64>,
+    side_single_cpu: usize,
+    side_multi_cpu: usize,
+    side_gpu: usize,
+) -> usize {
+    let widest_side = side_single_cpu.max(side_multi_cpu).max(side_gpu);
+    let mut max_len = 0usize;
+    for index in 0..(2 * widest_side) {
+        let token_len = tape_bytes_view[index].len();
+        if token_len > max_len {
+            max_len = token_len;
+        }
+    }
+    std::cmp::max(1, max_len)
 }
 
 /// Shared NW/SW score-benchmark body for the `linear` and `affine` gap-cost groups. The bio
@@ -691,8 +700,7 @@ fn perform_linear_benchmarks(
 fn align_score_benchmarks<GpuError>(
     group_name: &str,
     budget: &BenchBudget,
-    tape_first_view: &BytesTapeView<u64>,
-    tape_second_view: &BytesTapeView<u64>,
+    tape_bytes_view: &BytesTapeView<u64>,
     cpu_single: &DeviceScope,
     cpu_parallel: &DeviceScope,
     maybe_gpu: &Result<DeviceScope, GpuError>,
@@ -705,14 +713,12 @@ fn align_score_benchmarks<GpuError>(
     max_len: usize,
     open_cost: i32,
     extend_cost: i32,
-    batch_single_cpu: usize,
-    batch_multi_cpu: usize,
-    batch_gpu: usize,
-    avg_cells_bytes: u64,
-    avg_pair_bytes: u64,
-    pairs_count: usize,
+    side_single_cpu: usize,
+    side_multi_cpu: usize,
+    side_gpu: usize,
     num_cores: usize,
 ) {
+    let baseline_side = side_single_cpu;
     {
         let mut aligner =
             Aligner::with_capacity(max_len, max_len, open_cost, extend_cost, |a: u8, b: u8| {
@@ -728,11 +734,13 @@ fn align_score_benchmarks<GpuError>(
             ReportAs::Cups,
             budget,
             || {
-                let a_bytes = &tape_first_view[pair_index % pairs_count];
-                let b_bytes = &tape_second_view[pair_index % pairs_count];
-                pair_index = (pair_index + 1) % pairs_count;
+                let a_bytes = &tape_bytes_view[pair_index % baseline_side];
+                let b_bytes = &tape_bytes_view[baseline_side + (pair_index % baseline_side)];
+                let cells = (a_bytes.len() * b_bytes.len()) as u64;
+                let bytes = (a_bytes.len() + b_bytes.len()) as u64;
+                pair_index = (pair_index + 1) % baseline_side;
                 std::hint::black_box(aligner.global(a_bytes, b_bytes).score);
-                WorkUnits::new(avg_cells_bytes, avg_pair_bytes)
+                WorkUnits::new(cells, bytes)
             },
         );
     }
@@ -752,88 +760,94 @@ fn align_score_benchmarks<GpuError>(
             ReportAs::Cups,
             budget,
             || {
-                let a_bytes = &tape_first_view[pair_index % pairs_count];
-                let b_bytes = &tape_second_view[pair_index % pairs_count];
-                pair_index = (pair_index + 1) % pairs_count;
+                let a_bytes = &tape_bytes_view[pair_index % baseline_side];
+                let b_bytes = &tape_bytes_view[baseline_side + (pair_index % baseline_side)];
+                let cells = (a_bytes.len() * b_bytes.len()) as u64;
+                let bytes = (a_bytes.len() + b_bytes.len()) as u64;
+                pair_index = (pair_index + 1) % baseline_side;
                 std::hint::black_box(aligner.local(a_bytes, b_bytes).score);
-                WorkUnits::new(avg_cells_bytes, avg_pair_bytes)
+                WorkUnits::new(cells, bytes)
             },
         );
     }
 
     // Needleman-Wunsch (Global alignment)
-    measure_pairwise_bytes_isize(
-        "stringzillas::NeedlemanWunschScores<1cpu>",
-        budget,
-        tape_first_view,
-        tape_second_view,
-        batch_single_cpu,
-        pairs_count,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        |first_view, second_view, results_slice| {
-            nw_single
-                .compute_into(
-                    cpu_single,
-                    AnyBytesTape::View64(first_view),
-                    AnyBytesTape::View64(second_view),
-                    results_slice,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "Failed to compute NeedlemanWunschScores on CPU (single-threaded): {}",
-                        error
-                    );
-                });
-        },
-    );
+    {
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_single_cpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_single_cpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_single_cpu);
+        let mut matrix = nw_single
+            .compute(cpu_single, &queries, &candidates)
+            .expect("Failed to allocate NeedlemanWunschScores matrix (single)");
+        measure_crossproduct_bytes_isize(
+            "stringzillas::NeedlemanWunschScores<1cpu>",
+            budget,
+            tape_bytes_view,
+            side_single_cpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
+                nw_single
+                    .compute_into(cpu_single, queries, candidates, matrix)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute NeedlemanWunschScores on CPU (single-threaded): {}",
+                            error
+                        );
+                    });
+            },
+        );
+    }
 
-    measure_pairwise_bytes_isize(
-        &format!("stringzillas::NeedlemanWunschScores<{}cpu>", num_cores),
-        budget,
-        tape_first_view,
-        tape_second_view,
-        batch_multi_cpu,
-        pairs_count,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        |first_view, second_view, results_slice| {
-            nw_parallel
-                .compute_into(
-                    cpu_parallel,
-                    AnyBytesTape::View64(first_view),
-                    AnyBytesTape::View64(second_view),
-                    results_slice,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
-                        error
-                    );
-                });
-        },
-    );
+    {
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_multi_cpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_multi_cpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_multi_cpu);
+        let mut matrix = nw_parallel
+            .compute(cpu_parallel, &queries, &candidates)
+            .expect("Failed to allocate NeedlemanWunschScores matrix (parallel)");
+        measure_crossproduct_bytes_isize(
+            &format!("stringzillas::NeedlemanWunschScores<{}cpu>", num_cores),
+            budget,
+            tape_bytes_view,
+            side_multi_cpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
+                nw_parallel
+                    .compute_into(cpu_parallel, queries, candidates, matrix)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
+                            error
+                        );
+                    });
+            },
+        );
+    }
 
     if maybe_gpu.is_ok() && maybe_nw_gpu.is_some() {
         let gpu = maybe_gpu.as_ref().ok().unwrap();
         let engine = maybe_nw_gpu.as_ref().unwrap();
-        measure_pairwise_bytes_isize(
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_gpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_gpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_gpu);
+        let mut matrix = engine
+            .compute(gpu, &queries, &candidates)
+            .expect("Failed to allocate NeedlemanWunschScores matrix (GPU)");
+        measure_crossproduct_bytes_isize(
             "stringzillas::NeedlemanWunschScores<1gpu>",
             budget,
-            tape_first_view,
-            tape_second_view,
-            batch_gpu,
-            pairs_count,
-            avg_cells_bytes,
-            avg_pair_bytes,
-            |first_view, second_view, results_slice| {
+            tape_bytes_view,
+            side_gpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
                 engine
-                    .compute_into(
-                        gpu,
-                        AnyBytesTape::View64(first_view),
-                        AnyBytesTape::View64(second_view),
-                        results_slice,
-                    )
+                    .compute_into(gpu, queries, candidates, matrix)
                     .unwrap_or_else(|error| {
                         panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", error);
                     });
@@ -842,78 +856,82 @@ fn align_score_benchmarks<GpuError>(
     }
 
     // Smith-Waterman (Local alignment)
-    measure_pairwise_bytes_isize(
-        "stringzillas::SmithWatermanScores<1cpu>",
-        budget,
-        tape_first_view,
-        tape_second_view,
-        batch_single_cpu,
-        pairs_count,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        |first_view, second_view, results_slice| {
-            sw_single
-                .compute_into(
-                    cpu_single,
-                    AnyBytesTape::View64(first_view),
-                    AnyBytesTape::View64(second_view),
-                    results_slice,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
-                        error
-                    );
-                });
-        },
-    );
+    {
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_single_cpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_single_cpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_single_cpu);
+        let mut matrix = sw_single
+            .compute(cpu_single, &queries, &candidates)
+            .expect("Failed to allocate SmithWatermanScores matrix (single)");
+        measure_crossproduct_bytes_isize(
+            "stringzillas::SmithWatermanScores<1cpu>",
+            budget,
+            tape_bytes_view,
+            side_single_cpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
+                sw_single
+                    .compute_into(cpu_single, queries, candidates, matrix)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute SmithWatermanScores on CPU (single-threaded): {}",
+                            error
+                        );
+                    });
+            },
+        );
+    }
 
-    measure_pairwise_bytes_isize(
-        &format!("stringzillas::SmithWatermanScores<{}cpu>", num_cores),
-        budget,
-        tape_first_view,
-        tape_second_view,
-        batch_multi_cpu,
-        pairs_count,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        |first_view, second_view, results_slice| {
-            sw_parallel
-                .compute_into(
-                    cpu_parallel,
-                    AnyBytesTape::View64(first_view),
-                    AnyBytesTape::View64(second_view),
-                    results_slice,
-                )
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
-                        error
-                    );
-                });
-        },
-    );
+    {
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_multi_cpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_multi_cpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_multi_cpu);
+        let mut matrix = sw_parallel
+            .compute(cpu_parallel, &queries, &candidates)
+            .expect("Failed to allocate SmithWatermanScores matrix (parallel)");
+        measure_crossproduct_bytes_isize(
+            &format!("stringzillas::SmithWatermanScores<{}cpu>", num_cores),
+            budget,
+            tape_bytes_view,
+            side_multi_cpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
+                sw_parallel
+                    .compute_into(cpu_parallel, queries, candidates, matrix)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",
+                            error
+                        );
+                    });
+            },
+        );
+    }
 
     if maybe_gpu.is_ok() && maybe_sw_gpu.is_some() {
         let gpu = maybe_gpu.as_ref().ok().unwrap();
         let engine = maybe_sw_gpu.as_ref().unwrap();
-        measure_pairwise_bytes_isize(
+        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_gpu);
+        let queries = bytes_query_vec(tape_bytes_view, side_gpu);
+        let candidates = bytes_candidate_vec(tape_bytes_view, side_gpu);
+        let mut matrix = engine
+            .compute(gpu, &queries, &candidates)
+            .expect("Failed to allocate SmithWatermanScores matrix (GPU)");
+        measure_crossproduct_bytes_isize(
             "stringzillas::SmithWatermanScores<1gpu>",
             budget,
-            tape_first_view,
-            tape_second_view,
-            batch_gpu,
-            pairs_count,
-            avg_cells_bytes,
-            avg_pair_bytes,
-            |first_view, second_view, results_slice| {
+            tape_bytes_view,
+            side_gpu,
+            cells,
+            bytes,
+            &mut matrix,
+            |queries, candidates, matrix| {
                 engine
-                    .compute_into(
-                        gpu,
-                        AnyBytesTape::View64(first_view),
-                        AnyBytesTape::View64(second_view),
-                        results_slice,
-                    )
+                    .compute_into(gpu, queries, candidates, matrix)
                     .unwrap_or_else(|error| {
                         panic!("Failed to compute on GPU: {}. This may indicate GPU memory allocation issues with BytesTapeView.", error);
                     });
@@ -925,14 +943,10 @@ fn align_score_benchmarks<GpuError>(
 /// Affine gap cost benchmarks: NW/SW with affine penalties (match=2, mismatch=-1, open=-5, extend=-1)
 fn perform_affine_benchmarks(
     budget: &BenchBudget,
-    tape_first_view: &BytesTapeView<u64>,
-    tape_second_view: &BytesTapeView<u64>,
-    batch_single_cpu: usize,
-    batch_multi_cpu: usize,
-    batch_gpu: usize,
-    avg_cells_bytes: u64,
-    avg_pair_bytes: u64,
-    pairs_count: usize,
+    tape_bytes_view: &BytesTapeView<u64>,
+    side_single_cpu: usize,
+    side_multi_cpu: usize,
+    side_gpu: usize,
 ) {
     let num_cores = count_logical_cores();
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
@@ -963,24 +977,12 @@ fn perform_affine_benchmarks(
         .ok()
         .and_then(|gpu| SmithWatermanScores::new(gpu, &byte_to_class, &class_costs, -5, -1).ok());
 
-    let mut max_len = 0usize;
-    for pair_index in 0..pairs_count {
-        let a_len = tape_first_view[pair_index].len();
-        let b_len = tape_second_view[pair_index].len();
-        if a_len > max_len {
-            max_len = a_len;
-        }
-        if b_len > max_len {
-            max_len = b_len;
-        }
-    }
-    let max_len = std::cmp::max(1, max_len);
+    let max_len = max_token_len(tape_bytes_view, side_single_cpu, side_multi_cpu, side_gpu);
 
     align_score_benchmarks(
         "affine",
         budget,
-        tape_first_view,
-        tape_second_view,
+        tape_bytes_view,
         &cpu_single,
         &cpu_parallel,
         &maybe_gpu,
@@ -993,12 +995,9 @@ fn perform_affine_benchmarks(
         max_len,
         -5,
         -1,
-        batch_single_cpu,
-        batch_multi_cpu,
-        batch_gpu,
-        avg_cells_bytes,
-        avg_pair_bytes,
-        pairs_count,
+        side_single_cpu,
+        side_multi_cpu,
+        side_gpu,
         num_cores,
     );
 }
