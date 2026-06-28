@@ -12,6 +12,9 @@ This file benchmarks UTF-8 segmentation and codepoint iteration:
 - `tokenize-whitespace`: Unicode whitespace splitting
 - `tokenize-newlines`: Unicode newline splitting
 - `tokenize-words-tr29`: Unicode TR29 word boundary segmentation
+- `tokenize-graphemes-tr29`: Unicode TR29 grapheme cluster segmentation
+- `tokenize-sentences-tr29`: Unicode TR29 sentence boundary segmentation
+- `tokenize-lines-uax14`: Unicode UAX#14 line-break opportunity segmentation
 - `utf8-length`: UTF-8 character counting
 - `utf8-iterate`: UTF-8 to UTF-32 decoding
 - `find-nth-utf8`: byte offset of the Nth UTF-8 codepoint
@@ -31,9 +34,10 @@ use stringtape::BytesCowsAuto;
 
 use icu::properties::props::WhiteSpace;
 use icu::properties::CodePointSetData;
-use icu::segmenter::WordSegmenter;
+use icu::segmenter::{GraphemeClusterSegmenter, LineSegmenter, SentenceSegmenter, WordSegmenter};
 use stringzilla::sz;
 use stringzilla::sz::StringZillableUnary;
+use unicode_linebreak::linebreaks;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[path = "../utils.rs"]
@@ -81,11 +85,11 @@ fn bench_tokenize_whitespace(budget: &BenchBudget, _haystack: &[u8], needles: &B
 
     // Benchmark for StringZilla whitespace splits.
     measure_line_tokenizer(
-        "tokenize-whitespace/stringzilla::utf8_whitespace_splits",
+        "tokenize-whitespace/stringzilla::utf8_tokens",
         budget,
         needles,
         |line| {
-            let count: usize = line.sz_utf8_whitespace_splits().count();
+            let count: usize = line.sz_utf8_tokens().count();
             black_box(count);
             count
         },
@@ -154,11 +158,11 @@ fn bench_tokenize_newlines(budget: &BenchBudget, _haystack: &[u8], needles: &Byt
 
     // Benchmark for StringZilla newline splits.
     measure_line_tokenizer(
-        "tokenize-newlines/stringzilla::utf8_newline_splits",
+        "tokenize-newlines/stringzilla::utf8_lines",
         budget,
         needles,
         |line| {
-            let count: usize = line.sz_utf8_newline_splits().count();
+            let count: usize = line.sz_utf8_lines().count();
             black_box(count);
             count
         },
@@ -202,11 +206,11 @@ fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &B
     // Benchmark for StringZilla's single-pass TR29 word iterator. `.count()` consumes the
     // iterator without materializing the segments, so no allocation taints the measurement.
     measure_line_tokenizer(
-        "tokenize-words-tr29/stringzilla::utf8_word_splits",
+        "tokenize-words-tr29/stringzilla::utf8_words",
         budget,
         needles,
         |line| {
-            let count: usize = line.sz_utf8_word_splits().count();
+            let count: usize = line.sz_utf8_words().count();
             black_box(count);
             count
         },
@@ -279,6 +283,192 @@ fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &B
     }
 }
 
+/// Benchmarks Unicode TR29 (UAX#29) grapheme cluster segmentation.
+///
+/// Grapheme clusters are user-perceived characters: a base codepoint plus any combining marks,
+/// emoji ZWJ sequences, and regional-indicator pairs count as one cluster.
+/// - `unicode-segmentation::graphemes(true)`: extended grapheme clusters
+/// - `icu::segmenter::GraphemeClusterSegmenter`: ICU4X implementation
+fn bench_tokenize_graphemes(budget: &BenchBudget, _haystack: &[u8], needles: &BytesCowsAuto) {
+    // Pre-decode every line to `&str` once. StringZilla segments the raw line bytes directly; the
+    // `unicode-segmentation` and ICU baselines reuse these validated lines per call.
+    let lines_str: Vec<&str> = needles
+        .iter()
+        .map(|line| std::str::from_utf8(line).unwrap_or(""))
+        .collect();
+
+    // Benchmark for StringZilla's single-pass grapheme iterator. `.count()` consumes the
+    // iterator without materializing the segments, so no allocation taints the measurement.
+    measure_line_tokenizer(
+        "tokenize-graphemes-tr29/stringzilla::utf8_graphemes",
+        budget,
+        needles,
+        |line| {
+            let count: usize = line.sz_utf8_graphemes().count();
+            black_box(count);
+            count
+        },
+    );
+
+    // Benchmark for unicode-segmentation: graphemes(true) - extended grapheme clusters
+    {
+        let mut lines = lines_str.iter().cycle();
+        measure_throughput(
+            "tokenize-graphemes-tr29/unicode-segmentation::graphemes",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let line = black_box(*lines.next().unwrap());
+                let count: usize = UnicodeSegmentation::graphemes(line, true).count();
+                black_box(count);
+                WorkUnits::bytes(line.len() as u64)
+            },
+        );
+    }
+
+    // Benchmark for ICU4X GraphemeClusterSegmenter
+    {
+        let segmenter = GraphemeClusterSegmenter::new();
+        let mut lines = lines_str.iter().cycle();
+        measure_throughput(
+            "tokenize-graphemes-tr29/icu::GraphemeClusterSegmenter.segment_str",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let line = black_box(*lines.next().unwrap());
+                // The segmenter returns boundary indices; count segments = boundaries - 1.
+                let boundaries: usize = segmenter.segment_str(line).count();
+                black_box(boundaries);
+                WorkUnits::bytes(line.len() as u64)
+            },
+        );
+    }
+}
+
+/// Benchmarks Unicode TR29 (UAX#29) sentence segmentation.
+///
+/// Sentence boundaries handle abbreviations, decimal numbers, and terminal punctuation across
+/// scripts.
+/// - `unicode-segmentation::split_sentence_bounds()`: raw UAX#29 sentence boundaries
+/// - `icu::segmenter::SentenceSegmenter`: ICU4X implementation
+fn bench_tokenize_sentences(budget: &BenchBudget, _haystack: &[u8], needles: &BytesCowsAuto) {
+    // Pre-decode every line to `&str` once. StringZilla segments the raw line bytes directly; the
+    // `unicode-segmentation` and ICU baselines reuse these validated lines per call.
+    let lines_str: Vec<&str> = needles
+        .iter()
+        .map(|line| std::str::from_utf8(line).unwrap_or(""))
+        .collect();
+
+    // Benchmark for StringZilla's single-pass sentence iterator. `.count()` consumes the
+    // iterator without materializing the segments, so no allocation taints the measurement.
+    measure_line_tokenizer(
+        "tokenize-sentences-tr29/stringzilla::utf8_sentences",
+        budget,
+        needles,
+        |line| {
+            let count: usize = line.sz_utf8_sentences().count();
+            black_box(count);
+            count
+        },
+    );
+
+    // Benchmark for unicode-segmentation: split_sentence_bounds() - raw UAX#29 boundaries
+    {
+        let mut lines = lines_str.iter().cycle();
+        measure_throughput(
+            "tokenize-sentences-tr29/unicode-segmentation::split_sentence_bounds",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let line = black_box(*lines.next().unwrap());
+                let count: usize = line.split_sentence_bounds().count();
+                black_box(count);
+                WorkUnits::bytes(line.len() as u64)
+            },
+        );
+    }
+
+    // Benchmark for ICU4X SentenceSegmenter
+    {
+        let segmenter = SentenceSegmenter::new(Default::default());
+        let mut lines = lines_str.iter().cycle();
+        measure_throughput(
+            "tokenize-sentences-tr29/icu::SentenceSegmenter.segment_str",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let line = black_box(*lines.next().unwrap());
+                // The segmenter returns boundary indices; count segments = boundaries - 1.
+                let boundaries: usize = segmenter.segment_str(line).count();
+                black_box(boundaries);
+                WorkUnits::bytes(line.len() as u64)
+            },
+        );
+    }
+}
+
+/// Benchmarks Unicode UAX#14 line-break opportunity segmentation.
+///
+/// UAX#14 locates positions where a renderer may wrap a line (after spaces, hyphens, etc.),
+/// distinct from the hard newline splitting in `bench_tokenize_newlines`.
+/// - `unicode-linebreak::linebreaks()`: mandatory and allowed break opportunities
+/// - `icu::segmenter::LineSegmenter`: ICU4X implementation
+fn bench_tokenize_lines_uax14(budget: &BenchBudget, _haystack: &[u8], needles: &BytesCowsAuto) {
+    // Pre-decode every line to `&str` once. StringZilla segments the raw line bytes directly; the
+    // `unicode-linebreak` and ICU baselines reuse these validated lines per call.
+    let lines_str: Vec<&str> = needles
+        .iter()
+        .map(|line| std::str::from_utf8(line).unwrap_or(""))
+        .collect();
+
+    // Benchmark for StringZilla's single-pass line-break iterator. `.count()` consumes the
+    // iterator without materializing the segments, so no allocation taints the measurement.
+    measure_line_tokenizer(
+        "tokenize-lines-uax14/stringzilla::utf8_linewraps",
+        budget,
+        needles,
+        |line| {
+            let count: usize = line.sz_utf8_linewraps().count();
+            black_box(count);
+            count
+        },
+    );
+
+    // Benchmark for unicode-linebreak: linebreaks() - all break opportunities
+    {
+        let mut lines = lines_str.iter().cycle();
+        measure_throughput(
+            "tokenize-lines-uax14/unicode-linebreak::linebreaks",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let line = black_box(*lines.next().unwrap());
+                let count: usize = linebreaks(line).count();
+                black_box(count);
+                WorkUnits::bytes(line.len() as u64)
+            },
+        );
+    }
+
+    // Benchmark for ICU4X LineSegmenter
+    {
+        let segmenter = LineSegmenter::new_dictionary(Default::default());
+        let mut lines = lines_str.iter().cycle();
+        measure_throughput(
+            "tokenize-lines-uax14/icu::LineSegmenter::new_dictionary.segment_str",
+            ReportAs::Bytes,
+            budget,
+            || {
+                let line = black_box(*lines.next().unwrap());
+                // The segmenter returns boundary indices; count segments = boundaries - 1.
+                let boundaries: usize = segmenter.segment_str(line).count();
+                black_box(boundaries);
+                WorkUnits::bytes(line.len() as u64)
+            },
+        );
+    }
+}
+
 /// Benchmarks UTF-8 character counting using StringZilla, simdutf, and stdlib.
 fn bench_utf8_length(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCowsAuto) {
     let haystack_length = haystack.len() as u64;
@@ -294,7 +484,7 @@ fn bench_utf8_length(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCows
         budget,
         || {
             let haystack_bytes = black_box(haystack);
-            let count: usize = haystack_bytes.sz_utf8_chars().len();
+            let count: usize = haystack_bytes.sz_utf8_runes().len();
             black_box(count);
             WorkUnits::bytes(haystack_length)
         },
@@ -355,7 +545,7 @@ fn bench_utf8_iterate(budget: &BenchBudget, haystack: &[u8], _needles: &BytesCow
         || {
             let haystack_bytes = black_box(haystack);
             let mut sum: u32 = 0;
-            for character in haystack_bytes.sz_utf8_chars().iter() {
+            for character in haystack_bytes.sz_utf8_runes().iter() {
                 sum = sum.wrapping_add(character as u32);
             }
             black_box(sum);
@@ -476,6 +666,15 @@ fn main() {
 
     println!("# tokenize-words-tr29");
     bench_tokenize_words_tr29(&budget, haystack, needles);
+
+    println!("# tokenize-graphemes-tr29");
+    bench_tokenize_graphemes(&budget, haystack, needles);
+
+    println!("# tokenize-sentences-tr29");
+    bench_tokenize_sentences(&budget, haystack, needles);
+
+    println!("# tokenize-lines-uax14");
+    bench_tokenize_lines_uax14(&budget, haystack, needles);
 
     println!("# utf8-length");
     bench_utf8_length(&budget, haystack, needles);
