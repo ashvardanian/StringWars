@@ -19,8 +19,13 @@ stringtape = "2.4.1"
 #
 #     paths = ["../StringZilla"]   # any semver-compatible local checkout (4.6.x satisfies ^4.5.0)
 #
-# Cargo's `paths` key replaces the registry source in place; if it ever reports that the override
-# "altered the list of dependencies", fall back to a `[patch.crates-io]` entry here instead.
+# Cargo's `paths` key replaces the registry source in place. If it ever reports the override
+# "altered the list of dependencies", add a `[patch.crates-io]` table to this manifest TEMPORARILY
+# and revert before committing — the manifest, unlike `.cargo/config.toml`, can't be gitignored.
+#
+# `default-features = false` keeps StringZilla's `dynamic-dispatch` feature OFF, so the SIMD backend
+# is resolved at compile time (static dispatch) rather than via a per-call indirection. This is the
+# fair default for these latency-sensitive benchmarks; do not add `stringzilla/dynamic-dispatch`.
 stringzilla = {version = "4.5.0", default-features = false}
 
 # Feature-based dependencies for benchmarks

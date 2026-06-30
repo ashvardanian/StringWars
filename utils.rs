@@ -169,10 +169,10 @@ impl fmt::Display for DatasetError {
                 write!(
                     f,
                     "STRINGWARS_DATASET environment variable not set.\n\n\
-                     Usage: STRINGWARS_DATASET=<file> STRINGWARS_TOKENS=<mode> cargo criterion ...\n\n\
+                     Usage: STRINGWARS_DATASET=<file> STRINGWARS_TOKENS=<mode> cargo bench --features <bench> --bench <bench>\n\n\
                      Examples:\n  \
-                       STRINGWARS_DATASET=README.md STRINGWARS_TOKENS=lines cargo criterion ...\n  \
-                       STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=words cargo criterion ..."
+                       STRINGWARS_DATASET=README.md STRINGWARS_TOKENS=lines cargo bench --features bench_hash --bench bench_hash\n  \
+                       STRINGWARS_DATASET=data.txt STRINGWARS_TOKENS=words cargo bench --features bench_find --bench bench_find"
                 )
             }
             DatasetError::FileNotFound { path } => {
@@ -515,8 +515,8 @@ fn format_seconds(value: f64) -> String {
 
 // Time-budgeted benchmark loop.
 //
-// Replaces Criterion in the throughput benchmarks: instead of a fixed sample count over the
-// whole dataset, each variant runs for a fixed wall-time budget while cycling bounded items,
+// Instead of a fixed sample count over the whole dataset, each variant runs for a fixed
+// wall-time budget while cycling bounded items,
 // and reports `work / elapsed`. Because we own the loop we also read hardware cycle and
 // instruction counters around the measured region, surfacing exact cycles-per-byte and IPC
 // instead of a batch-wide wall-clock estimate.

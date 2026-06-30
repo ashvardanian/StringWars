@@ -85,11 +85,11 @@ fn bench_tokenize_whitespace(budget: &BenchBudget, _haystack: &[u8], needles: &B
 
     // Benchmark for StringZilla whitespace splits.
     measure_line_tokenizer(
-        "tokenize-whitespace/stringzilla::utf8_tokens",
+        "tokenize-whitespace/stringzilla::utf8_split_whitespaces",
         budget,
         needles,
         |line| {
-            let count: usize = line.sz_utf8_tokens().count();
+            let count: usize = line.sz_utf8_split_whitespaces().count();
             black_box(count);
             count
         },
@@ -158,11 +158,11 @@ fn bench_tokenize_newlines(budget: &BenchBudget, _haystack: &[u8], needles: &Byt
 
     // Benchmark for StringZilla newline splits.
     measure_line_tokenizer(
-        "tokenize-newlines/stringzilla::utf8_lines",
+        "tokenize-newlines/stringzilla::utf8_split_newlines",
         budget,
         needles,
         |line| {
-            let count: usize = line.sz_utf8_lines().count();
+            let count: usize = line.sz_utf8_split_newlines().count();
             black_box(count);
             count
         },
@@ -192,9 +192,11 @@ fn bench_tokenize_newlines(budget: &BenchBudget, _haystack: &[u8], needles: &Byt
 ///
 /// TR29 defines linguistically-aware word boundaries that handle complex cases like
 /// contractions ("can't"), numeric sequences ("3.14"), and scripts without spaces.
-/// - `unicode-segmentation::unicode_words()`: Filters to word-like segments only
-/// - `unicode-segmentation::split_word_bounds()`: All boundary segments including punctuation
-/// - `icu::segmenter::WordSegmenter`: ICU4X implementation with LSTM/dictionary models
+/// `stringzilla::utf8_wordbreaks` yields UAX#29 words that tile the input contiguously (every
+/// segment, punctuation and spaces included), so the apples-to-apples baselines are the ones that
+/// also tile — `unicode-segmentation::split_word_bounds()` and `icu::segmenter::WordSegmenter`. The
+/// filtering `unicode_words()` (word-like segments only, dropping spaces/punctuation) is a different
+/// operation and is intentionally not compared here.
 fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &BytesCowsAuto) {
     // Pre-decode every line to `&str` once. StringZilla segments the raw line bytes directly; the
     // `unicode-segmentation`, ICU, and stdlib baselines reuse these validated lines per call.
@@ -206,31 +208,15 @@ fn bench_tokenize_words_tr29(budget: &BenchBudget, _haystack: &[u8], needles: &B
     // Benchmark for StringZilla's single-pass TR29 word iterator. `.count()` consumes the
     // iterator without materializing the segments, so no allocation taints the measurement.
     measure_line_tokenizer(
-        "tokenize-words-tr29/stringzilla::utf8_words",
+        "tokenize-words-tr29/stringzilla::utf8_wordbreaks",
         budget,
         needles,
         |line| {
-            let count: usize = line.sz_utf8_words().count();
+            let count: usize = line.sz_utf8_wordbreaks().count();
             black_box(count);
             count
         },
     );
-
-    // Benchmark for unicode-segmentation: unicode_words() - only word-like segments
-    {
-        let mut lines = lines_str.iter().cycle();
-        measure_throughput(
-            "tokenize-words-tr29/unicode-segmentation::unicode_words",
-            ReportAs::Bytes,
-            budget,
-            || {
-                let line = black_box(*lines.next().unwrap());
-                let count: usize = line.unicode_words().count();
-                black_box(count);
-                WorkUnits::bytes(line.len() as u64)
-            },
-        );
-    }
 
     // Benchmark for unicode-segmentation: split_word_bounds() - all segments
     {
@@ -424,11 +410,11 @@ fn bench_tokenize_lines_uax14(budget: &BenchBudget, _haystack: &[u8], needles: &
     // Benchmark for StringZilla's single-pass line-break iterator. `.count()` consumes the
     // iterator without materializing the segments, so no allocation taints the measurement.
     measure_line_tokenizer(
-        "tokenize-lines-uax14/stringzilla::utf8_linewraps",
+        "tokenize-lines-uax14/stringzilla::utf8_linebreaks",
         budget,
         needles,
         |line| {
-            let count: usize = line.sz_utf8_linewraps().count();
+            let count: usize = line.sz_utf8_linebreaks().count();
             black_box(count);
             count
         },
