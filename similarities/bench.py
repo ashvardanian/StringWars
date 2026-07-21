@@ -1,8 +1,8 @@
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
-#   "stringzilla",
-#   "stringzillas-cpus",
+#   "stringzilla>=5.0.0",
+#   "stringzillas-cpus>=5.0.0",
 #   "rapidfuzz",
 #   "python-Levenshtein",
 #   "levenshtein",

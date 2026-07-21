@@ -54,8 +54,21 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
-use fork_union::count_logical_cores;
+use forkunion as fu;
 use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
+
+/// Logical core count for the multi-core device scope, probed once from a caller-owned topology.
+///
+/// ForkUnion spawns thread pools onto an immutable topology, so we construct it a single time in
+/// `bench_fingerprints` rather than hiding it behind a global.
+/// `STRINGWARS_CPU_CORES` overrides the count so a specific socket width can be reproduced.
+fn resolve_core_count(topology: &fu::Topology) -> usize {
+    std::env::var("STRINGWARS_CPU_CORES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&cores| cores > 0)
+        .unwrap_or_else(|| topology.logical_cores_count())
+}
 
 use probabilistic_collections::similarity::{ByteGrams, MinHash};
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
@@ -227,7 +240,8 @@ fn bench_fingerprints(budget: &BenchBudget) {
 
     // Core-aware batch sizing: each variant scales `STRINGWARS_BATCH_PER_CORE` by its own core count.
     // A CPU core is one core; a GPU streaming multiprocessor (SM) is one core.
-    let num_cores = count_logical_cores();
+    let topology = fu::Topology::new().expect("Failed to probe CPU topology");
+    let num_cores = resolve_core_count(&topology);
     let batch_single_cpu = auto_batch_size(1, DEFAULT_BATCH_PER_CORE);
     let batch_multi_cpu = auto_batch_size(num_cores, DEFAULT_BATCH_PER_CORE);
     let batch_gpu = auto_batch_size(
@@ -276,7 +290,10 @@ fn bench_fingerprints(budget: &BenchBudget) {
             panic!("Fingerprint dimensions must be greater than zero.");
         }
         println!("\nBenchmark configuration:");
-        println!("- Single-core batch size (for StringZilla): {}", batch_single_cpu);
+        println!(
+            "- Single-core batch size (for StringZilla): {}",
+            batch_single_cpu
+        );
         println!(
             "- {}-core batch size (for StringZilla): {}",
             num_cores, batch_multi_cpu

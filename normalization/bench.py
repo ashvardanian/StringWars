@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
-#   "stringzilla>=4.5.0",
+#   "stringzilla>=5.0.0",
 #   "regex",
 #   "PyICU",
 # ]
@@ -223,10 +223,10 @@ def find_icu(haystack: str, needle: str) -> int:
 
 
 def find_stringzilla(haystack: str, needle: str) -> int:
-    """Count occurrences using StringZilla's utf8_uncased_find_iter."""
+    """Count occurrences using StringZilla's utf8_uncased_matches."""
     if not needle:
         return 0
-    return sum(1 for _ in sz.utf8_uncased_find_iter(haystack, needle))
+    return sum(1 for _ in sz.utf8_uncased_matches(haystack, needle))
 
 
 def bench_case_fold(

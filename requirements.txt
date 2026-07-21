@@ -1,38 +1,57 @@
-# This file lists the optional development dependencies 
+# This file lists the optional development dependencies
 # for StringZilla Python benchmarks
-stringzilla==4.0.9
-stringzillas-cpus==4.0.9
+
+# StringZilla v5 Python wheels are not yet on PyPI, so install them from the neighboring
+# source checkout instead of pinning here:
+#
+#     uv pip install ../StringZilla ../StringZilla/python/stringzillas-cpus
+#
+# Competitor pins below are refreshed to their latest releases as of 2026-07-21
 
 # For substring search:
-pyahocorasick
+pyahocorasick==2.3.1
 
 # For hashing:
-xxhash # https://github.com/ifduyue/python-xxhash, https://github.com/Cyan4973/xxHash 
-murmurhash # https://github.com/explosion/murmurhash, https://github.com/aappleby/smhasher
-google-crc32c # https://github.com/googleapis/python-crc32c 
-mmh3 # https://github.com/hajimes/mmh3
-cityhash # https://github.com/escherba/python-cityhash
+xxhash==3.8.1 # https://github.com/ifduyue/python-xxhash, https://github.com/Cyan4973/xxHash
+murmurhash==1.0.15 # https://github.com/explosion/murmurhash, https://github.com/aappleby/smhasher
+google-crc32c==1.8.0 # https://github.com/googleapis/python-crc32c
+mmh3==5.2.1 # https://github.com/hajimes/mmh3
+cityhash==0.4.10 # https://github.com/escherba/python-cityhash
 
 # For Levenshtein distances:
-rapidfuzz  # https://github.com/rapidfuzz/RapidFuzz
-python-Levenshtein  # https://github.com/maxbachmann/python-Levenshtein
-levenshtein # https://github.com/maxbachmann/Levenshtein
-jellyfish # https://github.com/jamesturk/jellyfish/
-editdistance # https://github.com/roy-ht/editdistance
-distance # https://github.com/doukremt/distance
-polyleven # https://github.com/fujimotos/polyleven
-edlib # https://github.com/Martinsos/edlib
-nltk # https://github.com/nltk/nltk
+rapidfuzz==3.14.5  # https://github.com/rapidfuzz/RapidFuzz
+python-Levenshtein==0.27.3  # https://github.com/maxbachmann/python-Levenshtein
+levenshtein==0.27.3 # https://github.com/maxbachmann/Levenshtein
+jellyfish==1.2.1 # https://github.com/jamesturk/jellyfish/
+editdistance==0.8.1 # https://github.com/roy-ht/editdistance
+distance==0.1.3 # https://github.com/doukremt/distance
+polyleven==0.11.0 # https://github.com/fujimotos/polyleven
+edlib==1.3.9.post1 # https://github.com/Martinsos/edlib
+nltk==3.10.0 # https://github.com/nltk/nltk
 
 # For Needleman-Wunsch and Smith-Waterman algorithms with custom scoring matrices:
-biopython # https://github.com/biopython/biopython
+biopython==1.87 # https://github.com/biopython/biopython
 
 # For sorting:
-pyarrow # https://github.com/apache/arrow
-pandas # https://github.com/pandas-dev/pandas
-polars # https://github.com/pola-rs/polars
+pyarrow==25.0.0 # https://github.com/apache/arrow
+pandas==3.0.3 # https://github.com/pandas-dev/pandas
+polars==1.43.0 # https://github.com/pola-rs/polars
 
 # For memory RNG benchmarks
-numpy # https://github.com/numpy/numpy
-pycryptodome # https://github.com/Legrandin/pycryptodome
-opencv-python # https://github.com/opencv/opencv-python
+numpy==2.5.1 # https://github.com/numpy/numpy
+pycryptodome==3.23.0 # https://github.com/Legrandin/pycryptodome
+opencv-python==5.0.0.93 # https://github.com/opencv/opencv-python
+
+# For cryptographic hashing and encryption baselines:
+blake3==1.0.9 # https://github.com/oconnor663/blake3-py
+cryptography==49.0.0 # https://github.com/pyca/cryptography
+pynacl==1.6.2 # https://github.com/pyca/pynacl
+
+# For UAX#29/#14 tokenization baselines:
+grapheme==0.6.0 # https://github.com/alvinlindstam/grapheme
+uniseg==0.10.1 # https://github.com/emptypage/uniseg-python
+pyicu==2.16.2 # https://gitlab.pyicu.org/main/pyicu
+
+# For MinHash fingerprints and probabilistic membership baselines:
+datasketch==2.0.0 # https://github.com/ekzhu/datasketch
+pyprobables==0.7.0 # https://github.com/barrust/pyprobables

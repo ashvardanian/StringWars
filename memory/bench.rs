@@ -32,7 +32,7 @@ use std::hint::black_box;
 use std::ptr;
 use std::slice;
 
-use rand::{RngCore, SeedableRng};
+use rand::{Rng, SeedableRng};
 use stringzilla::sz;
 use zeroize::Zeroize;
 

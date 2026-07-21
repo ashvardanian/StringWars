@@ -51,11 +51,28 @@ RUSTFLAGS="-C target-cpu=native" \
     cargo run --release --features "cuda bench_similarities" --bin bench_similarities
 ```
 "#]
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::unnecessary_unwrap)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::unnecessary_unwrap
+)]
 use core::convert::TryInto;
 
-use fork_union::count_logical_cores;
+use forkunion as fu;
 use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
+
+/// Logical core count for the multi-core device scope, probed once from a caller-owned topology.
+///
+/// ForkUnion spawns thread pools onto an immutable topology, so we construct it a single time and
+/// thread the derived count through the benchmark helpers instead of hiding it behind a global.
+/// `STRINGWARS_CPU_CORES` overrides the count so a specific socket width can be reproduced.
+fn resolve_core_count(topology: &fu::Topology) -> usize {
+    std::env::var("STRINGWARS_CPU_CORES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&cores| cores > 0)
+        .unwrap_or_else(|| topology.logical_cores_count())
+}
 
 use bio::alignment::{distance as bio_distance, pairwise::Aligner};
 use rapidfuzz::distance::levenshtein;
@@ -262,7 +279,8 @@ fn bench_similarities(budget: &BenchBudget) {
 
     // Core-aware batch sizing: each variant scales `STRINGWARS_BATCH_PER_CORE` by its own core count.
     // A CPU core is one core; a GPU streaming multiprocessor (SM) is one core.
-    let num_cores = count_logical_cores();
+    let topology = fu::Topology::new().expect("Failed to probe CPU topology");
+    let num_cores = resolve_core_count(&topology);
     let batch_single_cpu = auto_batch_size(1, DEFAULT_BATCH_PER_CORE);
     let batch_multi_cpu = auto_batch_size(num_cores, DEFAULT_BATCH_PER_CORE);
     let batch_gpu = auto_batch_size(
@@ -315,6 +333,7 @@ fn bench_similarities(budget: &BenchBudget) {
         budget,
         &tape_bytes_view,
         &chars_view,
+        num_cores,
         side_single_cpu,
         side_multi_cpu,
         side_gpu,
@@ -325,6 +344,7 @@ fn bench_similarities(budget: &BenchBudget) {
     perform_linear_benchmarks(
         budget,
         &tape_bytes_view,
+        num_cores,
         side_single_cpu,
         side_multi_cpu,
         side_gpu,
@@ -335,6 +355,7 @@ fn bench_similarities(budget: &BenchBudget) {
     perform_affine_benchmarks(
         budget,
         &tape_bytes_view,
+        num_cores,
         side_single_cpu,
         side_multi_cpu,
         side_gpu,
@@ -346,12 +367,12 @@ fn perform_uniform_benchmarks(
     budget: &BenchBudget,
     tape_bytes_view: &BytesTapeView<u64>,
     chars_view: &CharsTapeView<u64>,
+    num_cores: usize,
     side_single_cpu: usize,
     side_multi_cpu: usize,
     side_gpu: usize,
 ) {
     // Create device scopes
-    let num_cores = count_logical_cores();
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
     let cpu_parallel =
         DeviceScope::cpu_cores(num_cores).expect("Failed to create multi-core device scope");
@@ -603,7 +624,9 @@ fn perform_uniform_benchmarks(
                 |queries, candidates, matrix| {
                     engine
                         .compute_into(gpu, queries, candidates, matrix)
-                        .unwrap_or_else(|error| panic!("Failed to compute UTF-8 Levenshtein on GPU: {}", error));
+                        .unwrap_or_else(|error| {
+                            panic!("Failed to compute UTF-8 Levenshtein on GPU: {}", error)
+                        });
                 },
             ),
             Err(error) => eprintln!(
@@ -618,11 +641,11 @@ fn perform_uniform_benchmarks(
 fn perform_linear_benchmarks(
     budget: &BenchBudget,
     tape_bytes_view: &BytesTapeView<u64>,
+    num_cores: usize,
     side_single_cpu: usize,
     side_multi_cpu: usize,
     side_gpu: usize,
 ) {
-    let num_cores = count_logical_cores();
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
     let cpu_parallel =
         DeviceScope::cpu_cores(num_cores).expect("Failed to create multi-core device scope");
@@ -944,11 +967,11 @@ fn align_score_benchmarks<GpuError>(
 fn perform_affine_benchmarks(
     budget: &BenchBudget,
     tape_bytes_view: &BytesTapeView<u64>,
+    num_cores: usize,
     side_single_cpu: usize,
     side_multi_cpu: usize,
     side_gpu: usize,
 ) {
-    let num_cores = count_logical_cores();
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
     let cpu_parallel =
         DeviceScope::cpu_cores(num_cores).expect("Failed to create multi-core device scope");

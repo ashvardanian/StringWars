@@ -17,7 +17,7 @@ stringtape = "2.4.1"
 # Published crate by default. For local StringZilla R&D, override it with a working copy through a
 # gitignored `.cargo/config.toml` — no edits to this manifest, so nothing leaks into a commit:
 #
-#     paths = ["../StringZilla"]   # any semver-compatible local checkout (4.6.x satisfies ^4.5.0)
+#     paths = ["../StringZilla"]   # any semver-compatible local checkout (5.0.x satisfies ^5.0.0)
 #
 # Cargo's `paths` key replaces the registry source in place. If it ever reports the override
 # "altered the list of dependencies", add a `[patch.crates-io]` table to this manifest TEMPORARILY
@@ -26,73 +26,73 @@ stringtape = "2.4.1"
 # `default-features = false` keeps StringZilla's `dynamic-dispatch` feature OFF, so the SIMD backend
 # is resolved at compile time (static dispatch) rather than via a per-call indirection. This is the
 # fair default for these latency-sensitive benchmarks; do not add `stringzilla/dynamic-dispatch`.
-stringzilla = {version = "4.5.0", default-features = false}
+stringzilla = { version = "5.0.0", default-features = false }
 
 # Feature-based dependencies for benchmarks
 [features]
 bench_containers = [
   "xxhash-rust", # xxh3_128 for the double-hashing baseline
-  "fastbloom", # SIMD Bloom filter with pluggable hasher
-  "xorf", # Binary-fuse filter built from pre-hashed u64 keys
+  "fastbloom",   # SIMD Bloom filter with pluggable hasher
+  "xorf",        # Binary-fuse filter built from pre-hashed u64 keys
 ]
 bench_encryption = [
-  "ring", # Mozilla's AES-GCM, ChaCha20-Poly1305
-  "openssl", # OpenSSL's AES-GCM, ChaCha20-Poly1305
+  "ring",        # Mozilla's AES-GCM, ChaCha20-Poly1305
+  "openssl",     # OpenSSL's AES-GCM, ChaCha20-Poly1305
   "sodiumoxide", # SodiumOxide's ChaCha20-Poly1305
-  "getrandom", # OS random for key generation
-  "rand", # Random number generation for keys
+  "getrandom",   # OS random for key generation
+  "rand",        # Random number generation for keys
 ]
 bench_find = [
-  "memchr", # Substring search
-  "bstr", # Byteset search
+  "memchr",       # Substring search
+  "bstr",         # Byteset search
   "aho-corasick", # Byteset search
 ]
 bench_fingerprints = [
   "probabilistic-collections", # MinHash
-  "fork_union", # CPU core counting for device scopes
+  "forkunion",                 # CPU core counting for device scopes
 ]
 bench_hash = [
-  "bit-set", # for collision counting
-  "ahash", # aHash
-  "xxhash-rust", # xxHash
-  "wyhash", # wyhash
-  "blake3", # Blake3
-  "crc32fast", # CRC32
+  "bit-set",      # for collision counting
+  "ahash",        # aHash
+  "xxhash-rust",  # xxHash
+  "wyhash",       # wyhash
+  "blake3",       # Blake3
+  "crc32fast",    # CRC32
   "murmurhash32", # MurmurHash32
-  "foldhash", # FoldHash
-  "sha2", # SHA256
-  "ring", # SHA256
-  "cityhash", # CityHash (x86_64 only)
+  "foldhash",     # FoldHash
+  "sha2",         # SHA256
+  "ring",         # SHA256
+  "cityhash",     # CityHash (x86_64 only)
 ]
 bench_memory = [
-  "rand", # Randomize Buffer
-  "zeroize", # Obfuscate Buffer
-  "getrandom", # Randomize Buffer via OS
-  "rand_chacha", # Randomize Buffer
+  "rand",         # Randomize Buffer
+  "zeroize",      # Obfuscate Buffer
+  "getrandom",    # Randomize Buffer via OS
+  "rand_chacha",  # Randomize Buffer
   "rand_xoshiro", # Randomize Buffer
 ]
 bench_normalization = [
-  "icu", # Case mapping + NFC/NFD/NFKC/NFKD normalizers
-  "unicase", # Case-insensitive string wrapper
-  "rand", # Random needle sampling
+  "icu",                   # Case mapping + NFC/NFD/NFKC/NFKD normalizers
+  "unicase",               # Case-insensitive string wrapper
+  "rand",                  # Random needle sampling
   "unicode-normalization", # NFC/NFD/NFKC/NFKD normalization baseline
-  "pcre2", # Full Unicode case folding in regex (unlike `regex` crate)
-  "memchr", # Fast SIMD substring search (for ICU fold + search baseline)
+  "pcre2",                 # Full Unicode case folding in regex (unlike `regex` crate)
+  "memchr",                # Fast SIMD substring search (for ICU fold + search baseline)
 ]
 bench_sequence = [
-  "arrow", # Sorting
+  "arrow",  # Sorting
   "polars", # DataFrame library with sorting (single-threaded in the bench)
 ]
 bench_similarities = [
   "rapidfuzz", # Levenshtein distance
-  "bio", # Needleman-Wunsch score
-  "fork_union", # Parallelizing RapidFuzz calls
+  "bio",       # Needleman-Wunsch score
+  "forkunion", # Parallelizing RapidFuzz calls
 ]
 bench_tokenization = [
-  "icu", # Unicode properties, TR29 word/grapheme/sentence + UAX#14 line segmentation
-  "simdutf", # SIMD UTF-8 validation and transcoding
+  "icu",                  # Unicode properties, TR29 word/grapheme/sentence + UAX#14 line segmentation
+  "simdutf",              # SIMD UTF-8 validation and transcoding
   "unicode-segmentation", # UAX#29 word/grapheme/sentence segmentation
-  "unicode-linebreak", # UAX#14 line-break opportunity segmentation
+  "unicode-linebreak",    # UAX#14 line-break opportunity segmentation
 ]
 cuda = ["stringzilla/cuda"]
 default = ["stringzilla/cpus"]
@@ -104,18 +104,18 @@ default = ["stringzilla/cpus"]
 [dependencies.memchr]
 default-features = false
 optional = true
-version = "2.7.6"
+version = "2.8.3"
 
 [dependencies.bio]
 default-features = false
 features = ["runtime-dispatch-simd"]
 optional = true
-version = "3.0.0"
+version = "4.0.1"
 
 [dependencies.bstr]
 default-features = false
 optional = true
-version = "1.12.1"
+version = "1.13.0"
 
 [dependencies.aho-corasick]
 optional = true
@@ -125,19 +125,19 @@ version = "1.1.4"
 default-features = false
 features = ["compiled_data"]
 optional = true
-version = "2.1.1"
+version = "2.2.0"
 
 [dependencies.simdutf]
 optional = true
-version = "0.6"
+version = "0.7"
 
 [dependencies.unicase]
 optional = true
-version = "2.7"
+version = "2.9"
 
 [dependencies.unicode-segmentation]
 optional = true
-version = "1.12"
+version = "1.13"
 
 [dependencies.unicode-linebreak]
 optional = true
@@ -145,31 +145,31 @@ version = "0.1.5"
 
 [dependencies.unicode-normalization]
 optional = true
-version = "0.1"
+version = "0.1.25"
 
 [dependencies.regex]
 optional = false
-version = "1.12.2"
+version = "1.13.1"
 
 [dependencies.pcre2]
 optional = true
-version = "0.2"
+version = "0.2.11"
 
 [dependencies.rapidfuzz]
 optional = true
 version = "0.5.0"
 
-[dependencies.fork_union]
+[dependencies.forkunion]
 optional = true
-version = "2.3.0"
+version = "3.0"
 
 [dependencies.blake3]
 optional = true
-version = "1.6.1"
+version = "1.8.5"
 
 [dependencies.sha2]
 optional = true
-version = "0.10"
+version = "0.11"
 
 [dependencies.ring]
 optional = true
@@ -177,7 +177,7 @@ version = "0.17"
 
 [dependencies.openssl]
 optional = true
-version = "0.10.75"
+version = "0.10.81"
 
 [dependencies.sodiumoxide]
 optional = true
@@ -185,11 +185,11 @@ version = "0.2"
 
 [dependencies.crc32fast]
 optional = true
-version = "1.3.2"
+version = "1.5.0"
 
 [dependencies.murmurhash32]
 optional = true
-version = "0.3"
+version = "0.4"
 
 [dependencies.foldhash]
 optional = true
@@ -197,24 +197,24 @@ version = "0.2"
 
 [dependencies.ahash]
 optional = true
-version = "0.8"
+version = "0.8.12"
 
 [dependencies.xxhash-rust]
 features = ["xxh3", "const_xxh3"]
 optional = true
-version = "0.8"
+version = "0.8.18"
 
 [dependencies.wyhash]
 optional = true
-version = "0.5"
+version = "0.6"
 
 [dependencies.twox-hash]
 optional = true
-version = "2.1.2"
+version = "2.1.3"
 
 [dependencies.arrow]
 optional = true
-version = "57.0.0"
+version = "59.1.0"
 
 [dependencies.fastbloom]
 optional = true
@@ -232,11 +232,11 @@ version = "1.10.0"
 default-features = false
 features = ["lazy", "strings", "parquet", "regex", "timezones", "temporal"]
 optional = true
-version = "0.52"
+version = "0.54"
 
 [dependencies.zeroize]
 optional = true
-version = "1.8.2"
+version = "1.9.0"
 
 [dependencies.getrandom]
 optional = true
@@ -244,15 +244,15 @@ version = "0.3.4"
 
 [dependencies.rand]
 optional = true
-version = "0.9.2"
+version = "0.10.2"
 
 [dependencies.rand_chacha]
 optional = true
-version = "0.9.0"
+version = "0.10.0"
 
 [dependencies.rand_xoshiro]
 optional = true
-version = "0.7.0"
+version = "0.8.1"
 
 [dependencies.probabilistic-collections]
 branch = "master"
@@ -261,14 +261,14 @@ optional = true
 
 [dependencies.bit-set]
 optional = true
-version = "0.8"
+version = "0.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.177"
 perf-event = "0.4"
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-cityhash = {version = "0.1", optional = true}
+cityhash = { version = "0.1", optional = true }
 
 [[bench]]
 harness = false

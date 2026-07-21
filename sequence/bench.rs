@@ -233,11 +233,10 @@ fn bench_argsort(budget: &BenchBudget, unsorted: &CharsCowsAuto<'static>) {
     if should_run("argsort/polars::DataFrame::sort") {
         // Lazy initialization: only create DataFrame when needed
         // No unnecessary clone - DataFrame takes ownership directly
-        let polars_dataframe = DataFrame::new(vec![Series::new(
-            COLUMN_NAME.into(),
-            unsorted.iter().collect::<Vec<&str>>(),
+        let polars_dataframe = DataFrame::new(
+            unsorted.len(),
+            vec![Series::new(COLUMN_NAME.into(), unsorted.iter().collect::<Vec<&str>>()).into()],
         )
-        .into()])
         .unwrap();
 
         measure_throughput(

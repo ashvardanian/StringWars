@@ -14,3 +14,4 @@ __pycache__
 /blns.txt
 /unicode/
 /unicode_tests.txt
+.cargo/

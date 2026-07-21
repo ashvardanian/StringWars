@@ -2,9 +2,10 @@
 
 # RAPIDS cuDF for CUDA 12
 # https://github.com/rapidsai/cudf
-cudf-cu12==25.*; platform_system == "Linux" and (platform_machine == "x86_64" or platform_machine == "aarch64") and python_version >= "3.10" and python_version< "3.13"
+cudf-cu12==26.*; platform_system == "Linux" and (platform_machine == "x86_64" or platform_machine == "aarch64") and python_version >= "3.10" and python_version < "3.14"
 
-# StringZillas GPU build
+# StringZillas GPU build — v5 wheels are not yet on PyPI; build from the neighboring source:
+#
+#     uv pip install ../StringZilla/python/stringzillas-cuda
+#
 # https://github.com/ashvardanian/stringzilla
-stringzillas-cuda==4.0.9; platform_system == "Linux" and (platform_machine == "x86_64" or platform_machine == "aarch64")
-

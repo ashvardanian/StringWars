@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
-#   "stringzilla",
+#   "stringzilla>=5.0.0",
 #   "numpy",
 #   "pycryptodome",
 #   "opencv-python",

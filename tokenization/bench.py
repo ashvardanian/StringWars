@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
-#   "stringzilla>=4.5.0",
+#   "stringzilla>=5.0.0",
 #   "regex",
 #   "PyICU",
 #   "uniseg",

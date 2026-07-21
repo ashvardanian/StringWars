@@ -345,7 +345,7 @@ fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &
     // Random-sample 100 needles with fixed seed for reproducibility
     let mut random_generator = rand::rngs::StdRng::seed_from_u64(42);
     let search_needles: Vec<&str> = candidates
-        .choose_multiple(&mut random_generator, 100.min(candidates.len()))
+        .sample(&mut random_generator, 100.min(candidates.len()))
         .copied()
         .collect();
 
@@ -357,7 +357,7 @@ fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &
     {
         let mut needle_index = 0usize;
         measure_throughput(
-            "case-insensitive-find/stringzilla::utf8_uncased_find",
+            "case-insensitive-find/stringzilla::utf8_uncased_search",
             ReportAs::Bytes,
             budget,
             || {
@@ -367,7 +367,7 @@ fn bench_case_insensitive_find(budget: &BenchBudget, haystack: &[u8], needles: &
                 let needle = sz::Utf8UncasedNeedle::new(search_needles[index].as_bytes());
                 let mut matches = 0usize;
                 let mut remaining = haystack_bytes;
-                while let Some((offset, len)) = sz::utf8_uncased_find(remaining, &needle) {
+                while let Some((offset, len)) = sz::utf8_uncased_search(remaining, &needle) {
                     matches += 1;
                     remaining = &remaining[offset + len.max(1)..];
                 }
