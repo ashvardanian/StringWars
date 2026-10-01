@@ -7,6 +7,7 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_tokenization --bench b
 ```
 "#]
 use std::hint::black_box;
+use std::process::ExitCode;
 
 use stringtape::BytesCowsAuto;
 
@@ -19,23 +20,24 @@ use unicode_linebreak::linebreaks;
 use unicode_segmentation::UnicodeSegmentation;
 
 use stringwars::{
-    finish, install_panic_hook, log_stringzilla_metadata, log_timing_overhead, measure,
-    resolve_dataset, MeasureSpec, ResultExt, Unit, WorkUnits,
+    finish, install_panic_hook, log_timing_overhead, measure, print_machine, resolve_dataset,
+    Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
 };
 
 /// File-local helper: cycles through `needles` byte slices, passes each to `count`, and reports
-/// throughput as `WorkUnits::bytes(line.len())` — the bytes of that one line per call.
+/// throughput as `WorkUnits::bytes(Bytes(line.len()))` — the bytes of that one line per call.
 ///
 /// Only use this for benchmarks whose body is exactly "pick a line, count something,
-/// WorkUnits::bytes(line.len())". Blocks that operate on `&str` slices, use `unsafe`, or scan the
+/// WorkUnits::bytes(Bytes(line.len()))". Blocks that operate on `&str` slices, use `unsafe`, or scan the
 /// whole haystack in one shot are left inline.
 fn measure_line_tokenizer<Count: FnMut(&[u8]) -> usize>(
+    settings: &Settings,
     name: &str,
     work: WorkUnits,
     needles: &BytesCowsAuto,
     mut count: Count,
 ) {
-    measure(name, MeasureSpec::new(Unit::Bytes, work), || {
+    measure(settings, name, MeasureSpec::new(Unit::Bytes, work), || {
         for line in needles.iter() {
             black_box(count(black_box(line)));
         }
@@ -47,8 +49,14 @@ fn measure_line_tokenizer<Count: FnMut(&[u8]) -> usize>(
 /// Each call splits a single document line, cycling through the line tokens. Throughput is
 /// reported as the bytes of that one line, so the per-byte rate still reflects the splitter's
 /// compute cost while the working set stays a single line rather than the whole file.
-fn bench_tokenize_whitespace(work: WorkUnits, needles: &BytesCowsAuto, lines_str: &[&str]) {
+fn bench_tokenize_whitespace(
+    settings: &Settings,
+    work: WorkUnits,
+    needles: &BytesCowsAuto,
+    lines_str: &[&str],
+) {
     measure_line_tokenizer(
+        settings,
         "tokenize-whitespace/stringzilla::utf8_split_whitespaces",
         work,
         needles,
@@ -61,6 +69,7 @@ fn bench_tokenize_whitespace(work: WorkUnits, needles: &BytesCowsAuto, lines_str
 
     {
         measure(
+            settings,
             "tokenize-whitespace/std::split<is_whitespace>",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -78,6 +87,7 @@ fn bench_tokenize_whitespace(work: WorkUnits, needles: &BytesCowsAuto, lines_str
     {
         let white_space = CodePointSetData::new::<WhiteSpace>();
         measure(
+            settings,
             "tokenize-whitespace/icu::WhiteSpace.split",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -98,7 +108,12 @@ fn bench_tokenize_whitespace(work: WorkUnits, needles: &BytesCowsAuto, lines_str
 /// Each call splits a single document line, cycling through the line tokens; throughput is the
 /// bytes of that one line. (Per-line newline splitting is degenerate when lines were split on `\n`,
 /// but the kernels still exercise the full Unicode newline set across the seven characters.)
-fn bench_tokenize_newlines(work: WorkUnits, needles: &BytesCowsAuto, lines_str: &[&str]) {
+fn bench_tokenize_newlines(
+    settings: &Settings,
+    work: WorkUnits,
+    needles: &BytesCowsAuto,
+    lines_str: &[&str],
+) {
     // Custom newline predicate matching StringZilla's 7 newline characters.
     fn is_unicode_newline(character: char) -> bool {
         matches!(
@@ -108,6 +123,7 @@ fn bench_tokenize_newlines(work: WorkUnits, needles: &BytesCowsAuto, lines_str: 
     }
 
     measure_line_tokenizer(
+        settings,
         "tokenize-newlines/stringzilla::utf8_split_newlines",
         work,
         needles,
@@ -120,6 +136,7 @@ fn bench_tokenize_newlines(work: WorkUnits, needles: &BytesCowsAuto, lines_str: 
 
     {
         measure(
+            settings,
             "tokenize-newlines/custom::split<is_unicode_newline>",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -144,10 +161,16 @@ fn bench_tokenize_newlines(work: WorkUnits, needles: &BytesCowsAuto, lines_str: 
 /// also tile — `unicode-segmentation::split_word_bounds()` and `icu::segmenter::WordSegmenter`. The
 /// filtering `unicode_words()` (word-like segments only, dropping spaces/punctuation) is a different
 /// operation and is intentionally not compared here.
-fn bench_tokenize_words_tr29(work: WorkUnits, needles: &BytesCowsAuto, lines_str: &[&str]) {
+fn bench_tokenize_words_tr29(
+    settings: &Settings,
+    work: WorkUnits,
+    needles: &BytesCowsAuto,
+    lines_str: &[&str],
+) {
     // Benchmark for StringZilla's single-pass TR29 word iterator. `.count()` consumes the
     // iterator without materializing the segments, so no allocation taints the measurement.
     measure_line_tokenizer(
+        settings,
         "tokenize-words-tr29/stringzilla::utf8_wordbreaks",
         work,
         needles,
@@ -160,6 +183,7 @@ fn bench_tokenize_words_tr29(work: WorkUnits, needles: &BytesCowsAuto, lines_str
 
     {
         measure(
+            settings,
             "tokenize-words-tr29/unicode-segmentation::split_word_bounds",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -175,6 +199,7 @@ fn bench_tokenize_words_tr29(work: WorkUnits, needles: &BytesCowsAuto, lines_str
     {
         let segmenter = WordSegmenter::new_dictionary(Default::default());
         measure(
+            settings,
             "tokenize-words-tr29/icu::WordSegmenter::new_dictionary.segment_str",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -190,6 +215,7 @@ fn bench_tokenize_words_tr29(work: WorkUnits, needles: &BytesCowsAuto, lines_str
 
     {
         measure(
+            settings,
             "tokenize-words-tr29/std::split_whitespace",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -209,10 +235,16 @@ fn bench_tokenize_words_tr29(work: WorkUnits, needles: &BytesCowsAuto, lines_str
 /// emoji ZWJ sequences, and regional-indicator pairs count as one cluster.
 /// - `unicode-segmentation::graphemes(true)`: extended grapheme clusters
 /// - `icu::segmenter::GraphemeClusterSegmenter`: ICU4X implementation
-fn bench_tokenize_graphemes(work: WorkUnits, needles: &BytesCowsAuto, lines_str: &[&str]) {
+fn bench_tokenize_graphemes(
+    settings: &Settings,
+    work: WorkUnits,
+    needles: &BytesCowsAuto,
+    lines_str: &[&str],
+) {
     // Benchmark for StringZilla's single-pass grapheme iterator. `.count()` consumes the
     // iterator without materializing the segments, so no allocation taints the measurement.
     measure_line_tokenizer(
+        settings,
         "tokenize-graphemes-tr29/stringzilla::utf8_graphemes",
         work,
         needles,
@@ -225,6 +257,7 @@ fn bench_tokenize_graphemes(work: WorkUnits, needles: &BytesCowsAuto, lines_str:
 
     {
         measure(
+            settings,
             "tokenize-graphemes-tr29/unicode-segmentation::graphemes",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -240,6 +273,7 @@ fn bench_tokenize_graphemes(work: WorkUnits, needles: &BytesCowsAuto, lines_str:
     {
         let segmenter = GraphemeClusterSegmenter::new();
         measure(
+            settings,
             "tokenize-graphemes-tr29/icu::GraphemeClusterSegmenter.segment_str",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -260,10 +294,16 @@ fn bench_tokenize_graphemes(work: WorkUnits, needles: &BytesCowsAuto, lines_str:
 /// scripts.
 /// - `unicode-segmentation::split_sentence_bounds()`: raw UAX#29 sentence boundaries
 /// - `icu::segmenter::SentenceSegmenter`: ICU4X implementation
-fn bench_tokenize_sentences(work: WorkUnits, needles: &BytesCowsAuto, lines_str: &[&str]) {
+fn bench_tokenize_sentences(
+    settings: &Settings,
+    work: WorkUnits,
+    needles: &BytesCowsAuto,
+    lines_str: &[&str],
+) {
     // Benchmark for StringZilla's single-pass sentence iterator. `.count()` consumes the
     // iterator without materializing the segments, so no allocation taints the measurement.
     measure_line_tokenizer(
+        settings,
         "tokenize-sentences-tr29/stringzilla::utf8_sentences",
         work,
         needles,
@@ -276,6 +316,7 @@ fn bench_tokenize_sentences(work: WorkUnits, needles: &BytesCowsAuto, lines_str:
 
     {
         measure(
+            settings,
             "tokenize-sentences-tr29/unicode-segmentation::split_sentence_bounds",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -291,6 +332,7 @@ fn bench_tokenize_sentences(work: WorkUnits, needles: &BytesCowsAuto, lines_str:
     {
         let segmenter = SentenceSegmenter::new(Default::default());
         measure(
+            settings,
             "tokenize-sentences-tr29/icu::SentenceSegmenter.segment_str",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -311,10 +353,16 @@ fn bench_tokenize_sentences(work: WorkUnits, needles: &BytesCowsAuto, lines_str:
 /// distinct from the hard newline splitting in `bench_tokenize_newlines`.
 /// - `unicode-linebreak::linebreaks()`: mandatory and allowed break opportunities
 /// - `icu::segmenter::LineSegmenter`: ICU4X implementation
-fn bench_tokenize_lines_uax14(work: WorkUnits, needles: &BytesCowsAuto, lines_str: &[&str]) {
+fn bench_tokenize_lines_uax14(
+    settings: &Settings,
+    work: WorkUnits,
+    needles: &BytesCowsAuto,
+    lines_str: &[&str],
+) {
     // Benchmark for StringZilla's single-pass line-break iterator. `.count()` consumes the
     // iterator without materializing the segments, so no allocation taints the measurement.
     measure_line_tokenizer(
+        settings,
         "tokenize-lines-uax14/stringzilla::utf8_linebreaks",
         work,
         needles,
@@ -327,6 +375,7 @@ fn bench_tokenize_lines_uax14(work: WorkUnits, needles: &BytesCowsAuto, lines_st
 
     {
         measure(
+            settings,
             "tokenize-lines-uax14/unicode-linebreak::linebreaks",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -342,6 +391,7 @@ fn bench_tokenize_lines_uax14(work: WorkUnits, needles: &BytesCowsAuto, lines_st
     {
         let segmenter = LineSegmenter::new_dictionary(Default::default());
         measure(
+            settings,
             "tokenize-lines-uax14/icu::LineSegmenter::new_dictionary.segment_str",
             MeasureSpec::new(Unit::Bytes, work),
             || {
@@ -357,14 +407,20 @@ fn bench_tokenize_lines_uax14(work: WorkUnits, needles: &BytesCowsAuto, lines_st
 }
 
 /// Benchmarks UTF-8 character counting using StringZilla, simdutf, and stdlib.
-fn bench_utf8_length(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAuto) {
-    let haystack_length = haystack.len() as u64;
+fn bench_utf8_length(
+    settings: &Settings,
+    _work: WorkUnits,
+    haystack: &[u8],
+    _needles: &BytesCowsAuto,
+) {
+    let haystack_length = Bytes(haystack.len() as u64);
 
     // Validate UTF-8 once, outside the timed closures (only the stdlib baseline needs it; the
     // StringZilla and simdutf counters operate directly on bytes).
     let haystack_str = std::str::from_utf8(haystack).ok();
 
     measure(
+        settings,
         "utf8-length/stringzilla::utf8_chars.len",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -377,6 +433,7 @@ fn bench_utf8_length(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAuto
     // Benchmark for StringZilla's dedicated `count_utf8()` free function (direct SIMD scan,
     // without constructing a view object).
     measure(
+        settings,
         "utf8-length/stringzilla::count_utf8",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -387,6 +444,7 @@ fn bench_utf8_length(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAuto
     );
 
     measure(
+        settings,
         "utf8-length/simdutf::count_utf8",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -399,6 +457,7 @@ fn bench_utf8_length(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAuto
     {
         let text = haystack_str.expect("UTF-8 text required for the stdlib codepoint counter");
         measure(
+            settings,
             "utf8-length/std::chars.count",
             MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
             || {
@@ -410,10 +469,16 @@ fn bench_utf8_length(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAuto
 }
 
 /// Benchmarks UTF-8 to UTF-32 decoding using StringZilla, simdutf, and stdlib.
-fn bench_utf8_iterate(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAuto) {
-    let haystack_length = haystack.len() as u64;
+fn bench_utf8_iterate(
+    settings: &Settings,
+    _work: WorkUnits,
+    haystack: &[u8],
+    _needles: &BytesCowsAuto,
+) {
+    let haystack_length = Bytes(haystack.len() as u64);
 
     measure(
+        settings,
         "utf8-iterate/stringzilla::utf8_chars.iter",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -430,6 +495,7 @@ fn bench_utf8_iterate(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAut
         // Pre-allocate buffer for UTF-32 output (worst case: same number of codepoints as bytes)
         let mut utf32_buffer = vec![0u32; haystack.len()];
         measure(
+            settings,
             "utf8-iterate/simdutf::convert_utf8_to_utf32",
             MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
             || {
@@ -451,6 +517,7 @@ fn bench_utf8_iterate(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAut
     }
 
     measure(
+        settings,
         "utf8-iterate/std::chars",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -473,7 +540,12 @@ fn bench_utf8_iterate(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAut
 ///
 /// We target the *last* codepoint, so every implementation scans the whole buffer once —
 /// a fair workload whose throughput is simply the input size.
-fn bench_find_nth_utf8(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAuto) {
+fn bench_find_nth_utf8(
+    settings: &Settings,
+    _work: WorkUnits,
+    haystack: &[u8],
+    _needles: &BytesCowsAuto,
+) {
     let haystack_str = match std::str::from_utf8(haystack) {
         Ok(text) => text,
         Err(_) => {
@@ -488,9 +560,10 @@ fn bench_find_nth_utf8(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAu
     }
     let last_index = codepoint_count - 1;
 
-    let haystack_length = haystack.len() as u64;
+    let haystack_length = Bytes(haystack.len() as u64);
 
     measure(
+        settings,
         "find-nth-utf8/stringzilla::find_nth_utf8",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -500,6 +573,7 @@ fn bench_find_nth_utf8(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAu
     );
 
     measure(
+        settings,
         "find-nth-utf8/std::char_indices.nth",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -511,18 +585,23 @@ fn bench_find_nth_utf8(_work: WorkUnits, haystack: &[u8], _needles: &BytesCowsAu
         },
     );
 }
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
+    print_machine();
+    let settings = Settings::read("tokenization");
+    settings.print();
 
-    let tape = resolve_dataset("tokenization").unwrap_nice();
+    let tape = resolve_dataset(&settings).unwrap_nice();
 
     // The tape's single token, not `parent()`: the parent is the raw read, cut at exactly
-    // the budget and so liable to end mid-character, while the token carries the UTF-8
+    // `STRINGWARS_BYTES` and so liable to end mid-character, while the token carries the UTF-8
     // backoff. It is also what the Python side measures, so the two stay comparable.
     let haystack: &[u8] = tape.iter().next().expect("empty working set");
     let needles = &tape;
-    let work = WorkUnits::new(tape.len() as u64, tape.iter().map(|t| t.len() as u64).sum());
+    let work = WorkUnits::new(
+        tape.len() as u64,
+        Bytes(tape.iter().map(|t| t.len() as u64).sum()),
+    );
     // Decoded once for every `&str` baseline in the suite. A lossy fallback would be
     // silent: in `file` mode the tape is a single token, so one undecodable byte would
     // hand a no-op row the whole working set and call it throughput.
@@ -530,34 +609,34 @@ fn main() {
         .iter()
         .map(|line| std::str::from_utf8(line).expect("dataset must be valid UTF-8"))
         .collect();
-    log_timing_overhead();
+    log_timing_overhead(&settings);
 
     println!("# tokenize-whitespace");
-    bench_tokenize_whitespace(work, needles, &lines_str);
+    bench_tokenize_whitespace(&settings, work, needles, &lines_str);
 
     println!("# tokenize-newlines");
-    bench_tokenize_newlines(work, needles, &lines_str);
+    bench_tokenize_newlines(&settings, work, needles, &lines_str);
 
     println!("# tokenize-words-tr29");
-    bench_tokenize_words_tr29(work, needles, &lines_str);
+    bench_tokenize_words_tr29(&settings, work, needles, &lines_str);
 
     println!("# tokenize-graphemes-tr29");
-    bench_tokenize_graphemes(work, needles, &lines_str);
+    bench_tokenize_graphemes(&settings, work, needles, &lines_str);
 
     println!("# tokenize-sentences-tr29");
-    bench_tokenize_sentences(work, needles, &lines_str);
+    bench_tokenize_sentences(&settings, work, needles, &lines_str);
 
     println!("# tokenize-lines-uax14");
-    bench_tokenize_lines_uax14(work, needles, &lines_str);
+    bench_tokenize_lines_uax14(&settings, work, needles, &lines_str);
 
     println!("# utf8-length");
-    bench_utf8_length(work, haystack, needles);
+    bench_utf8_length(&settings, work, haystack, needles);
 
     println!("# utf8-iterate");
-    bench_utf8_iterate(work, haystack, needles);
+    bench_utf8_iterate(&settings, work, haystack, needles);
 
     println!("# find-nth-utf8");
-    bench_find_nth_utf8(work, haystack, needles);
+    bench_find_nth_utf8(&settings, work, haystack, needles);
 
-    finish();
+    finish()
 }

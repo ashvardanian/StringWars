@@ -9,6 +9,7 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_containers --bench ben
 
 use std::collections::HashSet;
 use std::hint::black_box;
+use std::process::ExitCode;
 
 use stringtape::BytesCowsAuto;
 
@@ -18,8 +19,8 @@ use xorf::{BinaryFuse8, Filter};
 use xxhash_rust::xxh3::{xxh3_128_with_seed, xxh3_64};
 
 use stringwars::{
-    finish, install_panic_hook, log_stringzilla_metadata, log_timing_overhead, measure,
-    resolve_dataset, should_run, MeasureSpec, ResultExt, Unit, WorkUnits,
+    finish, install_panic_hook, log_timing_overhead, measure, print_machine, resolve_dataset,
+    Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
 };
 
 /// Sixteen fixed odd seeds, enough for the widest 1024-bit digest, shared across every multi-hash
@@ -49,6 +50,7 @@ const TARGET_FALSE_POSITIVE_RATE: f64 = 0.01;
 /// Times one multi-hash variant, calling `fill` once per word to produce `digest_bits` bits of
 /// independent hash digest, reporting digest bits/s.
 fn measure_multihash<Fill: FnMut(&[u8])>(
+    settings: &Settings,
     name: &str,
     digest_bits: usize,
     slices: &[&[u8]],
@@ -56,9 +58,9 @@ fn measure_multihash<Fill: FnMut(&[u8])>(
 ) {
     let pass = WorkUnits::new(
         digest_bits as u64 * slices.len() as u64,
-        slices.iter().map(|token| token.len() as u64).sum(),
+        Bytes(slices.iter().map(|token| token.len() as u64).sum()),
     );
-    measure(name, MeasureSpec::new(Unit::Bits, pass), || {
+    measure(settings, name, MeasureSpec::new(Unit::Bits, pass), || {
         for token in slices {
             fill(token);
         }
@@ -66,11 +68,15 @@ fn measure_multihash<Fill: FnMut(&[u8])>(
 }
 
 /// Times filter construction, rebuilding the whole filter from `count` keys on every pass.
-fn measure_build<Build: FnMut()>(name: &str, count: usize, bytes: u64, mut build: Build) {
-    if !should_run(name) {
-        return;
-    }
+fn measure_build<Build: FnMut()>(
+    settings: &Settings,
+    name: &str,
+    count: usize,
+    bytes: Bytes,
+    mut build: Build,
+) {
     measure(
+        settings,
         name,
         MeasureSpec::new(Unit::Hashes, WorkUnits::new(count as u64, bytes)),
         || {
@@ -80,12 +86,17 @@ fn measure_build<Build: FnMut()>(name: &str, count: usize, bytes: u64, mut build
 }
 
 /// Times membership queries, cycling one probe per call.
-fn measure_query<Query: FnMut(&[u8]) -> bool>(name: &str, probes: &[&[u8]], mut query: Query) {
+fn measure_query<Query: FnMut(&[u8]) -> bool>(
+    settings: &Settings,
+    name: &str,
+    probes: &[&[u8]],
+    mut query: Query,
+) {
     let pass = WorkUnits::new(
         probes.len() as u64,
-        probes.iter().map(|probe| probe.len() as u64).sum(),
+        Bytes(probes.iter().map(|probe| probe.len() as u64).sum()),
     );
-    measure(name, MeasureSpec::new(Unit::Hashes, pass), || {
+    measure(settings, name, MeasureSpec::new(Unit::Hashes, pass), || {
         for probe in probes {
             black_box(query(probe));
         }
@@ -118,14 +129,15 @@ fn report_quality<Contains: FnMut(&[u8]) -> bool>(
 /// full 128 bits per call and needs only `digest_bits / 128`. Every value is independent — the
 /// cheap `g_i = h1 + i*h2` double-hashing shortcut is intentionally not measured here, since its
 /// extra bits are linearly dependent (see the prose in `containers/README.md`).
-fn bench_multihash(digest_bits: usize, slices: &[&[u8]]) {
+fn bench_multihash(settings: &Settings, digest_bits: usize, slices: &[&[u8]]) {
     println!("# multihash ({}-bit digest)", digest_bits);
     let sz_hashes = digest_bits / 64;
     let xxh3_calls = digest_bits / 128;
     let mut hashes = [0u64; 16];
 
     measure_multihash(
-        "multihash/stringzilla::hash_multiseed",
+        settings,
+        &format!("multihash-{digest_bits}/stringzilla::hash_multiseed"),
         digest_bits,
         slices,
         |token| {
@@ -135,7 +147,8 @@ fn bench_multihash(digest_bits: usize, slices: &[&[u8]]) {
     );
 
     measure_multihash(
-        "multihash/stringzilla::hash",
+        settings,
+        &format!("multihash-{digest_bits}/stringzilla::hash"),
         digest_bits,
         slices,
         |token| {
@@ -146,18 +159,24 @@ fn bench_multihash(digest_bits: usize, slices: &[&[u8]]) {
         },
     );
 
-    measure_multihash("multihash/xxh3::xxh3_128", digest_bits, slices, |token| {
-        for (index, pair) in hashes[..xxh3_calls * 2].chunks_mut(2).enumerate() {
-            let wide = xxh3_128_with_seed(token, SEEDS[index]);
-            pair[0] = wide as u64;
-            pair[1] = (wide >> 64) as u64;
-        }
-        black_box(&hashes[..xxh3_calls * 2]);
-    });
+    measure_multihash(
+        settings,
+        &format!("multihash-{digest_bits}/xxh3::xxh3_128"),
+        digest_bits,
+        slices,
+        |token| {
+            for (index, pair) in hashes[..xxh3_calls * 2].chunks_mut(2).enumerate() {
+                let wide = xxh3_128_with_seed(token, SEEDS[index]);
+                pair[0] = wide as u64;
+                pair[1] = (wide >> 64) as u64;
+            }
+            black_box(&hashes[..xxh3_calls * 2]);
+        },
+    );
 }
 
 /// Bloom filter (fastbloom): SipHash default versus a single `sz::hash` fed through `insert_hash`.
-fn bench_bloom(inserted: &[&[u8]], absent: &[&[u8]], bytes: u64) {
+fn bench_bloom(settings: &Settings, inserted: &[&[u8]], absent: &[&[u8]], bytes: Bytes) {
     let count = inserted.len();
 
     let mut bloom = BloomFilter::with_false_pos(TARGET_FALSE_POSITIVE_RATE).expected_items(count);
@@ -171,17 +190,26 @@ fn bench_bloom(inserted: &[&[u8]], absent: &[&[u8]], bytes: u64) {
         absent,
         |token| bloom.contains(token),
     );
-    measure_build("bloom/fastbloom::insert<siphash>", count, bytes, || {
-        let mut filter =
-            BloomFilter::with_false_pos(TARGET_FALSE_POSITIVE_RATE).expected_items(count);
-        for token in inserted {
-            filter.insert(token);
-        }
-        black_box(&filter);
-    });
-    measure_query("bloom/fastbloom::contains<siphash>", inserted, |token| {
-        bloom.contains(token)
-    });
+    measure_build(
+        settings,
+        "bloom/fastbloom::insert<siphash>",
+        count,
+        bytes,
+        || {
+            let mut filter =
+                BloomFilter::with_false_pos(TARGET_FALSE_POSITIVE_RATE).expected_items(count);
+            for token in inserted {
+                filter.insert(token);
+            }
+            black_box(&filter);
+        },
+    );
+    measure_query(
+        settings,
+        "bloom/fastbloom::contains<siphash>",
+        inserted,
+        |token| bloom.contains(token),
+    );
 
     let mut bloom_sz =
         BloomFilter::with_false_pos(TARGET_FALSE_POSITIVE_RATE).expected_items(count);
@@ -195,15 +223,22 @@ fn bench_bloom(inserted: &[&[u8]], absent: &[&[u8]], bytes: u64) {
         absent,
         |token| bloom_sz.contains_hash(sz::hash(token)),
     );
-    measure_build("bloom/fastbloom::insert<stringzilla>", count, bytes, || {
-        let mut filter =
-            BloomFilter::with_false_pos(TARGET_FALSE_POSITIVE_RATE).expected_items(count);
-        for token in inserted {
-            filter.insert_hash(sz::hash(token));
-        }
-        black_box(&filter);
-    });
+    measure_build(
+        settings,
+        "bloom/fastbloom::insert<stringzilla>",
+        count,
+        bytes,
+        || {
+            let mut filter =
+                BloomFilter::with_false_pos(TARGET_FALSE_POSITIVE_RATE).expected_items(count);
+            for token in inserted {
+                filter.insert_hash(sz::hash(token));
+            }
+            black_box(&filter);
+        },
+    );
     measure_query(
+        settings,
         "bloom/fastbloom::contains<stringzilla>",
         inserted,
         |token| bloom_sz.contains_hash(sz::hash(token)),
@@ -220,7 +255,7 @@ fn hashed_keys<Hash: Fn(&[u8]) -> u64>(keys: &mut Vec<u64>, inserted: &[&[u8]], 
 
 /// Binary-fuse filter (xorf): a static filter built from pre-hashed keys, so the only variable is the
 /// hash that produced them. Its ~0.4% false-positive rate is fixed by the 8-bit fingerprints.
-fn bench_xorf(inserted: &[&[u8]], absent: &[&[u8]], bytes: u64) {
+fn bench_xorf(settings: &Settings, inserted: &[&[u8]], absent: &[&[u8]], bytes: Bytes) {
     let count = inserted.len();
     // Hashing, sorting and deduplication stay inside the clock — that is what building
     // this filter is — but the buffer they fill is allocated once, not once per pass.
@@ -246,6 +281,7 @@ fn bench_xorf(inserted: &[&[u8]], absent: &[&[u8]], bytes: u64) {
     );
 
     measure_build(
+        settings,
         "xor/xorf::BinaryFuse8::build<stringzilla>",
         count,
         bytes,
@@ -255,33 +291,43 @@ fn bench_xorf(inserted: &[&[u8]], absent: &[&[u8]], bytes: u64) {
         },
     );
     measure_query(
+        settings,
         "xor/xorf::BinaryFuse8::contains<stringzilla>",
         inserted,
         |token| fuse_sz.contains(&sz::hash(token)),
     );
-    measure_build("xor/xorf::BinaryFuse8::build<xxh3>", count, bytes, || {
-        hashed_keys(&mut keys, inserted, xxh3_64);
-        black_box(BinaryFuse8::try_from(&keys).unwrap());
-    });
-    measure_query("xor/xorf::BinaryFuse8::contains<xxh3>", inserted, |token| {
-        fuse_xxh.contains(&xxh3_64(token))
-    });
+    measure_build(
+        settings,
+        "xor/xorf::BinaryFuse8::build<xxh3>",
+        count,
+        bytes,
+        || {
+            hashed_keys(&mut keys, inserted, xxh3_64);
+            black_box(BinaryFuse8::try_from(&keys).unwrap());
+        },
+    );
+    measure_query(
+        settings,
+        "xor/xorf::BinaryFuse8::contains<xxh3>",
+        inserted,
+        |token| fuse_xxh.contains(&xxh3_64(token)),
+    );
 }
 
 /// Layer 2: build and query each filter, holding out 20% of the unique words as absent probes.
-fn bench_filters(unique: &[&[u8]]) {
+fn bench_filters(settings: &Settings, unique: &[&[u8]]) {
     let inserted_count = (unique.len() * 8 / 10).clamp(1, 1_000_000);
     let inserted = &unique[..inserted_count];
     let absent = &unique[inserted_count..];
-    let inserted_bytes: u64 = inserted.iter().map(|token| token.len() as u64).sum();
+    let inserted_bytes = Bytes(inserted.iter().map(|token| token.len() as u64).sum());
 
     println!(
         "# filters ({} inserted, {} held-out absent)",
         inserted_count,
         absent.len()
     );
-    bench_bloom(inserted, absent, inserted_bytes);
-    bench_xorf(inserted, absent, inserted_bytes);
+    bench_bloom(settings, inserted, absent, inserted_bytes);
+    bench_xorf(settings, inserted, absent, inserted_bytes);
 }
 
 /// Asserts the amortized multi-seed path emits exactly the hashes per-seed hashing would.
@@ -300,13 +346,15 @@ fn verify_multiseed_matches_naive() {
     println!("- multiseed == naive per-seed hashing: OK");
 }
 
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
+    print_machine();
+    let settings = Settings::read("containers");
+    settings.print();
     verify_multiseed_matches_naive();
 
-    let tokens: BytesCowsAuto = resolve_dataset("containers").unwrap_nice();
-    log_timing_overhead();
+    let tokens: BytesCowsAuto = resolve_dataset(&settings).unwrap_nice();
+    log_timing_overhead(&settings);
 
     let slices: Vec<&[u8]> = tokens.iter().collect();
 
@@ -322,9 +370,9 @@ fn main() {
     println!("- {} tokens, {} unique\n", slices.len(), unique.len());
 
     for digest_bits in [128usize, 256, 512, 1024] {
-        bench_multihash(digest_bits, &slices);
+        bench_multihash(&settings, digest_bits, &slices);
     }
-    bench_filters(&unique);
+    bench_filters(&settings, &unique);
 
-    finish();
+    finish()
 }

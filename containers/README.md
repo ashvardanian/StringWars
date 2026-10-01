@@ -52,7 +52,8 @@ Every value is independent and each variant writes into one preallocated buffer 
 > Measured July 29, 2026.
 
 The multi-seed path prepares the input once and replays cheap per-seed rounds, so its throughput climbs almost linearly with the digest width while the naive variants plateau — StringZilla's own `hash` flattens near 22 G bits/s because it re-prepares the key every 64 bits.
-`xxh3_128` keeps its full 128-bit output, so it re-prepares only every 128 bits and stays ahead of `stringzilla::hash` throughout. Whether it also beats `hash_multiseed` is machine-dependent: it trails on Xeon4 and leads at every width on M5.
+`xxh3_128` keeps its full 128-bit output, so it re-prepares only every 128 bits and stays ahead of `stringzilla::hash` throughout.
+Whether it also beats `hash_multiseed` is machine-dependent: it trails on Xeon4 and leads at every width on M5.
 In Python the picture inverts for the baselines: per-call interpreter dispatch dominates, so `stringzilla.hash` (one native call per 64 bits) stays ahead of `xxhash.xxh3_128` (whose 128-bit output costs an extra big-integer split), while `hash_multiseed` — a single native call that fills the whole buffer — runs an order of magnitude ahead of both.
 
 ## Probabilistic Membership

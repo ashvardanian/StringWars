@@ -2,9 +2,9 @@
 
 MinHash fingerprinting benchmarks across CPU cores and the GPU.
 
-- `STRINGWARS_NDIM` sets the sketch width; it moves throughput by ~8x, so it is
-  recorded with every published number.
-- `STRINGWARS_CPU_CORES` overrides the multi-core scope width.
+- `STRINGWARS_DIMS` sets the sketch widths, one count or a comma list like `64,128`; the
+  width moves throughput by ~8x, so it is recorded with every published number.
+- `STRINGWARS_THREADS` overrides the multi-core scope width.
 
 ```sh
 STRINGWARS_DATASET=README.md cargo bench --features bench_fingerprints --bench bench_fingerprints
@@ -15,25 +15,21 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_fingerprints --bench b
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::process::ExitCode;
 
-use forkunion as fu;
 use stringtape::{BytesTape, BytesTapeView};
 
 use probabilistic_collections::similarity::{ByteGrams, MinHash};
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
 use stringwars::{
-    auto_batch_size, finish, get_env, get_env_or_default, gpu_multiprocessor_count,
-    install_panic_hook, log_stringzilla_metadata, log_timing_overhead, measure, resolve_core_count,
-    resolve_dataset, MeasureSpec, ResultExt, Unit, WorkUnits,
+    batch_size, finish, gpu_multiprocessor_count, install_panic_hook, log_timing_overhead, measure,
+    print_machine, resolve_dataset, Bytes, MeasureSpec, ResultExt, Settings, Threads, Unit,
+    WorkUnits, FALLBACK_GPU_MULTIPROCESSORS,
 };
 
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
-
-/// Per-core batch size for fingerprint benchmarks. 128 already saturates fingerprinting;
-/// `auto_batch_size` scales it by each variant's core count.
-const DEFAULT_BATCH_PER_CORE: usize = 128;
 
 /// Calculate bit entropy (how well distributed the bits are) over a flattened
 /// `documents x dimensions` sketch matrix, normalized to [0, 1].
@@ -82,21 +78,22 @@ where
     1.0 - (unique_hash_values.len() as f64 / hash_values.len() as f64)
 }
 
-/// Runs one `measure_throughput` block for `Fingerprints::compute_into`. Allocates
-/// `UnifiedVec<u32>` buffers for min-hashes and min-counts (each of length
-/// `batch_size * dimensions`), cycles through `tokens_count` tokens, and calls
-/// `compute` for each timing iteration. After filling the buffers, `quality_callback`
-/// (if `Some`) is called with `(actual_batch_size, min_hashes_slice)` so the caller
-/// can populate quality-analysis matrices without duplicating the buffer allocation.
+/// Times `Fingerprints::compute_into` over the whole corpus, `batch_size` documents per call,
+/// on `concurrency` threads. Allocates `UnifiedVec<u32>` buffers for min-hashes and min-counts
+/// (each of length `batch_size * dimensions`). During the first pass only, `quality_callback`
+/// is called with `(actual_batch_size, min_hashes_slice)` after each batch, so the caller can
+/// populate quality-analysis matrices without duplicating the buffer allocation.
 fn measure_fingerprints(
+    settings: &Settings,
     name: &str,
     bytes_view: &BytesTapeView<u64>,
     batch_size: usize,
     dimensions: usize,
     tokens_count: usize,
-    total_bytes: u64,
+    total_bytes: Bytes,
+    concurrency: Threads,
     mut compute: impl FnMut(BytesTapeView<'_, u64>, usize, &mut [u32], &mut [u32]),
-    mut quality_callback: impl FnMut(usize, &[u32]),
+    quality_callback: impl FnMut(usize, &[u32]),
 ) {
     let mut min_hashes = UnifiedVec::<u32>::with_capacity_in(batch_size * dimensions, UnifiedAlloc);
     min_hashes.resize(batch_size * dimensions, 0);
@@ -105,15 +102,17 @@ fn measure_fingerprints(
     // Quality is a property of the sketch, not of throughput; sample it on the first
     // pass only. Under a whole-corpus pass the callback would otherwise fire once per
     // batch rather than once per pass, which is ~1000x more often.
-    let mut quality_sampled = false;
+    let mut quality_callback = Some(quality_callback);
     measure(
+        settings,
         name,
         MeasureSpec::new(
             Unit::Hashes,
             // One pass sketches the whole corpus, so the work is the corpus - not a
             // nominal batch priced at the mean token length.
-            WorkUnits::new(dimensions as u64 * total_bytes, total_bytes),
-        ),
+            WorkUnits::new(dimensions as u64 * total_bytes.0, total_bytes),
+        )
+        .with_concurrency(concurrency),
         || {
             let mut low = 0usize;
             while low < tokens_count {
@@ -128,51 +127,34 @@ fn measure_fingerprints(
                     &mut min_hashes[..span * dimensions],
                     &mut min_counts[..span * dimensions],
                 );
-                if !quality_sampled {
-                    quality_callback(span, &min_hashes[..span * dimensions]);
+                if let Some(callback) = quality_callback.as_mut() {
+                    callback(span, &min_hashes[..span * dimensions]);
                 }
                 std::hint::black_box(&min_hashes[..span * dimensions]);
                 low = high;
             }
-            quality_sampled = true;
+            quality_callback = None;
         },
     );
 }
 
-fn bench_fingerprints() {
+fn bench_fingerprints(settings: &Settings) {
     // Load dataset using unified loader
-    let tape_bytes = resolve_dataset("fingerprints").unwrap_nice();
-    log_timing_overhead();
+    let tape_bytes = resolve_dataset(settings).unwrap_nice();
+    log_timing_overhead(settings);
     let tape = tape_bytes
         .as_chars()
         .expect("Dataset must be valid UTF-8 for fingerprinting");
 
     // Core-aware batch sizing: each variant scales `STRINGWARS_BATCH_PER_CORE` by its own core count.
     // A CPU core is one core; a GPU streaming multiprocessor (SM) is one core.
-    let topology = fu::Topology::new().expect("Failed to probe CPU topology");
-    let num_cores = resolve_core_count(topology.logical_cores_count());
-    let batch_single_cpu = auto_batch_size(1, DEFAULT_BATCH_PER_CORE);
-    let batch_multi_cpu = auto_batch_size(num_cores, DEFAULT_BATCH_PER_CORE);
-    let batch_gpu = auto_batch_size(
-        gpu_multiprocessor_count(0).unwrap_or(64),
-        DEFAULT_BATCH_PER_CORE,
+    let threads = settings.threads;
+    let batch_single_cpu = batch_size(settings, 1);
+    let batch_multi_cpu = batch_size(settings, threads.0.get());
+    let batch_gpu = batch_size(
+        settings,
+        gpu_multiprocessor_count(0).unwrap_or(FALLBACK_GPU_MULTIPROCESSORS),
     );
-
-    // STRINGWARS_NDIM forces a single scale; otherwise sweep STRINGWARS_NDIM_SCALES.
-    let scales: Vec<usize> = match get_env("STRINGWARS_NDIM") {
-        Some(single) => vec![single
-            .parse()
-            .expect("STRINGWARS_NDIM must be a positive integer")],
-        None => get_env_or_default("STRINGWARS_NDIM_SCALES", "64,128,256,512")
-            .split(',')
-            .map(|piece| {
-                piece
-                    .trim()
-                    .parse()
-                    .expect("STRINGWARS_NDIM_SCALES must be comma-separated positive integers")
-            })
-            .collect(),
-    };
 
     let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
     units_tape
@@ -183,12 +165,9 @@ fn bench_fingerprints() {
 
     // Calculate average bytes per token for throughput reporting
     let total_documents = units_tape.len();
-    let total_bytes: usize = tape.iter().map(|token| token.len()).sum();
+    let total_bytes = Bytes(tape.iter().map(|token| token.len() as u64).sum());
 
-    for dimensions in scales {
-        if dimensions == 0 {
-            panic!("Fingerprint dimensions must be greater than zero.");
-        }
+    for &dimensions in &settings.dims {
         println!("\nBenchmark configuration:");
         println!(
             "- Single-core batch size (for StringZilla): {}",
@@ -196,7 +175,7 @@ fn bench_fingerprints() {
         );
         println!(
             "- {}-core batch size (for StringZilla): {}",
-            num_cores, batch_multi_cpu
+            threads, batch_multi_cpu
         );
         println!("- GPU batch size (for StringZilla): {}", batch_gpu);
         println!("- Fingerprint dimensions: {}", dimensions);
@@ -222,7 +201,7 @@ fn bench_fingerprints() {
         let mut pc_document_index = 0usize;
         let mut sz_document_index = 0usize;
 
-        println!("# minhash/ndim_{}", dimensions);
+        println!("# minhash-{dimensions}");
 
         // StringZilla engines and device scopes (1cpu, Ncpu, GPU?)
         let cpu_single = DeviceScope::cpu_cores(1).unwrap_or_else(|error| {
@@ -231,10 +210,10 @@ fn bench_fingerprints() {
                 error
             )
         });
-        let cpu_parallel = DeviceScope::cpu_cores(num_cores).unwrap_or_else(|error| {
+        let cpu_parallel = DeviceScope::cpu_cores(threads.0.get()).unwrap_or_else(|error| {
             panic!(
                 "Failed to create {}-core CPU device scope for fingerprinting: {}",
-                num_cores, error
+                threads, error
             )
         });
         let maybe_gpu = DeviceScope::gpu_device(0);
@@ -258,7 +237,7 @@ fn bench_fingerprints() {
             .unwrap_or_else(|error| {
                 panic!(
                     "Failed to create {}-core StringZilla fingerprinting engine: {}",
-                    num_cores, error
+                    threads, error
                 )
             });
         let maybe_sz_gpu = maybe_gpu.as_ref().ok().and_then(|gpu| {
@@ -274,12 +253,14 @@ fn bench_fingerprints() {
 
         // StringZilla: 1x CPU. Result buffers sized to this variant's single-core batch.
         measure_fingerprints(
-            "minhash/stringzillas::Fingerprints<1cpu>",
+            settings,
+            &format!("minhash-{dimensions}/stringzillas::Fingerprints<1cpu>"),
             &bytes_view,
             batch_single_cpu,
             dimensions,
             tokens_count,
-            total_bytes as u64,
+            total_bytes,
+            Threads::ONE,
             |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
                 sz_single
                     .compute_into(
@@ -301,12 +282,14 @@ fn bench_fingerprints() {
 
         // StringZilla: Nx CPU. Result buffers sized to this variant's multi-core batch.
         measure_fingerprints(
-            &format!("minhash/stringzillas::Fingerprints<{}cpu>", num_cores),
+            settings,
+            &format!("minhash-{dimensions}/stringzillas::Fingerprints<{threads}cpu>"),
             &bytes_view,
             batch_multi_cpu,
             dimensions,
             tokens_count,
-            total_bytes as u64,
+            total_bytes,
+            threads,
             |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
                 sz_parallel
                     .compute_into(
@@ -319,7 +302,7 @@ fn bench_fingerprints() {
                     .unwrap_or_else(|error| {
                         panic!(
                             "Failed to compute StringZilla fingerprints on {} CPU cores: {}",
-                            num_cores, error
+                            threads, error
                         )
                     });
             },
@@ -339,12 +322,14 @@ fn bench_fingerprints() {
         // StringZilla: 1x GPU (if available). Result buffers sized to the GPU batch.
         if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sz_gpu.as_ref()) {
             measure_fingerprints(
-                "minhash/stringzillas::Fingerprints<1gpu>",
+                settings,
+                &format!("minhash-{dimensions}/stringzillas::Fingerprints<1gpu>"),
                 &bytes_view,
                 batch_gpu,
                 dimensions,
                 tokens_count,
-                total_bytes as u64,
+                total_bytes,
+                Threads::ONE,
                 |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
                     engine
                         .compute_into(
@@ -375,10 +360,11 @@ fn bench_fingerprints() {
             // Reused across documents and passes, like the serial baseline below.
             let mut combined_signature = Vec::with_capacity(dimensions);
             measure(
-                "minhash/pc::MinHash<ByteGrams>",
+                settings,
+                &format!("minhash-{dimensions}/pc::MinHash<ByteGrams>"),
                 MeasureSpec::new(
                     Unit::Hashes,
-                    WorkUnits::new(dimensions as u64 * total_bytes as u64, total_bytes as u64),
+                    WorkUnits::new(dimensions as u64 * total_bytes.0, total_bytes),
                 ),
                 || {
                     let batch_bytes_view = bytes_view
@@ -428,10 +414,11 @@ fn bench_fingerprints() {
             // malloc in the timed loop that the StringZilla rows never pay.
             let mut min_hashes = vec![u64::MAX; dimensions];
             measure(
-                "minhash/serial::MinHash<ByteGrams>",
+                settings,
+                &format!("minhash-{dimensions}/serial::MinHash<ByteGrams>"),
                 MeasureSpec::new(
                     Unit::Hashes,
-                    WorkUnits::new(dimensions as u64 * total_bytes as u64, total_bytes as u64),
+                    WorkUnits::new(dimensions as u64 * total_bytes.0, total_bytes),
                 ),
                 || {
                     let batch_bytes_view = bytes_view
@@ -509,13 +496,15 @@ fn bench_fingerprints() {
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
+    print_machine();
+    let settings = Settings::read("fingerprints");
+    settings.print();
     println!("Text Fingerprinting Benchmarks");
     println!("- szs::Fingerprints: CPU/GPU fingerprints with multi-width byte n-grams");
     println!("- pc::MinHash<ByteGrams>: MinHash with ByteGrams iterator");
-    bench_fingerprints();
+    bench_fingerprints(&settings);
 
-    finish();
+    finish()
 }

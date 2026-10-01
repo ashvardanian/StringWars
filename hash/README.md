@@ -22,53 +22,53 @@ The __Arm__ column marks Arm support — most hash functions run on both x86 and
 
 ### Intel Xeon4 Sapphire Rapids
 
-| Library                     | Bits  | Ports |  Arm  |   Short Words |     Long Lines |
-| --------------------------- | :---: | :---: | :---: | ------------: | -------------: |
-| Rust                        |       |       |       |               |                |
-| `std::hash`                 |  64   |   -   |   +   |     0.32 GB/s |      3.98 GB/s |
-| `crc32fast::hash`           |  32   |   +   |   +   |     0.39 GB/s |      9.49 GB/s |
-| `xxh3::xxh3_64`             |  64   |   +   |   +   |     0.66 GB/s |     10.00 GB/s |
-| `aHash::hash_one`           |  64   |   -   |   +   |     0.74 GB/s |      9.05 GB/s |
-| `foldhash::hash_one`        |  64   |   -   |   +   |     0.72 GB/s |      8.71 GB/s |
-| `wyhash::wyhash`            |  64   |   +   |   +   |             — |              — |
-| `murmurhash32::murmurhash3` |  32   |   +   |   +   |             — |              — |
-| `stringzilla::hash`         |  64   |   +   |   +   | __0.95 GB/s__ | __12.22 GB/s__ |
-|                             |       |       |       |               |                |
-| Python                      |       |       |       |               |                |
-| `xxhash.xxh3_64`            |  64   |   +   |   +   |     0.03 GB/s |      6.16 GB/s |
-| `google_crc32c.value`       |  32   |   +   |   +   |     0.06 GB/s |      7.10 GB/s |
-| `mmh3.hash32`               |  32   |   +   |   +   |     0.06 GB/s |      2.76 GB/s |
-| `mmh3.hash64`               |  64   |   +   |   +   |     0.05 GB/s |      4.82 GB/s |
-| `mmh3.hash128`              |  128  |   +   |   +   |             — |              — |
-| `cityhash.CityHash64`       |  64   |   +   |   -   |     0.07 GB/s |      5.71 GB/s |
-| `cityhash.CityHash128`      |  128  |   +   |   -   |             — |              — |
-| `stringzilla.hash`          |  64   |   +   |   +   | __0.07 GB/s__ |  __7.99 GB/s__ |
+| Library                     | Bits | Ports | Arm |   Short Words |     Long Lines |
+| --------------------------- | :--: | :---: | :-: | ------------: | -------------: |
+| Rust                        |      |       |     |               |                |
+| `std::hash`                 |  64  |   -   |  +  |     0.30 GB/s |      3.71 GB/s |
+| `crc32fast::hash`           |  32  |   +   |  +  |     0.36 GB/s |      8.84 GB/s |
+| `xxh3::xxh3_64`             |  64  |   +   |  +  |     0.61 GB/s |     9.313 GB/s |
+| `aHash::hash_one`           |  64  |   -   |  +  |     0.69 GB/s |      8.43 GB/s |
+| `foldhash::hash_one`        |  64  |   -   |  +  |     0.67 GB/s |      8.11 GB/s |
+| `wyhash::wyhash`            |  64  |   +   |  +  |             — |              — |
+| `murmurhash32::murmurhash3` |  32  |   +   |  +  |             — |              — |
+| `stringzilla::hash`         |  64  |   +   |  +  | __0.88 GB/s__ | __11.38 GB/s__ |
+|                             |      |       |     |               |                |
+| Python                      |      |       |     |               |                |
+| `xxhash.xxh3_64`            |  64  |   +   |  +  |     0.03 GB/s |      5.74 GB/s |
+| `google_crc32c.value`       |  32  |   +   |  +  |     0.06 GB/s |      6.61 GB/s |
+| `mmh3.hash32`               |  32  |   +   |  +  |     0.06 GB/s |      2.57 GB/s |
+| `mmh3.hash64`               |  64  |   +   |  +  |     0.05 GB/s |      4.49 GB/s |
+| `mmh3.hash128`              | 128  |   +   |  +  |             — |              — |
+| `cityhash.CityHash64`       |  64  |   +   |  -  |     0.07 GB/s |      5.32 GB/s |
+| `cityhash.CityHash128`      | 128  |   +   |  -  |             — |              — |
+| `stringzilla.hash`          |  64  |   +   |  +  | __0.07 GB/s__ |  __7.44 GB/s__ |
 
 > Measured June 17, 2026.
 
 ### Apple M5 Pro
 
-| Library                     | Bits  | Ports |  Arm  |   Short Words |     Long Lines |
-| --------------------------- | :---: | :---: | :---: | ------------: | -------------: |
-| Rust                        |       |       |       |               |                |
-| `std::hash`                 |  64   |   -   |   +   |     0.83 GB/s |      5.76 GB/s |
-| `crc32fast::hash`           |  32   |   +   |   +   |     0.73 GB/s |     11.56 GB/s |
-| `xxh3::xxh3_64`             |  64   |   +   |   +   | __2.12 GB/s__ |     47.00 GB/s |
-| `aHash::hash_one`           |  64   |   -   |   +   |     2.02 GB/s |     21.68 GB/s |
-| `foldhash::hash_one`        |  64   |   -   |   +   |     2.01 GB/s | __59.12 GB/s__ |
-| `wyhash::wyhash`            |  64   |   +   |   +   |     1.01 GB/s |     27.02 GB/s |
-| `murmurhash32::murmurhash3` |  32   |   +   |   +   |     0.99 GB/s |      3.47 GB/s |
-| `stringzilla::hash`         |  64   |   +   |   +   |     1.09 GB/s |     33.75 GB/s |
-|                             |       |       |       |               |                |
-| Python                      |       |       |       |               |                |
-| `xxhash.xxh3_64`            |  64   |   +   |   +   |     0.50 GB/s | __35.42 GB/s__ |
-| `google_crc32c.value`       |  32   |   +   |   +   |     0.26 GB/s |      5.96 GB/s |
-| `mmh3.hash32`               |  32   |   +   |   +   |     0.20 GB/s |      3.27 GB/s |
-| `mmh3.hash64`               |  64   |   +   |   +   |     0.14 GB/s |      7.47 GB/s |
-| `mmh3.hash128`              |  128  |   +   |   +   |     0.17 GB/s |      7.75 GB/s |
-| `cityhash.CityHash64`       |  64   |   +   |   -   | __0.55 GB/s__ |     18.39 GB/s |
-| `cityhash.CityHash128`      |  128  |   +   |   -   |     0.17 GB/s |     18.19 GB/s |
-| `stringzilla.hash`          |  64   |   +   |   +   |     0.36 GB/s |     32.78 GB/s |
+| Library                     | Bits | Ports | Arm |   Short Words |     Long Lines |
+| --------------------------- | :--: | :---: | :-: | ------------: | -------------: |
+| Rust                        |      |       |     |               |                |
+| `std::hash`                 |  64  |   -   |  +  |     0.77 GB/s |      5.36 GB/s |
+| `crc32fast::hash`           |  32  |   +   |  +  |     0.68 GB/s |     10.77 GB/s |
+| `xxh3::xxh3_64`             |  64  |   +   |  +  | __1.97 GB/s__ |     43.77 GB/s |
+| `aHash::hash_one`           |  64  |   -   |  +  |     1.88 GB/s |     20.19 GB/s |
+| `foldhash::hash_one`        |  64  |   -   |  +  |     1.87 GB/s | __55.06 GB/s__ |
+| `wyhash::wyhash`            |  64  |   +   |  +  |    0.941 GB/s |     25.16 GB/s |
+| `murmurhash32::murmurhash3` |  32  |   +   |  +  |     0.92 GB/s |      3.23 GB/s |
+| `stringzilla::hash`         |  64  |   +   |  +  |     1.02 GB/s |     31.43 GB/s |
+|                             |      |       |     |               |                |
+| Python                      |      |       |     |               |                |
+| `xxhash.xxh3_64`            |  64  |   +   |  +  |     0.47 GB/s | __32.99 GB/s__ |
+| `google_crc32c.value`       |  32  |   +   |  +  |     0.24 GB/s |      5.55 GB/s |
+| `mmh3.hash32`               |  32  |   +   |  +  |     0.19 GB/s |      3.05 GB/s |
+| `mmh3.hash64`               |  64  |   +   |  +  |     0.13 GB/s |      6.96 GB/s |
+| `mmh3.hash128`              | 128  |   +   |  +  |     0.16 GB/s |      7.22 GB/s |
+| `cityhash.CityHash64`       |  64  |   +   |  -  | __0.51 GB/s__ |     17.13 GB/s |
+| `cityhash.CityHash128`      | 128  |   +   |  -  |     0.16 GB/s |     16.94 GB/s |
+| `stringzilla.hash`          |  64  |   +   |  +  |     0.34 GB/s |     30.53 GB/s |
 
 > Measured July 29, 2026.
 
@@ -79,37 +79,37 @@ This is especially important in distributed systems, where the data is too large
 
 ### Intel Xeon4 Sapphire Rapids
 
-| Library                    | Bits  | Ports |   Short Words |    Long Lines |
-| -------------------------- | :---: | :---: | ------------: | ------------: |
-| Rust                       |       |       |               |               |
-| `std::hash::DefaultHasher` |  64   |   -   |     0.49 GB/s |     4.05 GB/s |
-| `aHash::AHasher`           |  64   |   -   | __1.29 GB/s__ |     8.59 GB/s |
-| `foldhash::FoldHasher`     |  64   |   -   |     1.10 GB/s |     8.85 GB/s |
-| `crc32fast::Hasher`        |  32   |   +   |     0.39 GB/s |     9.47 GB/s |
-| `stringzilla::Hasher`      |  64   |   +   |     0.44 GB/s | __9.84 GB/s__ |
-|                            |       |       |               |               |
-| Python                     |       |       |               |               |
-| `xxhash.xxh3_64`           |  64   |   +   |     0.06 GB/s |     6.93 GB/s |
-| `google_crc32c.Checksum`   |  32   |   +   |     0.05 GB/s |     7.19 GB/s |
-| `stringzilla.Hasher`       |  64   |   +   | __0.08 GB/s__ | __8.29 GB/s__ |
+| Library                    | Bits | Ports |   Short Words |    Long Lines |
+| -------------------------- | :--: | :---: | ------------: | ------------: |
+| Rust                       |      |       |               |               |
+| `std::hash::DefaultHasher` |  64  |   -   |     0.46 GB/s |     3.77 GB/s |
+| `aHash::AHasher`           |  64  |   -   | __1.20 GB/s__ |     8.00 GB/s |
+| `foldhash::FoldHasher`     |  64  |   -   |     1.02 GB/s |     8.24 GB/s |
+| `crc32fast::Hasher`        |  32  |   +   |     0.36 GB/s |     8.82 GB/s |
+| `stringzilla::Hasher`      |  64  |   +   |     0.41 GB/s | __9.16 GB/s__ |
+|                            |      |       |               |               |
+| Python                     |      |       |               |               |
+| `xxhash.xxh3_64`           |  64  |   +   |     0.06 GB/s |     6.45 GB/s |
+| `google_crc32c.Checksum`   |  32  |   +   |     0.05 GB/s |     6.70 GB/s |
+| `stringzilla.Hasher`       |  64  |   +   | __0.07 GB/s__ | __7.72 GB/s__ |
 
 > Measured June 17, 2026.
 
 ### Apple M5 Pro
 
-| Library                    | Bits  | Ports |   Short Words |     Long Lines |
-| -------------------------- | :---: | :---: | ------------: | -------------: |
-| Rust                       |       |       |               |                |
-| `std::hash::DefaultHasher` |  64   |   -   |     1.01 GB/s |      5.86 GB/s |
-| `aHash::AHasher`           |  64   |   -   | __2.44 GB/s__ |     21.59 GB/s |
-| `foldhash::FoldHasher`     |  64   |   -   |     2.22 GB/s | __58.74 GB/s__ |
-| `crc32fast::Hasher`        |  32   |   +   |     0.79 GB/s |     11.33 GB/s |
-| `stringzilla::Hasher`      |  64   |   +   |     0.72 GB/s |     18.28 GB/s |
-|                            |       |       |               |                |
-| Python                     |       |       |               |                |
-| `xxhash.xxh3_64`           |  64   |   +   |     0.21 GB/s | __15.93 GB/s__ |
-| `google_crc32c.Checksum`   |  32   |   +   |     0.15 GB/s |      5.75 GB/s |
-| `stringzilla.Hasher`       |  64   |   +   | __0.46 GB/s__ |     14.14 GB/s |
+| Library                    | Bits | Ports |   Short Words |     Long Lines |
+| -------------------------- | :--: | :---: | ------------: | -------------: |
+| Rust                       |      |       |               |                |
+| `std::hash::DefaultHasher` |  64  |   -   |    0.941 GB/s |      5.46 GB/s |
+| `aHash::AHasher`           |  64  |   -   | __2.27 GB/s__ |     20.11 GB/s |
+| `foldhash::FoldHasher`     |  64  |   -   |     2.07 GB/s | __54.71 GB/s__ |
+| `crc32fast::Hasher`        |  32  |   +   |     0.74 GB/s |     10.55 GB/s |
+| `stringzilla::Hasher`      |  64  |   +   |     0.67 GB/s |     17.02 GB/s |
+|                            |      |       |               |                |
+| Python                     |      |       |               |                |
+| `xxhash.xxh3_64`           |  64  |   +   |     0.20 GB/s | __14.84 GB/s__ |
+| `google_crc32c.Checksum`   |  32  |   +   |     0.14 GB/s |      5.36 GB/s |
+| `stringzilla.Hasher`       |  64  |   +   | __0.43 GB/s__ |     13.17 GB/s |
 
 > Measured July 29, 2026.
 
@@ -119,39 +119,39 @@ For reference, one may want to put those numbers next to check-sum calculation s
 
 ### Intel Xeon4 Sapphire Rapids
 
-| Library                | Bits  | Ports |   Short Words |     Long Lines |
-| ---------------------- | :---: | :---: | ------------: | -------------: |
-| Rust                   |       |       |               |                |
-| `stringzilla::bytesum` |  64   |   +   | __0.98 GB/s__ | __12.62 GB/s__ |
-| `blake3::hash`         |  256  |   +   |     0.11 GB/s |      1.77 GB/s |
-| `sha2::Sha256`         |  256  |   +   |             — |              — |
-| `ring::SHA256`         |  256  |   +   |             — |              — |
-| `stringzilla::Sha256`  |  256  |   +   |             — |              — |
-|                        |       |       |               |                |
-| Python                 |       |       |               |                |
-| `stringzilla.bytesum`  |  64   |   +   | __0.08 GB/s__ |  __8.37 GB/s__ |
-| `blake3.blake3`        |  256  |   +   |     0.02 GB/s |      1.68 GB/s |
-| `hashlib.sha256`       |  256  |   +   |             — |              — |
-| `stringzilla.Sha256`   |  256  |   +   |             — |              — |
+| Library                | Bits | Ports |   Short Words |     Long Lines |
+| ---------------------- | :--: | :---: | ------------: | -------------: |
+| Rust                   |      |       |               |                |
+| `stringzilla::bytesum` |  64  |   +   | __0.91 GB/s__ | __11.75 GB/s__ |
+| `blake3::hash`         | 256  |   +   |     0.10 GB/s |      1.65 GB/s |
+| `sha2::Sha256`         | 256  |   +   |             — |              — |
+| `ring::SHA256`         | 256  |   +   |             — |              — |
+| `stringzilla::Sha256`  | 256  |   +   |             — |              — |
+|                        |      |       |               |                |
+| Python                 |      |       |               |                |
+| `stringzilla.bytesum`  |  64  |   +   | __0.07 GB/s__ |  __7.80 GB/s__ |
+| `blake3.blake3`        | 256  |   +   |     0.02 GB/s |      1.56 GB/s |
+| `hashlib.sha256`       | 256  |   +   |             — |              — |
+| `stringzilla.Sha256`   | 256  |   +   |             — |              — |
 
 > Measured June 17, 2026.
 
 ### Apple M5 Pro
 
-| Library                  | Bits  | Ports |   Short Words |     Long Lines |
-| ------------------------ | :---: | :---: | ------------: | -------------: |
-| Rust                     |       |       |               |                |
-| `stringzilla::bytesum`   |  64   |   +   | __1.07 GB/s__ | __27.90 GB/s__ |
-| `blake3::hash`           |  256  |   +   |     0.16 GB/s |      1.78 GB/s |
-| `sha2::Sha256`           |  256  |   +   |     0.38 GB/s |      3.30 GB/s |
-| `ring::SHA256`           |  256  |   +   |     0.23 GB/s |      3.29 GB/s |
-| `stringzilla::Sha256`    |  256  |   +   |     0.29 GB/s |      3.30 GB/s |
-|                          |       |       |               |                |
-| Python                   |       |       |               |                |
-| `stringzilla.bytesum`    |  64   |   +   | __0.43 GB/s__ | __20.73 GB/s__ |
-| `blake3.blake3`          |  256  |   +   |     0.03 GB/s |      1.61 GB/s |
-| `hashlib.sha256`         |  256  |   +   |     0.05 GB/s |      2.90 GB/s |
-| `stringzilla.Sha256`     |  256  |   +   |     0.12 GB/s |      3.16 GB/s |
+| Library                | Bits | Ports |    Short Words |     Long Lines |
+| ---------------------- | :--: | :---: | -------------: | -------------: |
+| Rust                   |      |       |                |                |
+| `stringzilla::bytesum` |  64  |   +   | __0.997 GB/s__ | __25.98 GB/s__ |
+| `blake3::hash`         | 256  |   +   |      0.15 GB/s |      1.66 GB/s |
+| `sha2::Sha256`         | 256  |   +   |      0.35 GB/s |      3.07 GB/s |
+| `ring::SHA256`         | 256  |   +   |      0.21 GB/s |      3.06 GB/s |
+| `stringzilla::Sha256`  | 256  |   +   |      0.27 GB/s |      3.07 GB/s |
+|                        |      |       |                |                |
+| Python                 |      |       |                |                |
+| `stringzilla.bytesum`  |  64  |   +   |  __0.40 GB/s__ | __19.31 GB/s__ |
+| `blake3.blake3`        | 256  |   +   |      0.03 GB/s |      1.50 GB/s |
+| `hashlib.sha256`       | 256  |   +   |      0.05 GB/s |      2.70 GB/s |
+| `stringzilla.Sha256`   | 256  |   +   |      0.11 GB/s |      2.94 GB/s |
 
 > Measured July 29, 2026.
 

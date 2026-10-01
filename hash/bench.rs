@@ -3,7 +3,7 @@
 Hashing benchmarks: stateless, stateful and checksum digests over the working set.
 
 - `STRINGWARS_COLLISIONS=1` also reports collision rates; off by default because
-  deduplicating a large corpus costs gigabytes.
+  deduplicating a large corpus costs gigabytes. Rust only.
 
   `cityhash` is x86_64-only and is skipped elsewhere.
 
@@ -14,6 +14,7 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_hash --bench bench_has
 use std::collections::HashSet;
 use std::hash::{BuildHasher, Hasher};
 use std::hint::black_box;
+use std::process::ExitCode;
 
 use bit_set::BitSet;
 use stringtape::{BytesTape, BytesTapeView};
@@ -26,8 +27,8 @@ use wyhash::wyhash;
 use xxhash_rust::xxh3::xxh3_64;
 
 use stringwars::{
-    finish, get_env_bool, install_panic_hook, log_stringzilla_metadata, log_timing_overhead,
-    measure, note_unavailable, resolve_dataset, should_run, MeasureSpec, ResultExt, Unit,
+    finish, install_panic_hook, log_timing_overhead, measure, note_unavailable, print_machine,
+    resolve_dataset, Bytes, Collisions, MeasureSpec, Outcome, ResultExt, Settings, Status, Unit,
     WorkUnits,
 };
 
@@ -37,16 +38,17 @@ use stringwars::{
 /// Exceptions left inline: `crc32fast::hash` (returns `u32`, closure shape differs) and
 /// the `#[cfg(target_arch = "x86_64")]` `cityhash` block (cfg-gated, must stay inline).
 fn bench_stateless_hash<HashFn: Fn(&[u8]) -> u64 + Copy>(
+    settings: &Settings,
     name: &str,
     work: WorkUnits,
     slices: &[&[u8]],
     unique_tokens: &[&[u8]],
     hash_fn: HashFn,
 ) {
-    bench_each_token(name, slices, work, |token| {
+    let outcome = bench_each_token(settings, name, slices, work, |token| {
         let _ = black_box(hash_fn(token));
     });
-    if !unique_tokens.is_empty() && should_run(name) {
+    if !unique_tokens.is_empty() && outcome.status != Status::Filtered {
         print_collision_rate(unique_tokens, hash_fn);
     }
 }
@@ -57,16 +59,17 @@ fn bench_stateless_hash<HashFn: Fn(&[u8]) -> u64 + Copy>(
 /// in every sample and cancels exactly, and the work is declared once instead of
 /// being accumulated per call.
 fn bench_each_token<HashOne: FnMut(&[u8])>(
+    settings: &Settings,
     name: &str,
     tokens: &[&[u8]],
     work: WorkUnits,
     mut hash_one: HashOne,
-) {
-    measure(name, MeasureSpec::new(Unit::Bytes, work), || {
+) -> Outcome {
+    measure(settings, name, MeasureSpec::new(Unit::Bytes, work), || {
         for token in tokens {
             hash_one(black_box(token));
         }
-    });
+    })
 }
 
 /// Counts collisions for a given hash function using a bitset sized to the number of unique tokens
@@ -110,11 +113,11 @@ where
     );
 }
 
-/// Unique tokens for the collision tables, empty unless `STRINGWARS_COLLISIONS` is set.
+/// Unique tokens for the collision tables, empty unless `STRINGWARS_COLLISIONS` asks for them.
 /// Deduplicating a large corpus costs gigabytes, so it is opt-in — and paid once for
 /// the whole run rather than once per section.
-fn unique_tokens<'a>(slices: &[&'a [u8]]) -> Vec<&'a [u8]> {
-    if !get_env_bool("STRINGWARS_COLLISIONS") {
+fn unique_tokens<'a>(slices: &[&'a [u8]], collisions: Collisions) -> Vec<&'a [u8]> {
+    if collisions == Collisions::Skip {
         return Vec::new();
     }
     println!("\nComputing unique tokens for collision detection...");
@@ -134,10 +137,16 @@ fn announce_collisions(unique_tokens: &[&[u8]], total: usize) {
 }
 
 /// Benchmarks stateless hashes, hashing one token per call and cycling the dataset.
-fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
+fn bench_stateless(
+    settings: &Settings,
+    work: WorkUnits,
+    slices: &[&[u8]],
+    unique_tokens: &[&[u8]],
+) {
     announce_collisions(unique_tokens, slices.len());
 
     bench_stateless_hash(
+        settings,
         "stateless/stringzilla::hash",
         work,
         slices,
@@ -148,6 +157,7 @@ fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
     // Benchmark: SipHash via `std::DefaultHasher`
     let std_builder = std::collections::hash_map::RandomState::new();
     bench_stateless_hash(
+        settings,
         "stateless/std::DefaultHasher::hash_one",
         work,
         slices,
@@ -158,6 +168,7 @@ fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
     // Benchmark: aHash
     let hash_builder = AHashState::with_seed(42);
     bench_stateless_hash(
+        settings,
         "stateless/ahash::hash_one",
         work,
         slices,
@@ -166,6 +177,7 @@ fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
     );
 
     bench_stateless_hash(
+        settings,
         "stateless/xxh3::xxh3_64",
         work,
         slices,
@@ -174,6 +186,7 @@ fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
     );
 
     bench_stateless_hash(
+        settings,
         "stateless/wyhash::wyhash",
         work,
         slices,
@@ -184,6 +197,7 @@ fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
     // Benchmark: FoldHash
     let foldhash_builder = foldhash::fast::RandomState::default();
     bench_stateless_hash(
+        settings,
         "stateless/foldhash::hash_one",
         work,
         slices,
@@ -194,16 +208,23 @@ fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
     // Benchmark: CRC32 — left inline because `crc32fast::hash` returns `u32`, so the
     // bench closure black-boxes a `u32` while the collision closure casts to `u64`;
     // the two-closure shapes differ from `bench_stateless_hash`.
-    bench_each_token("stateless/crc32fast::hash", slices, work, |token| {
-        let _ = black_box(crc32fast::hash(token));
-    });
-    if !unique_tokens.is_empty() && should_run("stateless/crc32fast::hash") {
+    let outcome = bench_each_token(
+        settings,
+        "stateless/crc32fast::hash",
+        slices,
+        work,
+        |token| {
+            let _ = black_box(crc32fast::hash(token));
+        },
+    );
+    if !unique_tokens.is_empty() && outcome.status != Status::Filtered {
         print_collision_rate(unique_tokens, |token_bytes| {
             crc32fast::hash(token_bytes) as u64
         });
     }
 
     bench_stateless_hash(
+        settings,
         "stateless/murmurhash32::murmurhash3",
         work,
         slices,
@@ -216,10 +237,16 @@ fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
     note_unavailable("stateless/cityhash::city_hash_64", "x86_64 only");
     #[cfg(target_arch = "x86_64")]
     {
-        bench_each_token("stateless/cityhash::city_hash_64", slices, work, |token| {
-            let _ = black_box(cityhash::city_hash_64(token));
-        });
-        if !unique_tokens.is_empty() && should_run("stateless/cityhash::city_hash_64") {
+        let outcome = bench_each_token(
+            settings,
+            "stateless/cityhash::city_hash_64",
+            slices,
+            work,
+            |token| {
+                let _ = black_box(cityhash::city_hash_64(token));
+            },
+        );
+        if !unique_tokens.is_empty() && outcome.status != Status::Filtered {
             print_collision_rate(unique_tokens, |token_bytes| {
                 cityhash::city_hash_64(token_bytes)
             });
@@ -232,17 +259,23 @@ fn bench_stateless(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
 }
 
 /// Benchmarks checksum hashes including cryptographic hashes and reference bounds.
-fn bench_checksum(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
+fn bench_checksum(settings: &Settings, work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
     announce_collisions(unique_tokens, slices.len());
 
-    bench_each_token("checksum/stringzilla::bytesum", slices, work, |token| {
-        let _ = black_box(sz::bytesum(token));
-    });
+    bench_each_token(
+        settings,
+        "checksum/stringzilla::bytesum",
+        slices,
+        work,
+        |token| {
+            let _ = black_box(sz::bytesum(token));
+        },
+    );
 
-    bench_each_token("checksum/blake3::hash", slices, work, |token| {
+    let outcome = bench_each_token(settings, "checksum/blake3::hash", slices, work, |token| {
         let _ = black_box(blake3::hash(token));
     });
-    if !unique_tokens.is_empty() && should_run("checksum/blake3::hash") {
+    if !unique_tokens.is_empty() && outcome.status != Status::Filtered {
         print_collision_rate(unique_tokens, |token_bytes| {
             let hash = blake3::hash(token_bytes);
             let bytes = hash.as_bytes();
@@ -252,12 +285,12 @@ fn bench_checksum(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
         });
     }
 
-    bench_each_token("checksum/sha2::Sha256", slices, work, |token| {
+    let outcome = bench_each_token(settings, "checksum/sha2::Sha256", slices, work, |token| {
         let mut hasher = Sha256::new();
         hasher.update(token);
         let _ = black_box(hasher.finalize());
     });
-    if !unique_tokens.is_empty() && should_run("checksum/sha2::Sha256") {
+    if !unique_tokens.is_empty() && outcome.status != Status::Filtered {
         print_collision_rate(unique_tokens, |token_bytes| {
             let mut hasher = Sha256::new();
             hasher.update(token_bytes);
@@ -269,10 +302,10 @@ fn bench_checksum(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
         });
     }
 
-    bench_each_token("checksum/ring::SHA256", slices, work, |token| {
+    let outcome = bench_each_token(settings, "checksum/ring::SHA256", slices, work, |token| {
         let _ = black_box(ring_digest::digest(&ring_digest::SHA256, token));
     });
-    if !unique_tokens.is_empty() && should_run("checksum/ring::SHA256") {
+    if !unique_tokens.is_empty() && outcome.status != Status::Filtered {
         print_collision_rate(unique_tokens, |token_bytes| {
             let digest = ring_digest::digest(&ring_digest::SHA256, token_bytes);
             let bytes = digest.as_ref();
@@ -282,10 +315,16 @@ fn bench_checksum(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
         });
     }
 
-    bench_each_token("checksum/stringzilla::Sha256", slices, work, |token| {
-        let _ = black_box(sz::Sha256::hash(token));
-    });
-    if !unique_tokens.is_empty() && should_run("checksum/stringzilla::Sha256") {
+    let outcome = bench_each_token(
+        settings,
+        "checksum/stringzilla::Sha256",
+        slices,
+        work,
+        |token| {
+            let _ = black_box(sz::Sha256::hash(token));
+        },
+    );
+    if !unique_tokens.is_empty() && outcome.status != Status::Filtered {
         print_collision_rate(unique_tokens, |token_bytes| {
             let digest = sz::Sha256::hash(token_bytes);
             u64::from_le_bytes([
@@ -301,10 +340,11 @@ fn bench_checksum(work: WorkUnits, slices: &[&[u8]], unique_tokens: &[&[u8]]) {
 }
 
 /// Benchmarks stateful hashes, streaming the whole dataset through one hasher per pass and
-/// cycling passes for the budget. The per-call unit is one full streaming pass, so the deadline
+/// cycling passes until the time limit. The per-call unit is one full streaming pass, so the deadline
 /// check after each call bounds overshoot to a single pass.
-fn bench_stateful(view: &BytesTapeView<'_, u64>, total_bytes: u64) {
+fn bench_stateful(settings: &Settings, view: &BytesTapeView<'_, u64>, total_bytes: Bytes) {
     measure(
+        settings,
         "stateful/stringzilla::Hasher",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(total_bytes)),
         || {
@@ -319,6 +359,7 @@ fn bench_stateful(view: &BytesTapeView<'_, u64>, total_bytes: u64) {
     // Benchmark: SipHash via `std::DefaultHasher`
     let std_builder = std::collections::hash_map::RandomState::new();
     measure(
+        settings,
         "stateful/std::DefaultHasher",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(total_bytes)),
         || {
@@ -333,6 +374,7 @@ fn bench_stateful(view: &BytesTapeView<'_, u64>, total_bytes: u64) {
     // Benchmark: aHash
     let ahash_state = AHashState::with_seed(42);
     measure(
+        settings,
         "stateful/ahash::AHasher",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(total_bytes)),
         || {
@@ -347,6 +389,7 @@ fn bench_stateful(view: &BytesTapeView<'_, u64>, total_bytes: u64) {
     // Benchmark: FoldHash
     let foldhash_state = foldhash::fast::RandomState::default();
     measure(
+        settings,
         "stateful/foldhash::FoldHasher",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(total_bytes)),
         || {
@@ -359,6 +402,7 @@ fn bench_stateful(view: &BytesTapeView<'_, u64>, total_bytes: u64) {
     );
 
     measure(
+        settings,
         "stateful/crc32fast::Hasher",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(total_bytes)),
         || {
@@ -371,15 +415,20 @@ fn bench_stateful(view: &BytesTapeView<'_, u64>, total_bytes: u64) {
     );
 }
 
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
+    print_machine();
+    let settings = Settings::read("hash");
+    settings.print();
 
-    let tape = resolve_dataset("hash").unwrap_nice();
+    let tape = resolve_dataset(&settings).unwrap_nice();
 
     // One pass is one traversal of the working set; declared once, never accumulated.
-    let work = WorkUnits::new(tape.len() as u64, tape.iter().map(|t| t.len() as u64).sum());
-    log_timing_overhead();
+    let work = WorkUnits::new(
+        tape.len() as u64,
+        Bytes(tape.iter().map(|t| t.len() as u64).sum()),
+    );
+    log_timing_overhead(&settings);
 
     // One compacted copy of the working set, shared by all three sections. Each used to
     // build its own, so the run paid three full corpus copies to measure the same bytes.
@@ -389,16 +438,16 @@ fn main() {
         .expect("Failed to create BytesTape");
     let view = tokens_tape.view();
     let slices: Vec<&[u8]> = (&view).into_iter().collect();
-    let unique = unique_tokens(&slices);
+    let unique = unique_tokens(&slices, settings.collisions);
 
     println!("# stateless");
-    bench_stateless(work, &slices, &unique);
+    bench_stateless(&settings, work, &slices, &unique);
 
     println!("# stateful");
-    bench_stateful(&view, work.bytes);
+    bench_stateful(&settings, &view, work.bytes);
 
     println!("# checksum");
-    bench_checksum(work, &slices, &unique);
+    bench_checksum(&settings, work, &slices, &unique);
 
-    finish();
+    finish()
 }

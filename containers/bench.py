@@ -1,16 +1,11 @@
-# /// script
-# requires-python = ">=3.13"
-# dependencies = [
-#   "stringzilla>=5.0.0",
-#   "pyprobables",
-#   "xxhash",
-#   "numpy",
-# ]
-# ///
-"""Hash-container benchmarks in Python: multi-seed digests and filters. Mirrors `containers/bench.rs`."""
+"""Hash-container benchmarks in Python: multi-seed digests and filters. Mirrors `containers/bench.rs`.
+
+Run from the repository root, configured only through `STRINGWARS_*` variables:
+
+    STRINGWARS_DATASET=README.md uv run --group containers containers/bench.py
+"""
 
 import argparse
-import sys
 from array import array
 from collections.abc import Callable
 
@@ -19,16 +14,19 @@ import stringzilla as sz
 import xxhash
 from probables import BloomFilter
 
-from utils import (
+from stringwars import (
+    Bytes,
     MeasureSpec,
-    add_common_args,
+    Settings,
     finish,
     log_dataset,
     log_timing_overhead,
     measure,
     pass_over,
+    print_machine,
+    print_settings,
+    read_settings,
     resolve_dataset,
-    set_filter,
 )
 
 # Sixteen fixed odd seeds shared by every multi-hash variant, matching containers/bench.rs.
@@ -55,39 +53,35 @@ MASK_64 = (1 << 64) - 1
 TARGET_FALSE_POSITIVE_RATE = 0.01
 
 
-def log_system_info():
-    print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
-    print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
-    print(f"- xxHash: {xxhash.VERSION}")
-    print()
-
-
 def bench_multihash(
+    settings: Settings,
     name: str,
     tokens: list[bytes],
     produce: Callable[[bytes], object],
     digest_bits: int,
-    total_bytes: int,
-):
+    total_bytes: Bytes,
+) -> None:
     """One pass emits `digest_bits` digest bits for every token."""
     work = MeasureSpec(
-        report="bits",
+        unit="bits",
         elements=len(tokens) * digest_bits,
         total_bytes=total_bytes,
     )
-    measure(name, work, pass_over(produce, tokens))
+    measure(settings, name, work, pass_over(produce, tokens))
 
 
-def bench_build(name: str, count: int, total_bytes: int, build: Callable[[], object]):
+def bench_build(settings: Settings, name: str, count: int, total_bytes: Bytes, build: Callable[[], object]) -> None:
     """One pass rebuilds the whole filter from every key."""
-    work = MeasureSpec(report="hashes", elements=count, total_bytes=total_bytes)
-    measure(name, work, build)
+    work = MeasureSpec(unit="hashes", elements=count, total_bytes=total_bytes)
+    measure(settings, name, work, build)
 
 
-def bench_query(name: str, probes: list[bytes], total_bytes: int, query: Callable[[bytes], bool]):
+def bench_query(
+    settings: Settings, name: str, probes: list[bytes], total_bytes: Bytes, query: Callable[[bytes], bool]
+) -> None:
     """One pass queries every probe."""
-    work = MeasureSpec(report="hashes", elements=len(probes), total_bytes=total_bytes)
-    measure(name, work, pass_over(query, probes))
+    work = MeasureSpec(unit="hashes", elements=len(probes), total_bytes=total_bytes)
+    measure(settings, name, work, pass_over(query, probes))
 
 
 def report_quality(
@@ -96,7 +90,7 @@ def report_quality(
     inserted_count: int,
     absent: list[bytes],
     contains: Callable[[bytes], bool],
-):
+) -> None:
     """Report the measured false-positive rate over the held-out absent words plus bits-per-key."""
     false_positives = sum(1 for token in absent if contains(token))
     rate = false_positives / len(absent) * 100 if absent else 0.0
@@ -104,7 +98,7 @@ def report_quality(
     print(f"    {label:<38} {bits}, measured FPR {rate:.3f}%")
 
 
-def run_multihash(tokens: list[bytes], total_bytes: int):
+def run_multihash(settings: Settings, tokens: list[bytes], total_bytes: Bytes) -> None:
     for digest_bits in (128, 256, 512, 1024):
         print(f"# multihash ({digest_bits}-bit digest)")
         sz_hashes = digest_bits // 64
@@ -116,20 +110,25 @@ def run_multihash(tokens: list[bytes], total_bytes: int):
         # hash it is storing — the comparison would be about numpy, not about hashing.
         out = array("Q", [0] * sz_hashes)
 
+        def sz_hash_multiseed(token: bytes, seeds: array[int] = seeds, out: array[int] = out) -> None:
+            sz.hash_multiseed(token, seeds, out)
+
         bench_multihash(
-            "multihash/stringzilla.hash_multiseed",
+            settings,
+            f"multihash-{digest_bits}/stringzilla.hash_multiseed",
             tokens,
-            lambda token, seeds=seeds, out=out: sz.hash_multiseed(token, seeds, out),
+            sz_hash_multiseed,
             digest_bits,
             total_bytes,
         )
 
-        def sz_hash_fill(token, seeds=seeds, out=out):
+        def sz_hash_fill(token: bytes, seeds: array[int] = seeds, out: array[int] = out) -> None:
             for index, seed in enumerate(seeds):
                 out[index] = sz.hash(token, seed)
 
         bench_multihash(
-            "multihash/stringzilla.hash",
+            settings,
+            f"multihash-{digest_bits}/stringzilla.hash",
             tokens,
             sz_hash_fill,
             digest_bits,
@@ -138,20 +137,22 @@ def run_multihash(tokens: list[bytes], total_bytes: int):
 
         # One full 128-bit xxh3 hash per seed — every bit is independent, no double-hashing —
         # split across two 64-bit slots of the shared buffer.
-        def xxh3_fill(token, n=xxh3_calls, out=out):
+        def xxh3_fill(token: bytes, n: int = xxh3_calls, out: array[int] = out) -> None:
             for index in range(n):
                 wide = xxhash.xxh3_128_intdigest(token, seed=SEEDS[index])
                 out[2 * index] = wide & MASK_64
                 out[2 * index + 1] = wide >> 64
 
-        bench_multihash("multihash/xxhash.xxh3_128", tokens, xxh3_fill, digest_bits, total_bytes)
+        bench_multihash(
+            settings, f"multihash-{digest_bits}/xxhash.xxh3_128", tokens, xxh3_fill, digest_bits, total_bytes
+        )
 
 
-def run_filters(unique: list[bytes]):
+def run_filters(settings: Settings, unique: list[bytes]) -> None:
     inserted_count = min(len(unique) * 8 // 10, 1_000_000) or 1
     inserted = unique[:inserted_count]
     absent = unique[inserted_count:]
-    inserted_bytes = sum(len(token) for token in inserted)
+    inserted_bytes = Bytes(sum(len(token) for token in inserted))
     print(f"# filters ({inserted_count} inserted, {len(absent)} held-out absent)")
 
     # pyprobables Bloom filter, hashing each key with its default FNV-1a internally.
@@ -160,12 +161,12 @@ def run_filters(unique: list[bytes]):
         bloom.add(token)
     report_quality("bloom/pyprobables<fnv>", bloom.number_bits, inserted_count, absent, bloom.check)
 
-    def build_bloom():
+    def build_bloom() -> None:
         filter_ = BloomFilter(est_elements=inserted_count, false_positive_rate=TARGET_FALSE_POSITIVE_RATE)
         pass_over(filter_.add, inserted)()
 
-    bench_build("bloom/pyprobables.add<fnv>", inserted_count, inserted_bytes, build_bloom)
-    bench_query("bloom/pyprobables.check<fnv>", inserted, inserted_bytes, bloom.check)
+    bench_build(settings, "bloom/pyprobables.add<fnv>", inserted_count, inserted_bytes, build_bloom)
+    bench_query(settings, "bloom/pyprobables.check<fnv>", inserted, inserted_bytes, bloom.check)
 
     # Same filter, fed StringZilla's `hash_multiseed` digest through the precomputed-hash API: one
     # native call fills the reused buffer, then `add_alt`/`check_alt` consume it — no per-key callback.
@@ -173,7 +174,7 @@ def run_filters(unique: list[bytes]):
     seeds = array("Q", SEEDS[: bloom_sz.number_hashes])
     out = np.empty(bloom_sz.number_hashes, dtype=np.uint64)
 
-    def sz_digest(token):
+    def sz_digest(token: bytes) -> np.ndarray:
         sz.hash_multiseed(token, seeds, out)
         return out
 
@@ -187,12 +188,13 @@ def run_filters(unique: list[bytes]):
         lambda t: bloom_sz.check_alt(sz_digest(t)),
     )
 
-    def build_bloom_sz():
+    def build_bloom_sz() -> None:
         filter_ = BloomFilter(est_elements=inserted_count, false_positive_rate=TARGET_FALSE_POSITIVE_RATE)
         pass_over(lambda token: filter_.add_alt(sz_digest(token)), inserted)()
 
-    bench_build("bloom/pyprobables.add<stringzilla>", inserted_count, inserted_bytes, build_bloom_sz)
+    bench_build(settings, "bloom/pyprobables.add<stringzilla>", inserted_count, inserted_bytes, build_bloom_sz)
     bench_query(
+        settings,
         "bloom/pyprobables.check<stringzilla>",
         inserted,
         inserted_bytes,
@@ -200,34 +202,21 @@ def run_filters(unique: list[bytes]):
     )
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Benchmark multi-way word hashing and probabilistic membership structures",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    add_common_args(parser)
-    args = parser.parse_args()
+def main() -> int:
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
-    set_filter(args.filter)
-
-    dataset = resolve_dataset("containers", as_bytes=True, dataset_path=args.dataset)
+    print_machine({"StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}", "xxHash": xxhash.VERSION})
+    settings = read_settings("containers")
+    print_settings(settings)
+    dataset = resolve_dataset(settings)
     log_dataset(dataset)
-    log_timing_overhead()
+    log_timing_overhead(settings)
     tokens = dataset.tokens
-    if not tokens:
-        print("No tokens found in dataset")
-        return 1
 
-    unique = list(dict.fromkeys(tokens))
-    total_bytes = dataset.token_bytes
-    print(f"Dataset: {len(tokens):,} tokens, {total_bytes:,} bytes, {len(unique):,} unique")
-    log_system_info()
-
-    run_multihash(tokens, total_bytes)
-    run_filters(unique)
-    finish()
-    return 0
+    run_multihash(settings, tokens, dataset.token_bytes)
+    run_filters(settings, list(dict.fromkeys(tokens)))
+    return finish()
 
 
 if __name__ == "__main__":
-    exit(main())
+    raise SystemExit(main())

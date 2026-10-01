@@ -1,17 +1,11 @@
-# /// script
-# requires-python = ">=3.13"
-# dependencies = [
-#   "stringzilla>=5.0.0",
-#   "regex",
-#   "PyICU",
-#   "uniseg",
-#   "grapheme",
-# ]
-# ///
-"""Tokenization benchmarks in Python: UTF-8 iteration and segmentation. Mirrors `tokenization/bench.rs`."""
+"""Tokenization benchmarks in Python: UTF-8 iteration and segmentation. Mirrors `tokenization/bench.rs`.
+
+Run from the repository root, configured only through `STRINGWARS_*` variables:
+
+    STRINGWARS_DATASET=README.md uv run --group tokenization tokenization/bench.py
+"""
 
 import argparse
-import sys
 from collections.abc import Callable
 from importlib.metadata import version as pkg_version
 
@@ -24,35 +18,28 @@ import uniseg.linebreak
 import uniseg.sentencebreak
 import uniseg.wordbreak
 
-from utils import (
+from stringwars import (
+    Bytes,
     MeasureSpec,
-    add_common_args,
+    Settings,
     finish,
     log_dataset,
     log_timing_overhead,
     measure,
     pass_over,
+    print_machine,
+    print_settings,
+    read_settings,
     resolve_dataset,
-    set_filter,
 )
 
 
-def log_system_info():
-    """Log Python version and library versions."""
-    print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
-    print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
-    print(f"- regex: {pkg_version('regex')}")
-    print(f"- PyICU: {pkg_version('PyICU')} (ICU {icu.ICU_VERSION})")
-    print(f"- uniseg: {pkg_version('uniseg')}")
-    print(f"- grapheme: {pkg_version('grapheme')}")
-    print()
-
-
 def bench_tokenize(
+    settings: Settings,
     name: str,
-    text: str | bytes,
-    count_function: Callable[[str | bytes], int],
-):
+    text: bytes,
+    count_function: Callable[[bytes], int],
+) -> None:
     """Benchmark a whole-text tokenizer/scanner by counting what it yields.
 
     `count_function` consumes the entire `text` once per call and returns an integer
@@ -60,29 +47,29 @@ def bench_tokenize(
     count lazily via `sum(1 for _ in ...)` so no token list is materialized.
     Throughput is reported as input bytes per second.
     """
-    text_byte_length = len(text.encode("utf-8")) if isinstance(text, str) else len(text)
-    work = MeasureSpec(report="bytes", elements=1, total_bytes=text_byte_length)
-    measure(name, work, lambda: count_function(text))
+    work = MeasureSpec(unit="bytes", elements=1, total_bytes=Bytes(len(text)))
+    measure(settings, name, work, lambda: count_function(text))
 
 
-def bench_split_lines(
+def bench_split_tokens(
+    settings: Settings,
     name: str,
-    lines: list[str],
+    tokens: list[str],
     count_function: Callable[[str], int],
-    total_bytes: int,
-):
-    """Benchmark a splitter by processing one document line per call, cycling the lines.
+    total_bytes: Bytes,
+) -> None:
+    """Benchmark a splitter by processing one token per call, each once per pass.
 
-    Unlike the whole-text `bench_tokenize`, each call splits a single line, so the working set
-    is one line rather than the entire file. Splitting is compute-bound, so the per-byte rate
+    Unlike the whole-text `bench_tokenize`, each call splits a single token, so the working set
+    is one token rather than the entire file. Splitting is compute-bound, so the per-byte rate
     still mirrors a whole-file pass; only the working set changes. Throughput is reported as the
-    sum of the byte lengths of every line processed.
+    sum of the byte lengths of every token processed.
     """
-    work = MeasureSpec(report="bytes", elements=len(lines), total_bytes=total_bytes)
-    measure(name, work, pass_over(count_function, lines))
+    work = MeasureSpec(unit="bytes", elements=len(tokens), total_bytes=total_bytes)
+    measure(settings, name, work, pass_over(count_function, tokens))
 
 
-def make_count_boundaries_icu(break_iterator) -> Callable[[str], int]:
+def make_count_boundaries_icu(break_iterator: icu.BreakIterator) -> Callable[[str], int]:
     """Build a counter over one reused ICU `BreakIterator` — word, character, sentence or line.
 
     Every boundary counts, words and punctuation and whitespace alike, mirroring the Rust
@@ -189,116 +176,119 @@ def count_codepoints_decode(data: bytes) -> int:
     return len(data.decode("utf-8"))
 
 
-_main_epilog = """
-Examples:
+def main() -> int:
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
-  %(prog)s --dataset README.md --tokens file
-
-  # Test only word segmentation
-  %(prog)s --dataset data.txt --tokens file -k "words"
-"""
-
-
-def main():
-    """Main entry point with argument parsing."""
-    parser = argparse.ArgumentParser(
-        description="Benchmark UTF-8 tokenization and iteration",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_main_epilog,
+    print_machine(
+        {
+            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+            "regex": pkg_version("regex"),
+            "PyICU": f"{pkg_version('PyICU')} with ICU {icu.ICU_VERSION}",
+            "uniseg": pkg_version("uniseg"),
+            "grapheme": pkg_version("grapheme"),
+        }
     )
-
-    add_common_args(parser)
-
-    args = parser.parse_args()
-
-    # Compile filter pattern
-    set_filter(args.filter)
-
-    # Resolve the working set from the shared manifest, identically to `utils.rs`.
-    dataset = resolve_dataset("tokenization", as_bytes=False, dataset_path=args.dataset)
-    lines = dataset.tokens
-    pythonic_str = "".join(lines)
+    settings = read_settings("tokenization")
+    print_settings(settings)
+    dataset = resolve_dataset(settings)
+    tokens = dataset.text_tokens()
     total_bytes = dataset.token_bytes
 
     log_dataset(dataset)
-    log_timing_overhead()
-    log_system_info()
+    log_timing_overhead(settings)
 
     root = icu.Locale.getRoot()
 
-    # UTF-8 word segmentation (TR29) per document line, cycling the lines.
+    # UTF-8 word segmentation (TR29) per token.
     print("Word Segmentation (TR29)")
-    bench_split_lines("tokenize-words-tr29/stringzilla.utf8_wordbreaks", lines, count_words_stringzilla, total_bytes)
-    bench_split_lines("tokenize-words-tr29/uniseg.words", lines, count_words_uniseg, total_bytes)
-    bench_split_lines(
+    bench_split_tokens(
+        settings, "tokenize-words-tr29/stringzilla.utf8_wordbreaks", tokens, count_words_stringzilla, total_bytes
+    )
+    bench_split_tokens(settings, "tokenize-words-tr29/uniseg.words", tokens, count_words_uniseg, total_bytes)
+    bench_split_tokens(
+        settings,
         "tokenize-words-tr29/icu.BreakIterator",
-        lines,
+        tokens,
         make_count_boundaries_icu(icu.BreakIterator.createWordInstance(root)),
         total_bytes,
     )
 
-    # UTF-8 grapheme cluster segmentation (TR29) per document line, cycling the lines.
+    # UTF-8 grapheme cluster segmentation (TR29) per token.
     print("\nGrapheme Cluster Segmentation (TR29)")
-    bench_split_lines(
-        "tokenize-graphemes-tr29/stringzilla.utf8_graphemes", lines, count_graphemes_stringzilla, total_bytes
+    bench_split_tokens(
+        settings, "tokenize-graphemes-tr29/stringzilla.utf8_graphemes", tokens, count_graphemes_stringzilla, total_bytes
     )
-    bench_split_lines("tokenize-graphemes-tr29/regex.finditer", lines, count_graphemes_regex, total_bytes)
-    bench_split_lines("tokenize-graphemes-tr29/grapheme.graphemes", lines, count_graphemes_grapheme, total_bytes)
-    bench_split_lines("tokenize-graphemes-tr29/uniseg.grapheme_clusters", lines, count_graphemes_uniseg, total_bytes)
-    bench_split_lines(
+    bench_split_tokens(settings, "tokenize-graphemes-tr29/regex.finditer", tokens, count_graphemes_regex, total_bytes)
+    bench_split_tokens(
+        settings, "tokenize-graphemes-tr29/grapheme.graphemes", tokens, count_graphemes_grapheme, total_bytes
+    )
+    bench_split_tokens(
+        settings, "tokenize-graphemes-tr29/uniseg.grapheme_clusters", tokens, count_graphemes_uniseg, total_bytes
+    )
+    bench_split_tokens(
+        settings,
         "tokenize-graphemes-tr29/icu.BreakIterator",
-        lines,
+        tokens,
         make_count_boundaries_icu(icu.BreakIterator.createCharacterInstance(root)),
         total_bytes,
     )
 
-    # UTF-8 sentence segmentation (TR29) per document line, cycling the lines.
+    # UTF-8 sentence segmentation (TR29) per token.
     print("\nSentence Segmentation (TR29)")
-    bench_split_lines(
-        "tokenize-sentences-tr29/stringzilla.utf8_sentences", lines, count_sentences_stringzilla, total_bytes
+    bench_split_tokens(
+        settings, "tokenize-sentences-tr29/stringzilla.utf8_sentences", tokens, count_sentences_stringzilla, total_bytes
     )
-    bench_split_lines("tokenize-sentences-tr29/uniseg.sentences", lines, count_sentences_uniseg, total_bytes)
-    bench_split_lines(
+    bench_split_tokens(
+        settings, "tokenize-sentences-tr29/uniseg.sentences", tokens, count_sentences_uniseg, total_bytes
+    )
+    bench_split_tokens(
+        settings,
         "tokenize-sentences-tr29/icu.BreakIterator",
-        lines,
+        tokens,
         make_count_boundaries_icu(icu.BreakIterator.createSentenceInstance(root)),
         total_bytes,
     )
 
-    # UTF-8 line-break opportunity segmentation (UAX#14) per document line, cycling the lines.
+    # UTF-8 line-break opportunity segmentation (UAX#14) per token.
     print("\nLine-Break Segmentation (UAX#14)")
-    bench_split_lines("tokenize-lines-uax14/stringzilla.utf8_linebreaks", lines, count_lines_stringzilla, total_bytes)
-    bench_split_lines("tokenize-lines-uax14/uniseg.line_break", lines, count_lines_uniseg, total_bytes)
-    bench_split_lines(
+    bench_split_tokens(
+        settings, "tokenize-lines-uax14/stringzilla.utf8_linebreaks", tokens, count_lines_stringzilla, total_bytes
+    )
+    bench_split_tokens(settings, "tokenize-lines-uax14/uniseg.line_break", tokens, count_lines_uniseg, total_bytes)
+    bench_split_tokens(
+        settings,
         "tokenize-lines-uax14/icu.BreakIterator",
-        lines,
+        tokens,
         make_count_boundaries_icu(icu.BreakIterator.createLineInstance(root)),
         total_bytes,
     )
 
-    # UTF-8 whitespace splitting per document line, cycling the lines.
+    # UTF-8 whitespace splitting per token.
     print("\nWhitespace Splitting")
-    bench_split_lines(
-        "tokenize-whitespace/stringzilla.utf8_split_whitespaces", lines, count_whitespace_stringzilla, total_bytes
+    bench_split_tokens(
+        settings,
+        "tokenize-whitespace/stringzilla.utf8_split_whitespaces",
+        tokens,
+        count_whitespace_stringzilla,
+        total_bytes,
     )
-    bench_split_lines("tokenize-whitespace/regex.finditer", lines, count_whitespace_regex, total_bytes)
+    bench_split_tokens(settings, "tokenize-whitespace/regex.finditer", tokens, count_whitespace_regex, total_bytes)
 
-    # UTF-8 newline splitting per document line, cycling the lines.
+    # UTF-8 newline splitting per token.
     print("\nNewline Splitting")
-    bench_split_lines(
-        "tokenize-newlines/stringzilla.utf8_split_newlines", lines, count_newlines_stringzilla, total_bytes
+    bench_split_tokens(
+        settings, "tokenize-newlines/stringzilla.utf8_split_newlines", tokens, count_newlines_stringzilla, total_bytes
     )
 
     # UTF-8 codepoint counting over the raw bytes (fair O(n)-from-bytes comparison;
     # `len(str)` is O(1) in CPython, so we decode-and-count as the stdlib baseline).
     print("\nCodepoint Counting")
-    document_bytes = pythonic_str.encode("utf-8")
-    bench_tokenize("utf8-count/stringzilla.utf8_count", document_bytes, count_codepoints_stringzilla)
-    bench_tokenize("utf8-count/str.decode.len", document_bytes, count_codepoints_decode)
+    document_bytes = b"".join(dataset.tokens)
+    bench_tokenize(settings, "utf8-count/stringzilla.utf8_count", document_bytes, count_codepoints_stringzilla)
+    bench_tokenize(settings, "utf8-count/str.decode.len", document_bytes, count_codepoints_decode)
 
-    finish()
-    return 0
+    return finish()
 
 
 if __name__ == "__main__":
-    exit(main())
+    raise SystemExit(main())

@@ -1,18 +1,14 @@
-# /// script
-# requires-python = ">=3.13"
-# dependencies = [
-#   "stringzilla>=5.0.0",
-#   "numpy",
-#   "pycryptodome",
-#   "opencv-python",
-# ]
-# ///
-"""Low-level memory benchmarks in Python: lookup tables, PRNG fills, copies. Mirrors `memory/bench.rs`."""
+"""Low-level memory benchmarks in Python: lookup tables, PRNG fills, copies. Mirrors `memory/bench.rs`.
+
+Run from the repository root, configured only through `STRINGWARS_*` variables:
+
+    STRINGWARS_DATASET=README.md uv run --group memory memory/bench.py
+"""
 
 import argparse
-import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from itertools import repeat
+from typing import Any
 
 import Crypto as pycryptodome
 import cv2
@@ -20,26 +16,20 @@ import numpy as np
 import stringzilla as sz
 from Crypto.Cipher import AES as PyCryptoDomeAES
 
-from utils import (
+from stringwars import (
+    Bytes,
     MeasureSpec,
-    add_common_args,
+    Settings,
     finish,
     log_dataset,
     log_timing_overhead,
     measure,
     pass_over,
+    print_machine,
+    print_settings,
+    read_settings,
     resolve_dataset,
-    set_filter,
 )
-
-
-def log_system_info():
-    print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
-    print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
-    print(f"- NumPy: {np.__version__}")
-    print(f"- PyCryptoDome: {pycryptodome.__version__}")
-    print(f"- OpenCV: {cv2.__version__} (defaults to {cv2.getNumThreads()} threads)")
-    print()
 
 
 def sz_translate_allocating(haystack: bytes, look_up_table: bytes) -> int:
@@ -96,31 +86,32 @@ def numpy_lut_take_inplace(haystack_array: np.ndarray, lut: np.ndarray) -> int:
 
 
 def bench_translate(
+    settings: Settings,
     name: str,
-    tokens,
-    table: bytes,
-    operation: Callable[[object, bytes], int],
+    tokens: Sequence[Any],
+    table: bytes | np.ndarray,
+    operation: Callable[[Any, Any], int],
 ) -> None:
     # The broadcast table column used to be built *inside* the timed region, so a
     # multi-million-element list allocation was charged to every contender.
     work = MeasureSpec(
-        report="bytes",
+        unit="bytes",
         elements=len(tokens),
-        total_bytes=sum(len(token) for token in tokens),
+        total_bytes=Bytes(sum(len(token) for token in tokens)),
     )
-    measure(name, work, pass_over(operation, tokens, repeat(table)))
+    measure(settings, name, work, pass_over(operation, tokens, repeat(table)))
 
 
 def sizes_from_tokens(tokens: Iterable[bytes]) -> list[int]:
     return [len(token) for token in tokens if len(token) > 0]
 
 
-def bench_generator(name: str, sizes: list[int], generate_bytes: Callable[[int], object]) -> None:
-    work = MeasureSpec(report="bytes", elements=len(sizes), total_bytes=sum(sizes))
-    measure(name, work, pass_over(generate_bytes, sizes))
+def bench_generator(settings: Settings, name: str, sizes: list[int], generate_bytes: Callable[[int], object]) -> None:
+    work = MeasureSpec(unit="bytes", elements=len(sizes), total_bytes=Bytes(sum(sizes)))
+    measure(settings, name, work, pass_over(generate_bytes, sizes))
 
 
-def make_pycryptodome_aes_ctr():
+def make_pycryptodome_aes_ctr() -> Callable[[int], bytes]:
     key = b"\x00" * 16
     cipher = PyCryptoDomeAES.new(key, PyCryptoDomeAES.MODE_CTR, nonce=b"")
 
@@ -134,8 +125,8 @@ def make_pycryptodome_aes_ctr():
     return generate_bytes
 
 
-def make_stringzilla_fill_random():
-    def generate_bytes(size: int):
+def make_stringzilla_fill_random() -> Callable[[int], bytearray]:
+    def generate_bytes(size: int) -> bytearray:
         buffer = bytearray(size)
         sz.fill_random(buffer, 0)
         return buffer
@@ -143,7 +134,7 @@ def make_stringzilla_fill_random():
     return generate_bytes
 
 
-def make_numpy_generator(bit_generator):
+def make_numpy_generator(bit_generator: np.random.BitGenerator) -> Callable[[int], np.ndarray]:
     """A byte generator over a NumPy PRNG's raw 64-bit words.
 
     The trailing slice is a view, not a `tobytes()` copy: the copy walked the whole buffer a
@@ -157,34 +148,23 @@ def make_numpy_generator(bit_generator):
     return generate_bytes
 
 
-_main_epilog = """
-Examples:
-
-  %(prog)s --dataset README.md --tokens lines
-
-  # Filter to only translations
-  %(prog)s --dataset README.md --tokens words -k "translate"
-"""
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Memory-related benchmarks: LUT transforms and random generation",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_main_epilog,
-    )
-    add_common_args(parser)
-    args = parser.parse_args()
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
-    # Dataset
-    dataset = resolve_dataset("memory", as_bytes=True, dataset_path=args.dataset)
+    print_machine(
+        {
+            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+            "NumPy": np.__version__,
+            "PyCryptoDome": pycryptodome.__version__,
+            "OpenCV": f"{cv2.__version__}, pinned to 1 thread",
+        }
+    )
+    settings = read_settings("memory")
+    print_settings(settings)
+    dataset = resolve_dataset(settings)
     tokens_b = dataset.tokens
     log_dataset(dataset)
-    log_timing_overhead()
-    log_system_info()
-
-    # Compile filter
-    set_filter(args.filter)
+    log_timing_overhead(settings)
 
     # Disable OpenCV multithreading for more consistent results
     cv2.setNumThreads(1)
@@ -200,45 +180,44 @@ def main() -> int:
     tokens_mv = [memoryview(bytearray(token)) for token in tokens_b]
 
     # Python bytes.translate (always allocating)
-    bench_translate("lookup-table/bytes.translate<new>", tokens_b, reverse, bytes_translate)
+    bench_translate(settings, "lookup-table/bytes.translate<new>", tokens_b, reverse, bytes_translate)
 
     # OpenCV allocating
-    bench_translate("lookup-table/opencv.LUT<new>", tokens_np, reverse_np, opencv_lut_allocating)
+    bench_translate(settings, "lookup-table/opencv.LUT<new>", tokens_np, reverse_np, opencv_lut_allocating)
 
     # OpenCV in-place
-    bench_translate("lookup-table/opencv.LUT<inplace>", tokens_np, reverse_np, opencv_lut_inplace)
+    bench_translate(settings, "lookup-table/opencv.LUT<inplace>", tokens_np, reverse_np, opencv_lut_inplace)
 
     # NumPy indexing allocating
-    bench_translate("lookup-table/numpy.indexing<new>", tokens_np, reverse_np, numpy_lut_indexing_allocating)
+    bench_translate(settings, "lookup-table/numpy.indexing<new>", tokens_np, reverse_np, numpy_lut_indexing_allocating)
 
     # NumPy indexing in-place
-    bench_translate("lookup-table/numpy.indexing<inplace>", tokens_np, reverse_np, numpy_lut_indexing_inplace)
+    bench_translate(settings, "lookup-table/numpy.indexing<inplace>", tokens_np, reverse_np, numpy_lut_indexing_inplace)
 
     # NumPy take allocating
-    bench_translate("lookup-table/numpy.take<new>", tokens_np, reverse_np, numpy_lut_take_allocating)
+    bench_translate(settings, "lookup-table/numpy.take<new>", tokens_np, reverse_np, numpy_lut_take_allocating)
 
     # NumPy take in-place
-    bench_translate("lookup-table/numpy.take<inplace>", tokens_np, reverse_np, numpy_lut_take_inplace)
+    bench_translate(settings, "lookup-table/numpy.take<inplace>", tokens_np, reverse_np, numpy_lut_take_inplace)
 
     # StringZilla allocating
-    bench_translate("lookup-table/stringzilla.translate<new>", tokens_b, reverse, sz_translate_allocating)
+    bench_translate(settings, "lookup-table/stringzilla.translate<new>", tokens_b, reverse, sz_translate_allocating)
 
     # StringZilla in-place (need memoryviews for each token)
-    bench_translate("lookup-table/stringzilla.translate<inplace>", tokens_mv, reverse, sz_translate_inplace)
+    bench_translate(settings, "lookup-table/stringzilla.translate<inplace>", tokens_mv, reverse, sz_translate_inplace)
 
     # Random byte generation
     print()
     print("Random Byte Generation")
     sizes = sizes_from_tokens(tokens_b)
 
-    bench_generator("generate-random/pycryptodome.AES-CTR", sizes, make_pycryptodome_aes_ctr())
-    bench_generator("generate-random/stringzilla.fill_random", sizes, make_stringzilla_fill_random())
-    bench_generator("generate-random/stringzilla.random", sizes, sz.random)
-    bench_generator("generate-random/numpy.PCG64", sizes, make_numpy_generator(np.random.PCG64(0)))
-    bench_generator("generate-random/numpy.Philox", sizes, make_numpy_generator(np.random.Philox(0)))
+    bench_generator(settings, "generate-random/pycryptodome.AES-CTR", sizes, make_pycryptodome_aes_ctr())
+    bench_generator(settings, "generate-random/stringzilla.fill_random", sizes, make_stringzilla_fill_random())
+    bench_generator(settings, "generate-random/stringzilla.random", sizes, sz.random)
+    bench_generator(settings, "generate-random/numpy.PCG64", sizes, make_numpy_generator(np.random.PCG64(0)))
+    bench_generator(settings, "generate-random/numpy.Philox", sizes, make_numpy_generator(np.random.Philox(0)))
 
-    finish()
-    return 0
+    return finish()
 
 
 if __name__ == "__main__":

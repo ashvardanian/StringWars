@@ -23,11 +23,11 @@ Unlike the optional break opportunities of UAX#14, these always end a line.
 | Library                            |       English |       Chinese |        Arabic |        French |        Korean |
 | ---------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
 | Rust                               |               |               |               |               |               |
-| `stringzilla::utf8_split_newlines` | __2.51 GB/s__ | __1.95 GB/s__ | __3.06 GB/s__ | __2.23 GB/s__ | __2.52 GB/s__ |
-| `std::split<is_unicode_newline>`   |     0.98 GB/s |     1.17 GB/s |     0.57 GB/s |     0.77 GB/s |     0.69 GB/s |
+| `stringzilla::utf8_split_newlines` | __2.34 GB/s__ | __1.82 GB/s__ | __2.85 GB/s__ | __2.08 GB/s__ | __2.35 GB/s__ |
+| `std::split<is_unicode_newline>`   |     0.91 GB/s |     1.09 GB/s |     0.53 GB/s |     0.72 GB/s |     0.64 GB/s |
 |                                    |               |               |               |               |               |
 | Python                             |               |               |               |               |               |
-| `stringzilla.utf8_split_newlines`  |     0.32 GB/s |     0.27 GB/s |     0.39 GB/s |     0.27 GB/s |     0.36 GB/s |
+| `stringzilla.utf8_split_newlines`  |     0.30 GB/s |     0.25 GB/s |     0.36 GB/s |     0.25 GB/s |     0.34 GB/s |
 
 > Rust measured June 23, 2026; Python June 28, 2026.
 
@@ -36,11 +36,11 @@ Unlike the optional break opportunities of UAX#14, these always end a line.
 | Library                            |       English |       Chinese |        Arabic |        French |        Korean |
 | ---------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
 | Rust                               |               |               |               |               |               |
-| `stringzilla::utf8_split_newlines` | __2.88 GB/s__ | __2.47 GB/s__ | __3.31 GB/s__ | __2.70 GB/s__ | __2.84 GB/s__ |
-| `std::split<is_unicode_newline>`   |     1.85 GB/s |     2.21 GB/s |     1.15 GB/s |     1.38 GB/s |     1.59 GB/s |
+| `stringzilla::utf8_split_newlines` | __2.68 GB/s__ | __2.30 GB/s__ | __3.08 GB/s__ | __2.51 GB/s__ | __2.64 GB/s__ |
+| `std::split<is_unicode_newline>`   |     1.72 GB/s |     2.06 GB/s |     1.07 GB/s |     1.29 GB/s |     1.48 GB/s |
 |                                    |               |               |               |               |               |
 | Python                             |               |               |               |               |               |
-| `stringzilla.utf8_split_newlines`  |     2.42 GB/s |     2.02 GB/s |     2.87 GB/s |     2.24 GB/s |     2.36 GB/s |
+| `stringzilla.utf8_split_newlines`  |     2.25 GB/s |     1.88 GB/s |     2.67 GB/s |     2.09 GB/s |     2.20 GB/s |
 
 > Measured July 29, 2026.
 
@@ -53,17 +53,17 @@ It emits far more opportunities than the hard newline set.
 
 ### Intel Xeon4 Sapphire Rapids
 
-| Library                         |       English |       Chinese |        Arabic |        French |        Korean |
-| ------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
-| Rust                            |               |               |               |               |               |
-| `stringzilla::utf8_linebreaks`  | __0.36 GB/s__ |     0.19 GB/s |     0.26 GB/s | __0.29 GB/s__ |     0.20 GB/s |
-| `unicode-linebreak::linebreaks` |     0.20 GB/s | __0.50 GB/s__ | __0.45 GB/s__ |     0.21 GB/s | __0.50 GB/s__ |
-| `icu::LineSegmenter`            |     0.08 GB/s |     0.13 GB/s |     0.15 GB/s |     0.08 GB/s |     0.12 GB/s |
-|                                 |               |               |               |               |               |
-| Python                          |               |               |               |               |               |
-| `stringzilla.utf8_linebreaks`   | __0.09 GB/s__ | __0.06 GB/s__ | __0.10 GB/s__ | __0.08 GB/s__ | __0.06 GB/s__ |
-| `uniseg.line_break`             |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |
-| `icu.BreakIterator`             |     0.05 GB/s |     0.04 GB/s |     0.08 GB/s |     0.04 GB/s |     0.04 GB/s |
+| Library                         |       English |       Chinese |         Arabic |        French |        Korean |
+| ------------------------------- | ------------: | ------------: | -------------: | ------------: | ------------: |
+| Rust                            |               |               |                |               |               |
+| `stringzilla::utf8_linebreaks`  | __0.34 GB/s__ |     0.18 GB/s |      0.24 GB/s | __0.27 GB/s__ |     0.19 GB/s |
+| `unicode-linebreak::linebreaks` |     0.19 GB/s | __0.47 GB/s__ |  __0.42 GB/s__ |     0.20 GB/s | __0.47 GB/s__ |
+| `icu::LineSegmenter`            |     0.07 GB/s |     0.12 GB/s |      0.14 GB/s |     0.07 GB/s |     0.11 GB/s |
+|                                 |               |               |                |               |               |
+| Python                          |               |               |                |               |               |
+| `stringzilla.utf8_linebreaks`   | __0.08 GB/s__ | __0.06 GB/s__ | __0.093 GB/s__ | __0.07 GB/s__ | __0.06 GB/s__ |
+| `uniseg.line_break`             |   <0.009 GB/s |   <0.009 GB/s |    <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |
+| `icu.BreakIterator`             |     0.05 GB/s |     0.04 GB/s |      0.07 GB/s |     0.04 GB/s |     0.04 GB/s |
 
 > Rust measured June 23, 2026; Python June 28, 2026.
 
@@ -72,13 +72,13 @@ It emits far more opportunities than the hard newline set.
 | Library                         |       English |       Chinese |        Arabic |        French |        Korean |
 | ------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
 | Rust                            |               |               |               |               |               |
-| `stringzilla::utf8_linebreaks`  | __0.25 GB/s__ |     0.21 GB/s |     0.25 GB/s | __0.24 GB/s__ |     0.21 GB/s |
-| `unicode-linebreak::linebreaks` |     0.22 GB/s | __0.57 GB/s__ | __0.59 GB/s__ |     0.22 GB/s | __0.63 GB/s__ |
-| `icu::LineSegmenter`            |     0.16 GB/s |     0.27 GB/s |     0.29 GB/s |     0.16 GB/s |     0.25 GB/s |
+| `stringzilla::utf8_linebreaks`  | __0.23 GB/s__ |     0.20 GB/s |     0.23 GB/s | __0.22 GB/s__ |     0.20 GB/s |
+| `unicode-linebreak::linebreaks` |     0.20 GB/s | __0.53 GB/s__ | __0.55 GB/s__ |     0.20 GB/s | __0.59 GB/s__ |
+| `icu::LineSegmenter`            |     0.15 GB/s |     0.25 GB/s |     0.27 GB/s |     0.15 GB/s |     0.23 GB/s |
 |                                 |               |               |               |               |               |
 | Python                          |               |               |               |               |               |
-| `stringzilla.utf8_linebreaks`   | __0.16 GB/s__ |     0.11 GB/s |     0.19 GB/s | __0.16 GB/s__ |     0.11 GB/s |
-| `icu.BreakIterator`             |     0.13 GB/s | __0.13 GB/s__ | __0.22 GB/s__ |     0.13 GB/s | __0.12 GB/s__ |
+| `stringzilla.utf8_linebreaks`   | __0.15 GB/s__ |     0.10 GB/s |     0.18 GB/s | __0.15 GB/s__ |     0.10 GB/s |
+| `icu.BreakIterator`             |     0.12 GB/s | __0.12 GB/s__ | __0.20 GB/s__ |     0.12 GB/s | __0.11 GB/s__ |
 
 > Measured July 29, 2026.
 
@@ -93,14 +93,14 @@ Abbreviations (U.S.A.), decimals (3.14), and a following continuation do not bre
 | Library                                       |       English |       Chinese |        Arabic |        French |        Korean |
 | --------------------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
 | Rust                                          |               |               |               |               |               |
-| `stringzilla::utf8_sentences`                 | __0.64 GB/s__ | __0.35 GB/s__ | __0.63 GB/s__ | __0.62 GB/s__ | __0.61 GB/s__ |
-| `unicode-segmentation::split_sentence_bounds` |     0.04 GB/s |     0.18 GB/s |     0.09 GB/s |     0.05 GB/s |     0.15 GB/s |
-| `icu::SentenceSegmenter`                      |     0.20 GB/s |     0.25 GB/s |     0.27 GB/s |     0.20 GB/s |     0.21 GB/s |
+| `stringzilla::utf8_sentences`                 | __0.60 GB/s__ | __0.33 GB/s__ | __0.59 GB/s__ | __0.58 GB/s__ | __0.57 GB/s__ |
+| `unicode-segmentation::split_sentence_bounds` |     0.04 GB/s |     0.17 GB/s |     0.08 GB/s |     0.05 GB/s |     0.14 GB/s |
+| `icu::SentenceSegmenter`                      |     0.19 GB/s |     0.23 GB/s |     0.25 GB/s |     0.19 GB/s |     0.20 GB/s |
 |                                               |               |               |               |               |               |
 | Python                                        |               |               |               |               |               |
-| `stringzilla.utf8_sentences`                  | __0.20 GB/s__ |     0.14 GB/s | __0.23 GB/s__ | __0.18 GB/s__ |     0.21 GB/s |
-| `uniseg.sentences`                            |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |
-| `icu.BreakIterator`                           |     0.14 GB/s | __0.18 GB/s__ |     0.23 GB/s |     0.14 GB/s | __0.22 GB/s__ |
+| `stringzilla.utf8_sentences`                  | __0.19 GB/s__ |     0.13 GB/s | __0.21 GB/s__ | __0.17 GB/s__ |     0.20 GB/s |
+| `uniseg.sentences`                            |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |
+| `icu.BreakIterator`                           |     0.13 GB/s | __0.17 GB/s__ |     0.21 GB/s |     0.13 GB/s | __0.20 GB/s__ |
 
 > Rust measured June 23, 2026; Python June 28, 2026.
 
@@ -109,13 +109,13 @@ Abbreviations (U.S.A.), decimals (3.14), and a following continuation do not bre
 | Library                                       |       English |       Chinese |        Arabic |        French |        Korean |
 | --------------------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
 | Rust                                          |               |               |               |               |               |
-| `stringzilla::utf8_sentences`                 | __0.44 GB/s__ | __0.55 GB/s__ | __0.51 GB/s__ | __0.41 GB/s__ | __0.56 GB/s__ |
-| `unicode-segmentation::split_sentence_bounds` |     0.09 GB/s |     0.34 GB/s |     0.20 GB/s |     0.09 GB/s |     0.36 GB/s |
-| `icu::SentenceSegmenter`                      |     0.41 GB/s |     0.55 GB/s |     0.47 GB/s |     0.39 GB/s |     0.44 GB/s |
+| `stringzilla::utf8_sentences`                 | __0.41 GB/s__ | __0.51 GB/s__ | __0.47 GB/s__ | __0.38 GB/s__ | __0.52 GB/s__ |
+| `unicode-segmentation::split_sentence_bounds` |     0.08 GB/s |     0.32 GB/s |     0.19 GB/s |     0.08 GB/s |     0.34 GB/s |
+| `icu::SentenceSegmenter`                      |     0.38 GB/s |     0.51 GB/s |     0.44 GB/s |     0.36 GB/s |     0.41 GB/s |
 |                                               |               |               |               |               |               |
 | Python                                        |               |               |               |               |               |
-| `stringzilla.utf8_sentences`                  | __0.42 GB/s__ |     0.51 GB/s |     0.48 GB/s |     0.39 GB/s |     0.52 GB/s |
-| `icu.BreakIterator`                           |     0.41 GB/s | __0.73 GB/s__ | __0.69 GB/s__ | __0.41 GB/s__ | __0.85 GB/s__ |
+| `stringzilla.utf8_sentences`                  | __0.39 GB/s__ |     0.47 GB/s |     0.45 GB/s |     0.36 GB/s |     0.48 GB/s |
+| `icu.BreakIterator`                           |     0.38 GB/s | __0.68 GB/s__ | __0.64 GB/s__ | __0.38 GB/s__ | __0.79 GB/s__ |
 
 > Measured July 29, 2026.
 
@@ -130,33 +130,33 @@ The zero-width space _U+200B_, despite its name, is not among them — its `Whit
 
 ### Intel Xeon4 Sapphire Rapids
 
-| Library                               |       English |       Chinese |        Arabic |        French |        Korean |
-| ------------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
-| Rust                                  |               |               |               |               |               |
-| `stringzilla::utf8_split_whitespaces` | __0.70 GB/s__ | __1.55 GB/s__ | __1.05 GB/s__ | __0.69 GB/s__ | __0.97 GB/s__ |
-| `std::split<is_whitespace>`           |     0.37 GB/s |     0.92 GB/s |     0.47 GB/s |     0.35 GB/s |     0.59 GB/s |
-| `icu::WhiteSpace`                     |     0.09 GB/s |     0.28 GB/s |     0.18 GB/s |     0.09 GB/s |     0.23 GB/s |
-|                                       |               |               |               |               |               |
-| Python                                |               |               |               |               |               |
-| `stringzilla.utf8_split_whitespaces`  | __0.11 GB/s__ | __0.24 GB/s__ | __0.17 GB/s__ | __0.11 GB/s__ | __0.16 GB/s__ |
-| `regex.split`                         |     0.02 GB/s |     0.03 GB/s |     0.03 GB/s |     0.02 GB/s |     0.02 GB/s |
-| `regex.finditer`                      |             — |             — |             — |             — |             — |
+| Library                               |       English |       Chinese |         Arabic |        French |        Korean |
+| ------------------------------------- | ------------: | ------------: | -------------: | ------------: | ------------: |
+| Rust                                  |               |               |                |               |               |
+| `stringzilla::utf8_split_whitespaces` | __0.65 GB/s__ | __1.44 GB/s__ | __0.978 GB/s__ | __0.64 GB/s__ | __0.90 GB/s__ |
+| `std::split<is_whitespace>`           |     0.34 GB/s |     0.86 GB/s |      0.44 GB/s |     0.33 GB/s |     0.55 GB/s |
+| `icu::WhiteSpace`                     |     0.08 GB/s |     0.26 GB/s |      0.17 GB/s |     0.08 GB/s |     0.21 GB/s |
+|                                       |               |               |                |               |               |
+| Python                                |               |               |                |               |               |
+| `stringzilla.utf8_split_whitespaces`  | __0.10 GB/s__ | __0.22 GB/s__ |  __0.16 GB/s__ | __0.10 GB/s__ | __0.15 GB/s__ |
+| `regex.split`                         |     0.02 GB/s |     0.03 GB/s |      0.03 GB/s |     0.02 GB/s |     0.02 GB/s |
+| `regex.finditer`                      |             — |             — |              — |             — |             — |
 
 > Rust measured June 23, 2026; Python June 28, 2026.
 > `str.split()` is omitted: it also treats U+001C–U+001F (C0 separators) as whitespace, a different set than the Unicode `White_Space` property StringZilla, `char::is_whitespace`, and `regex \s` use.
 
 ### Apple M5 Pro
 
-| Library                               |       English |       Chinese |        Arabic |        French |        Korean |
-| ------------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
-| Rust                                  |               |               |               |               |               |
-| `stringzilla::utf8_split_whitespaces` |     0.59 GB/s | __1.83 GB/s__ |     0.79 GB/s |     0.58 GB/s |     0.81 GB/s |
-| `std::split<is_whitespace>`           | __0.71 GB/s__ |     1.67 GB/s | __1.04 GB/s__ | __0.68 GB/s__ | __1.44 GB/s__ |
-| `icu::WhiteSpace`                     |     0.19 GB/s |     0.58 GB/s |     0.43 GB/s |     0.19 GB/s |     0.52 GB/s |
-|                                       |               |               |               |               |               |
-| Python                                |               |               |               |               |               |
-| `stringzilla.utf8_split_whitespaces`  | __0.27 GB/s__ | __1.33 GB/s__ | __0.41 GB/s__ | __0.27 GB/s__ | __0.39 GB/s__ |
-| `regex.finditer`                      |     0.06 GB/s |     0.43 GB/s |     0.10 GB/s |     0.06 GB/s |     0.10 GB/s |
+| Library                               |       English |       Chinese |         Arabic |        French |        Korean |
+| ------------------------------------- | ------------: | ------------: | -------------: | ------------: | ------------: |
+| Rust                                  |               |               |                |               |               |
+| `stringzilla::utf8_split_whitespaces` |     0.55 GB/s | __1.70 GB/s__ |      0.74 GB/s |     0.54 GB/s |     0.75 GB/s |
+| `std::split<is_whitespace>`           | __0.66 GB/s__ |     1.56 GB/s | __0.969 GB/s__ | __0.63 GB/s__ | __1.34 GB/s__ |
+| `icu::WhiteSpace`                     |     0.18 GB/s |     0.54 GB/s |      0.40 GB/s |     0.18 GB/s |     0.48 GB/s |
+|                                       |               |               |                |               |               |
+| Python                                |               |               |                |               |               |
+| `stringzilla.utf8_split_whitespaces`  | __0.25 GB/s__ | __1.24 GB/s__ |  __0.38 GB/s__ | __0.25 GB/s__ | __0.36 GB/s__ |
+| `regex.finditer`                      |     0.06 GB/s |     0.40 GB/s |     0.093 GB/s |     0.06 GB/s |    0.093 GB/s |
 
 > Measured July 29, 2026.
 
@@ -172,31 +172,31 @@ Space-less scripts (Chinese, Japanese, Thai) need a dictionary, hence ICU's `Wor
 | Library                                   |       English |       Chinese |        Arabic |        French |        Korean |
 | ----------------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
 | Rust                                      |               |               |               |               |               |
-| `stringzilla::utf8_wordbreaks`            | __0.35 GB/s__ | __0.22 GB/s__ | __0.35 GB/s__ | __0.28 GB/s__ | __0.31 GB/s__ |
-| `unicode-segmentation::split_word_bounds` |     0.06 GB/s |     0.13 GB/s |     0.12 GB/s |     0.06 GB/s |     0.17 GB/s |
-| `icu::WordSegmenter`                      |     0.11 GB/s |     0.02 GB/s |     0.22 GB/s |     0.11 GB/s |     0.17 GB/s |
+| `stringzilla::utf8_wordbreaks`            | __0.33 GB/s__ | __0.20 GB/s__ | __0.33 GB/s__ | __0.26 GB/s__ | __0.29 GB/s__ |
+| `unicode-segmentation::split_word_bounds` |     0.06 GB/s |     0.12 GB/s |     0.11 GB/s |     0.06 GB/s |     0.16 GB/s |
+| `icu::WordSegmenter`                      |     0.10 GB/s |     0.02 GB/s |     0.20 GB/s |     0.10 GB/s |     0.16 GB/s |
 | `std::split_whitespace`                   |             — |             — |             — |             — |             — |
 |                                           |               |               |               |               |               |
 | Python                                    |               |               |               |               |               |
-| `stringzilla.utf8_wordbreaks`             | __0.06 GB/s__ | __0.06 GB/s__ | __0.09 GB/s__ | __0.06 GB/s__ | __0.09 GB/s__ |
-| `uniseg.words`                            |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |
-| `icu.BreakIterator`                       |     0.03 GB/s |     0.01 GB/s |     0.05 GB/s |     0.03 GB/s |     0.03 GB/s |
+| `stringzilla.utf8_wordbreaks`             | __0.06 GB/s__ | __0.06 GB/s__ | __0.08 GB/s__ | __0.06 GB/s__ | __0.08 GB/s__ |
+| `uniseg.words`                            |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |
+| `icu.BreakIterator`                       |     0.03 GB/s |    0.009 GB/s |     0.05 GB/s |     0.03 GB/s |     0.03 GB/s |
 
 > Rust measured June 23, 2026; Python June 28, 2026.
 
 ### Apple M5 Pro
 
-| Library                                   |       English |       Chinese |        Arabic |        French |        Korean |
-| ----------------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
-| Rust                                      |               |               |               |               |               |
-| `stringzilla::utf8_wordbreaks`            |     0.46 GB/s |     0.34 GB/s |     0.35 GB/s |     0.35 GB/s |     0.35 GB/s |
-| `unicode-segmentation::split_word_bounds` |     0.12 GB/s |     0.25 GB/s |     0.24 GB/s |     0.12 GB/s |     0.42 GB/s |
-| `icu::WordSegmenter`                      |     0.21 GB/s |     0.04 GB/s |     0.33 GB/s |     0.22 GB/s |     0.42 GB/s |
-| `std::split_whitespace`                   | __0.68 GB/s__ | __1.65 GB/s__ | __1.02 GB/s__ | __0.65 GB/s__ | __1.35 GB/s__ |
-|                                           |               |               |               |               |               |
-| Python                                    |               |               |               |               |               |
-| `stringzilla.utf8_wordbreaks`             | __0.13 GB/s__ | __0.12 GB/s__ | __0.17 GB/s__ | __0.13 GB/s__ | __0.16 GB/s__ |
-| `icu.BreakIterator`                       |     0.08 GB/s |     0.03 GB/s |     0.14 GB/s |     0.09 GB/s |     0.08 GB/s |
+| Library                                   |       English |       Chinese |         Arabic |        French |        Korean |
+| ----------------------------------------- | ------------: | ------------: | -------------: | ------------: | ------------: |
+| Rust                                      |               |               |                |               |               |
+| `stringzilla::utf8_wordbreaks`            |     0.43 GB/s |     0.32 GB/s |      0.33 GB/s |     0.33 GB/s |     0.33 GB/s |
+| `unicode-segmentation::split_word_bounds` |     0.11 GB/s |     0.23 GB/s |      0.22 GB/s |     0.11 GB/s |     0.39 GB/s |
+| `icu::WordSegmenter`                      |     0.20 GB/s |     0.04 GB/s |      0.31 GB/s |     0.20 GB/s |     0.39 GB/s |
+| `std::split_whitespace`                   | __0.63 GB/s__ | __1.54 GB/s__ | __0.950 GB/s__ | __0.61 GB/s__ | __1.26 GB/s__ |
+|                                           |               |               |                |               |               |
+| Python                                    |               |               |                |               |               |
+| `stringzilla.utf8_wordbreaks`             | __0.12 GB/s__ | __0.11 GB/s__ |  __0.16 GB/s__ | __0.12 GB/s__ | __0.15 GB/s__ |
+| `icu.BreakIterator`                       |     0.07 GB/s |     0.03 GB/s |      0.13 GB/s |     0.08 GB/s |     0.07 GB/s |
 
 > Measured July 29, 2026.
 
@@ -211,15 +211,15 @@ It breaks between every pair except where rules GB3–GB11 forbid it.
 | Library                           |       English |       Chinese |        Arabic |        French |        Korean |
 | --------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
 | Rust                              |               |               |               |               |               |
-| `stringzilla::utf8_graphemes`     | __0.23 GB/s__ | __0.21 GB/s__ | __0.26 GB/s__ | __0.19 GB/s__ | __0.26 GB/s__ |
-| `unicode-segmentation::graphemes` |     0.07 GB/s |     0.13 GB/s |     0.10 GB/s |     0.07 GB/s |     0.08 GB/s |
-| `icu::GraphemeClusterSegmenter`   |     0.13 GB/s |     0.20 GB/s |     0.19 GB/s |     0.13 GB/s |     0.17 GB/s |
+| `stringzilla::utf8_graphemes`     | __0.21 GB/s__ | __0.20 GB/s__ | __0.24 GB/s__ | __0.18 GB/s__ | __0.24 GB/s__ |
+| `unicode-segmentation::graphemes` |     0.07 GB/s |     0.12 GB/s |    0.093 GB/s |     0.07 GB/s |     0.07 GB/s |
+| `icu::GraphemeClusterSegmenter`   |     0.12 GB/s |     0.19 GB/s |     0.18 GB/s |     0.12 GB/s |     0.16 GB/s |
 |                                   |               |               |               |               |               |
 | Python                            |               |               |               |               |               |
 | `stringzilla.utf8_graphemes`      | __0.03 GB/s__ | __0.05 GB/s__ | __0.04 GB/s__ | __0.03 GB/s__ | __0.05 GB/s__ |
-| `regex.finditer`                  |    <0.01 GB/s |     0.01 GB/s |     0.01 GB/s |    <0.01 GB/s |     0.01 GB/s |
-| `grapheme.graphemes`              |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |
-| `uniseg.grapheme_clusters`        |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |
+| `regex.finditer`                  |   <0.009 GB/s |    0.009 GB/s |    0.009 GB/s |   <0.009 GB/s |    0.009 GB/s |
+| `grapheme.graphemes`              |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |
+| `uniseg.grapheme_clusters`        |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |
 | `icu.BreakIterator`               |     0.02 GB/s |     0.04 GB/s |     0.03 GB/s |     0.02 GB/s |     0.04 GB/s |
 
 > Rust measured June 23, 2026; Python June 28, 2026.
@@ -229,15 +229,15 @@ It breaks between every pair except where rules GB3–GB11 forbid it.
 | Library                           |       English |       Chinese |        Arabic |        French |        Korean |
 | --------------------------------- | ------------: | ------------: | ------------: | ------------: | ------------: |
 | Rust                              |               |               |               |               |               |
-| `stringzilla::utf8_graphemes`     |     0.22 GB/s |     0.41 GB/s |     0.29 GB/s |     0.22 GB/s |     0.29 GB/s |
-| `unicode-segmentation::graphemes` |     0.15 GB/s |     0.23 GB/s |     0.22 GB/s |     0.15 GB/s |     0.17 GB/s |
-| `icu::GraphemeClusterSegmenter`   | __0.29 GB/s__ | __0.46 GB/s__ | __0.36 GB/s__ | __0.29 GB/s__ | __0.36 GB/s__ |
+| `stringzilla::utf8_graphemes`     |     0.20 GB/s |     0.38 GB/s |     0.27 GB/s |     0.20 GB/s |     0.27 GB/s |
+| `unicode-segmentation::graphemes` |     0.14 GB/s |     0.21 GB/s |     0.20 GB/s |     0.14 GB/s |     0.16 GB/s |
+| `icu::GraphemeClusterSegmenter`   | __0.27 GB/s__ | __0.43 GB/s__ | __0.34 GB/s__ | __0.27 GB/s__ | __0.34 GB/s__ |
 |                                   |               |               |               |               |               |
 | Python                            |               |               |               |               |               |
-| `stringzilla.utf8_graphemes`      | __0.05 GB/s__ | __0.12 GB/s__ | __0.08 GB/s__ | __0.05 GB/s__ |     0.10 GB/s |
-| `regex.finditer`                  |     0.01 GB/s |     0.03 GB/s |     0.02 GB/s |     0.01 GB/s |     0.03 GB/s |
-| `grapheme.graphemes`              |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |    <0.01 GB/s |
-| `icu.BreakIterator`               |     0.04 GB/s |     0.11 GB/s |     0.08 GB/s |     0.05 GB/s | __0.11 GB/s__ |
+| `stringzilla.utf8_graphemes`      | __0.05 GB/s__ | __0.11 GB/s__ | __0.07 GB/s__ | __0.05 GB/s__ |    0.093 GB/s |
+| `regex.finditer`                  |    0.009 GB/s |     0.03 GB/s |     0.02 GB/s |    0.009 GB/s |     0.03 GB/s |
+| `grapheme.graphemes`              |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |   <0.009 GB/s |
+| `icu.BreakIterator`               |     0.04 GB/s |     0.10 GB/s |     0.07 GB/s |     0.05 GB/s | __0.10 GB/s__ |
 
 > Measured July 29, 2026.
 
@@ -252,8 +252,8 @@ CPython stores `str` in a fixed-width representation (PEP 393), so `s[n]` and `l
 | Library                      |        English |        Chinese |         Arabic |         French |         Korean |
 | ---------------------------- | -------------: | -------------: | -------------: | -------------: | -------------: |
 | Rust                         |                |                |                |                |                |
-| `stringzilla::find_nth_utf8` | __16.12 GB/s__ | __18.10 GB/s__ | __13.94 GB/s__ | __17.25 GB/s__ | __15.20 GB/s__ |
-| `std::char_indices.nth`      |      1.61 GB/s |      1.07 GB/s |      0.73 GB/s |      1.12 GB/s |      0.71 GB/s |
+| `stringzilla::find_nth_utf8` | __15.01 GB/s__ | __16.86 GB/s__ | __12.98 GB/s__ | __16.07 GB/s__ | __14.16 GB/s__ |
+| `std::char_indices.nth`      |      1.50 GB/s |     0.997 GB/s |      0.68 GB/s |      1.04 GB/s |      0.66 GB/s |
 
 > Measured June 23, 2026.
 
@@ -262,8 +262,8 @@ CPython stores `str` in a fixed-width representation (PEP 393), so `s[n]` and `l
 | Library                      |        English |        Chinese |         Arabic |         French |         Korean |
 | ---------------------------- | -------------: | -------------: | -------------: | -------------: | -------------: |
 | Rust                         |                |                |                |                |                |
-| `stringzilla::find_nth_utf8` | __34.14 GB/s__ | __34.27 GB/s__ | __34.28 GB/s__ | __34.26 GB/s__ | __34.27 GB/s__ |
-| `std::char_indices.nth`      |      2.67 GB/s |      1.12 GB/s |      0.66 GB/s |      1.79 GB/s |      0.96 GB/s |
+| `stringzilla::find_nth_utf8` | __31.80 GB/s__ | __31.92 GB/s__ | __31.93 GB/s__ | __31.91 GB/s__ | __31.92 GB/s__ |
+| `std::char_indices.nth`      |      2.49 GB/s |      1.04 GB/s |      0.61 GB/s |      1.67 GB/s |      0.89 GB/s |
 
 > Measured July 29, 2026.
 

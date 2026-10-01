@@ -3,11 +3,11 @@
 String-similarity benchmarks in CUPS: Levenshtein, Needleman-Wunsch, Smith-Waterman.
 
 The engines evaluate a square `side x side` cross-product: the first `side` tokens
-against the next `side` disjoint ones. The per-device pair budget is
-`STRINGWARS_BATCH_PER_CORE * cores` and `side = round(sqrt(budget))`, so the matrix
-holds about that many pairs.
+against the next `side` disjoint ones. The pairs per batch on each device are
+`STRINGWARS_BATCH_PER_CORE * cores` and `side = round(sqrt(pairs_per_batch))`, so the
+matrix holds about that many pairs.
 
-- `STRINGWARS_CPU_CORES` overrides the multi-core scope width.
+- `STRINGWARS_THREADS` overrides the multi-core scope width.
 
 ```sh
 STRINGWARS_DATASET=README.md cargo bench --features bench_similarities --bench bench_similarities
@@ -15,8 +15,8 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_similarities --bench b
 "#]
 #![allow(clippy::too_many_arguments)]
 use core::convert::TryInto;
+use std::process::ExitCode;
 
-use forkunion as fu;
 use stringtape::{BytesTape, BytesTapeView, CharsTapeView};
 
 use bio::alignment::{distance as bio_distance, pairwise::Aligner};
@@ -27,14 +27,10 @@ use stringzilla::szs::{
 };
 
 use stringwars::{
-    auto_batch_size, finish, gpu_multiprocessor_count, install_panic_hook,
-    log_stringzilla_metadata, log_timing_overhead, measure, resolve_core_count, resolve_dataset,
-    MeasureSpec, ResultExt, Unit, WorkUnits,
+    batch_size, finish, gpu_multiprocessor_count, install_panic_hook, log_timing_overhead, measure,
+    note_unavailable, print_machine, resolve_dataset, Bytes, MeasureSpec, ResultExt, Settings,
+    Threads, Unit, WorkUnits, FALLBACK_GPU_MULTIPROCESSORS,
 };
-
-/// Per-core batch size for similarity benchmarks. 256 is the measured GPU saturation knee
-/// for short-word edit distance; `auto_batch_size` scales it by each variant's core count.
-const DEFAULT_BATCH_PER_CORE: usize = 256;
 
 /// Builds a substitution table for classic unary scoring: `match_cost` on the diagonal,
 /// `mismatch_cost` everywhere else. Bytes are folded into 32 classes via `i % 32`, which keeps
@@ -53,12 +49,12 @@ fn unary_class_costs(match_cost: i8, mismatch_cost: i8) -> ([u8; 256], [[i8; 32]
     (byte_to_class, class_costs)
 }
 
-/// Computes the square cross-product side for a per-device pair `budget` and an available token
-/// `tape_len`. A `side x side` cross-product holds ~`budget` pairs, clamped so queries `[0, side)`
-/// and candidates `[side, 2*side)` are disjoint, i.e. `2 * side <= tape_len`.
-fn crossproduct_side(budget: usize, tape_len: usize) -> usize {
-    let target = ((budget as f64).sqrt().round() as usize).max(1);
-    let max_side = tape_len / 2;
+/// Computes the square cross-product side for `pairs_per_batch` on one device and `token_count`
+/// available tokens. A `side x side` cross-product holds ~`pairs_per_batch` pairs, clamped so
+/// queries `[0, side)` and candidates `[side, 2*side)` are disjoint, i.e. `2 * side <= token_count`.
+fn crossproduct_side(pairs_per_batch: usize, token_count: usize) -> usize {
+    let target = ((pairs_per_batch as f64).sqrt().round() as usize).max(1);
+    let max_side = token_count / 2;
     target.min(max_side).max(1)
 }
 
@@ -67,32 +63,28 @@ fn crossproduct_side(budget: usize, tape_len: usize) -> usize {
 /// slice `[side, 2*side)` are rebuilt from `full_view` each iteration (views are not `Clone`),
 /// wrapped as `AnyBytesTape::View64`, and written into the pre-allocated `matrix` via `compute`.
 fn measure_crossproduct_bytes_usize(
+    settings: &Settings,
     name: &str,
     full_view: &BytesTapeView<u64>,
     side: usize,
-    total_cells: u64,
-    total_bytes: u64,
+    spec: MeasureSpec,
     matrix: &mut UnifiedMat<usize>,
     mut compute: impl FnMut(AnyBytesTape<'_>, Option<AnyBytesTape<'_>>, &mut UnifiedMat<usize>),
 ) {
-    measure(
-        name,
-        MeasureSpec::new(Unit::Cups, WorkUnits::new(total_cells, total_bytes)),
-        || {
-            let query_view = full_view
-                .subview(0, side)
-                .expect("Failed to create query subview");
-            let candidate_view = full_view
-                .subview(side, 2 * side)
-                .expect("Failed to create candidate subview");
-            compute(
-                AnyBytesTape::View64(query_view),
-                Some(AnyBytesTape::View64(candidate_view)),
-                matrix,
-            );
-            std::hint::black_box(&matrix);
-        },
-    );
+    measure(settings, name, spec, || {
+        let query_view = full_view
+            .subview(0, side)
+            .expect("Failed to create query subview");
+        let candidate_view = full_view
+            .subview(side, 2 * side)
+            .expect("Failed to create candidate subview");
+        compute(
+            AnyBytesTape::View64(query_view),
+            Some(AnyBytesTape::View64(candidate_view)),
+            matrix,
+        );
+        std::hint::black_box(&matrix);
+    });
 }
 
 /// Runs one `measure_throughput` block for a chars-tape cross-product engine that writes `usize`
@@ -100,32 +92,28 @@ fn measure_crossproduct_bytes_usize(
 /// slice `[side, 2*side)` are rebuilt from `full_view` each iteration (views are not `Clone`),
 /// wrapped as `AnyCharsTape::View64`, and written into the pre-allocated `matrix` via `compute`.
 fn measure_crossproduct_chars_usize(
+    settings: &Settings,
     name: &str,
     full_view: &CharsTapeView<u64>,
     side: usize,
-    total_cells: u64,
-    total_bytes: u64,
+    spec: MeasureSpec,
     matrix: &mut UnifiedMat<usize>,
     mut compute: impl FnMut(AnyCharsTape<'_>, Option<AnyCharsTape<'_>>, &mut UnifiedMat<usize>),
 ) {
-    measure(
-        name,
-        MeasureSpec::new(Unit::Cups, WorkUnits::new(total_cells, total_bytes)),
-        || {
-            let query_view = full_view
-                .subview(0, side)
-                .expect("Failed to create query subview");
-            let candidate_view = full_view
-                .subview(side, 2 * side)
-                .expect("Failed to create candidate subview");
-            compute(
-                AnyCharsTape::View64(query_view),
-                Some(AnyCharsTape::View64(candidate_view)),
-                matrix,
-            );
-            std::hint::black_box(&matrix);
-        },
-    );
+    measure(settings, name, spec, || {
+        let query_view = full_view
+            .subview(0, side)
+            .expect("Failed to create query subview");
+        let candidate_view = full_view
+            .subview(side, 2 * side)
+            .expect("Failed to create candidate subview");
+        compute(
+            AnyCharsTape::View64(query_view),
+            Some(AnyCharsTape::View64(candidate_view)),
+            matrix,
+        );
+        std::hint::black_box(&matrix);
+    });
 }
 
 /// Runs one `measure_throughput` block for a bytes-tape cross-product engine that writes `isize`
@@ -134,66 +122,61 @@ fn measure_crossproduct_chars_usize(
 /// (views are not `Clone`), wrapped as `AnyBytesTape::View64`, and written into the pre-allocated
 /// `matrix` via `compute`.
 fn measure_crossproduct_bytes_isize(
+    settings: &Settings,
     name: &str,
     full_view: &BytesTapeView<u64>,
     side: usize,
-    total_cells: u64,
-    total_bytes: u64,
+    spec: MeasureSpec,
     matrix: &mut UnifiedMat<isize>,
     mut compute: impl FnMut(AnyBytesTape<'_>, Option<AnyBytesTape<'_>>, &mut UnifiedMat<isize>),
 ) {
-    measure(
-        name,
-        MeasureSpec::new(Unit::Cups, WorkUnits::new(total_cells, total_bytes)),
-        || {
-            let query_view = full_view
-                .subview(0, side)
-                .expect("Failed to create query subview");
-            let candidate_view = full_view
-                .subview(side, 2 * side)
-                .expect("Failed to create candidate subview");
-            compute(
-                AnyBytesTape::View64(query_view),
-                Some(AnyBytesTape::View64(candidate_view)),
-                matrix,
-            );
-            std::hint::black_box(&matrix);
-        },
-    );
+    measure(settings, name, spec, || {
+        let query_view = full_view
+            .subview(0, side)
+            .expect("Failed to create query subview");
+        let candidate_view = full_view
+            .subview(side, 2 * side)
+            .expect("Failed to create candidate subview");
+        compute(
+            AnyBytesTape::View64(query_view),
+            Some(AnyBytesTape::View64(candidate_view)),
+            matrix,
+        );
+        std::hint::black_box(&matrix);
+    });
 }
 
-/// Sums the byte lengths of a `[0, side)` query slice and `[side, 2*side)` candidate slice of a
-/// bytes view, returning `(cross_product_cells, total_bytes)` where
-/// `cells = sum_query_bytes * sum_candidate_bytes` and `total_bytes = sum_query_bytes + sum_candidate_bytes`.
-fn crossproduct_metrics_bytes(full_view: &BytesTapeView<u64>, side: usize) -> (u64, u64) {
+/// Work of the cross-product of a `[0, side)` query slice and `[side, 2*side)` candidate slice of
+/// a bytes view: `elements = sum_query_bytes * sum_candidate_bytes` cells over
+/// `bytes = sum_query_bytes + sum_candidate_bytes`.
+fn crossproduct_work_bytes(full_view: &BytesTapeView<u64>, side: usize) -> WorkUnits {
     let (sum_query, sum_candidate) = (0..side).fold((0u64, 0u64), |(query, candidate), index| {
         (
             query + full_view[index].len() as u64,
             candidate + full_view[side + index].len() as u64,
         )
     });
-    (sum_query * sum_candidate, sum_query + sum_candidate)
+    WorkUnits::new(sum_query * sum_candidate, Bytes(sum_query + sum_candidate))
 }
 
 /// Work spanned by the diagonal `(query_i, candidate_i)` pairs of the `[0, side)` and
 /// `[side, 2*side)` slices, which is what the one-pair-per-call baselines score:
 /// `elements = sum(len_query * len_candidate)`, `bytes = sum(len_query + len_candidate)`.
 fn diagonal_work_bytes(full_view: &BytesTapeView<u64>, side: usize) -> WorkUnits {
-    (0..side).fold(WorkUnits::new(0, 0), |accumulated, index| {
+    (0..side).fold(WorkUnits::default(), |accumulated, index| {
         let query = &full_view[index];
         let candidate = &full_view[side + index];
         WorkUnits::new(
             accumulated.elements + (query.len() * candidate.len()) as u64,
-            accumulated.bytes + (query.len() + candidate.len()) as u64,
+            Bytes(accumulated.bytes.0 + (query.len() + candidate.len()) as u64),
         )
     })
 }
 
-/// Sums the character lengths of a `[0, side)` query slice and `[side, 2*side)` candidate slice of
-/// a chars view, returning `(cross_product_cells, total_bytes)` where
-/// `cells = sum_query_chars * sum_candidate_chars`. The byte total mirrors the bytes view (UTF-8
-/// byte length) for the secondary GB/s metric.
-fn crossproduct_metrics_chars(full_view: &CharsTapeView<u64>, side: usize) -> (u64, u64) {
+/// Work of the cross-product of a `[0, side)` query slice and `[side, 2*side)` candidate slice of
+/// a chars view: `elements = sum_query_chars * sum_candidate_chars` cells, over the UTF-8 bytes
+/// of both slices for the secondary byte rate.
+fn crossproduct_work_chars(full_view: &CharsTapeView<u64>, side: usize) -> WorkUnits {
     let mut sum_query_chars = 0u64;
     let mut sum_candidate_chars = 0u64;
     let mut sum_query_bytes = 0u64;
@@ -206,9 +189,9 @@ fn crossproduct_metrics_chars(full_view: &CharsTapeView<u64>, side: usize) -> (u
         sum_query_bytes += query.len() as u64;
         sum_candidate_bytes += candidate.len() as u64;
     }
-    (
+    WorkUnits::new(
         sum_query_chars * sum_candidate_chars,
-        sum_query_bytes + sum_candidate_bytes,
+        Bytes(sum_query_bytes + sum_candidate_bytes),
     )
 }
 
@@ -222,10 +205,10 @@ fn chars_candidate_vec<'a>(full_view: &'a CharsTapeView<u64>, side: usize) -> Ve
     (0..side).map(|index| &full_view[side + index]).collect()
 }
 
-fn bench_similarities() {
+fn bench_similarities(settings: &Settings) {
     // Load dataset using unified loader
-    let tape_bytes = resolve_dataset("similarities").unwrap_nice();
-    log_timing_overhead();
+    let tape_bytes = resolve_dataset(settings).unwrap_nice();
+    log_timing_overhead(settings);
     let tape = tape_bytes
         .as_chars()
         .expect("Dataset must be valid UTF-8 for similarities");
@@ -236,13 +219,12 @@ fn bench_similarities() {
 
     // Core-aware batch sizing: each variant scales `STRINGWARS_BATCH_PER_CORE` by its own core count.
     // A CPU core is one core; a GPU streaming multiprocessor (SM) is one core.
-    let topology = fu::Topology::new().expect("Failed to probe CPU topology");
-    let num_cores = resolve_core_count(topology.logical_cores_count());
-    let batch_single_cpu = auto_batch_size(1, DEFAULT_BATCH_PER_CORE);
-    let batch_multi_cpu = auto_batch_size(num_cores, DEFAULT_BATCH_PER_CORE);
-    let batch_gpu = auto_batch_size(
-        gpu_multiprocessor_count(0).unwrap_or(64),
-        DEFAULT_BATCH_PER_CORE,
+    let threads = settings.threads;
+    let batch_single_cpu = batch_size(settings, 1);
+    let batch_multi_cpu = batch_size(settings, threads.0.get());
+    let batch_gpu = batch_size(
+        settings,
+        gpu_multiprocessor_count(0).unwrap_or(FALLBACK_GPU_MULTIPROCESSORS),
     );
 
     let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
@@ -258,10 +240,10 @@ fn bench_similarities() {
         .try_into()
         .expect("Failed to convert to CharsTapeView");
 
-    let tape_len = units_tape.len();
-    let side_single_cpu = crossproduct_side(batch_single_cpu, tape_len);
-    let side_multi_cpu = crossproduct_side(batch_multi_cpu, tape_len);
-    let side_gpu = crossproduct_side(batch_gpu, tape_len);
+    let token_count = units_tape.len();
+    let side_single_cpu = crossproduct_side(batch_single_cpu, token_count);
+    let side_multi_cpu = crossproduct_side(batch_multi_cpu, token_count);
+    let side_gpu = crossproduct_side(batch_gpu, token_count);
 
     // Log benchmark-specific configuration
     println!("Benchmark configuration:");
@@ -271,31 +253,32 @@ fn bench_similarities() {
     );
     println!(
         "- {}-core batch: {} ({}x{} cross-product)",
-        num_cores, batch_multi_cpu, side_multi_cpu, side_multi_cpu
+        threads, batch_multi_cpu, side_multi_cpu, side_multi_cpu
     );
     println!(
         "- GPU batch: {} ({}x{} cross-product)",
         batch_gpu, side_gpu, side_gpu
     );
-    println!("- Tokens available: {}", tape_len);
+    println!("- Tokens available: {}", token_count);
     println!();
 
     // One thread pool per device width for the whole run: each `DeviceScope` spins up its own,
     // and the three benchmark groups used to build a fresh set apiece.
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
     let cpu_parallel =
-        DeviceScope::cpu_cores(num_cores).expect("Failed to create multi-core device scope");
+        DeviceScope::cpu_cores(threads.0.get()).expect("Failed to create multi-core device scope");
     let maybe_gpu = DeviceScope::gpu_device(0).ok();
 
     // Uniform cost benchmarks (classic Levenshtein: match=0, mismatch=1, open=1, extend=1)
     println!("# uniform");
     perform_uniform_benchmarks(
+        settings,
         &tape_bytes_view,
         &chars_view,
         &cpu_single,
         &cpu_parallel,
         maybe_gpu.as_ref(),
-        num_cores,
+        threads,
         side_single_cpu,
         side_multi_cpu,
         side_gpu,
@@ -306,12 +289,13 @@ fn bench_similarities() {
     for (group_name, open_cost, extend_cost) in [("linear", -2, -2), ("affine", -5, -1)] {
         println!("# {}", group_name);
         perform_score_benchmarks(
+            settings,
             group_name,
             &tape_bytes_view,
             &cpu_single,
             &cpu_parallel,
             maybe_gpu.as_ref(),
-            num_cores,
+            threads,
             side_single_cpu,
             side_multi_cpu,
             side_gpu,
@@ -323,12 +307,13 @@ fn bench_similarities() {
 
 /// Uniform cost benchmarks: Classic Levenshtein distance (match=0, mismatch=1, open=1, extend=1)
 fn perform_uniform_benchmarks(
+    settings: &Settings,
     tape_bytes_view: &BytesTapeView<u64>,
     chars_view: &CharsTapeView<u64>,
     cpu_single: &DeviceScope,
     cpu_parallel: &DeviceScope,
     maybe_gpu: Option<&DeviceScope>,
-    num_cores: usize,
+    threads: Threads,
     side_single_cpu: usize,
     side_multi_cpu: usize,
     side_gpu: usize,
@@ -353,17 +338,18 @@ fn perform_uniform_benchmarks(
     // depending on how far the deadline happened to reach.
     let baseline_side = side_single_cpu;
     let baseline_chars_work =
-        (0..baseline_side).fold(WorkUnits::new(0, 0), |accumulated, index| {
+        (0..baseline_side).fold(WorkUnits::default(), |accumulated, index| {
             let query = &chars_view[index];
             let candidate = &chars_view[baseline_side + index];
             WorkUnits::new(
                 accumulated.elements + (query.chars().count() * candidate.chars().count()) as u64,
-                accumulated.bytes + (query.len() + candidate.len()) as u64,
+                Bytes(accumulated.bytes.0 + (query.len() + candidate.len()) as u64),
             )
         });
     let baseline_pass_work = diagonal_work_bytes(tape_bytes_view, baseline_side);
     {
         measure(
+            settings,
             "uniform/rapidfuzz::levenshtein<Bytes,1cpu>",
             MeasureSpec::new(Unit::Cups, baseline_pass_work),
             || {
@@ -381,6 +367,7 @@ fn perform_uniform_benchmarks(
 
     {
         measure(
+            settings,
             "uniform/rapidfuzz::levenshtein<Chars,1cpu>",
             MeasureSpec::new(Unit::Cups, baseline_chars_work),
             || {
@@ -395,6 +382,7 @@ fn perform_uniform_benchmarks(
 
     {
         measure(
+            settings,
             "uniform/bio::levenshtein<1cpu>",
             MeasureSpec::new(Unit::Cups, baseline_pass_work),
             || {
@@ -409,15 +397,15 @@ fn perform_uniform_benchmarks(
 
     // StringZilla byte-level Levenshtein distance (uniform costs: 0,1,1,1)
     {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_single_cpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_single_cpu);
         let mut matrix = UnifiedMat::<usize>::try_allocate(side_single_cpu, side_single_cpu)
             .expect("Failed to allocate LevenshteinDistances matrix (single)");
         measure_crossproduct_bytes_usize(
+            settings,
             "uniform/stringzillas::LevenshteinDistances<1cpu>",
             tape_bytes_view,
             side_single_cpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work),
             &mut matrix,
             |queries, candidates, matrix| {
                 lev_single
@@ -433,18 +421,15 @@ fn perform_uniform_benchmarks(
     }
 
     {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_multi_cpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_multi_cpu);
         let mut matrix = UnifiedMat::<usize>::try_allocate(side_multi_cpu, side_multi_cpu)
             .expect("Failed to allocate LevenshteinDistances matrix (parallel)");
         measure_crossproduct_bytes_usize(
-            &format!(
-                "uniform/stringzillas::LevenshteinDistances<{}cpu>",
-                num_cores
-            ),
+            settings,
+            &format!("uniform/stringzillas::LevenshteinDistances<{threads}cpu>"),
             tape_bytes_view,
             side_multi_cpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work).with_concurrency(threads),
             &mut matrix,
             |queries, candidates, matrix| {
                 lev_parallel
@@ -461,15 +446,15 @@ fn perform_uniform_benchmarks(
 
     // StringZilla UTF-8 Levenshtein Distance (uniform costs: 0,1,1,1)
     {
-        let (cells, bytes) = crossproduct_metrics_chars(chars_view, side_single_cpu);
+        let work = crossproduct_work_chars(chars_view, side_single_cpu);
         let mut matrix = UnifiedMat::<usize>::try_allocate(side_single_cpu, side_single_cpu)
             .expect("Failed to allocate LevenshteinDistancesUtf8 matrix (single)");
         measure_crossproduct_chars_usize(
+            settings,
             "uniform/stringzillas::LevenshteinDistancesUtf8<1cpu>",
             chars_view,
             side_single_cpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work),
             &mut matrix,
             |queries, candidates, matrix| {
                 lev_utf8_single
@@ -485,18 +470,15 @@ fn perform_uniform_benchmarks(
     }
 
     {
-        let (cells, bytes) = crossproduct_metrics_chars(chars_view, side_multi_cpu);
+        let work = crossproduct_work_chars(chars_view, side_multi_cpu);
         let mut matrix = UnifiedMat::<usize>::try_allocate(side_multi_cpu, side_multi_cpu)
             .expect("Failed to allocate LevenshteinDistancesUtf8 matrix (parallel)");
         measure_crossproduct_chars_usize(
-            &format!(
-                "uniform/stringzillas::LevenshteinDistancesUtf8<{}cpu>",
-                num_cores
-            ),
+            settings,
+            &format!("uniform/stringzillas::LevenshteinDistancesUtf8<{threads}cpu>"),
             chars_view,
             side_multi_cpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work).with_concurrency(threads),
             &mut matrix,
             |queries, candidates, matrix| {
                 lev_utf8_parallel
@@ -512,15 +494,15 @@ fn perform_uniform_benchmarks(
     }
 
     if let (Some(gpu), Some(engine)) = (maybe_gpu, maybe_lev_gpu.as_ref()) {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_gpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_gpu);
         let mut matrix = UnifiedMat::<usize>::try_allocate(side_gpu, side_gpu)
             .expect("Failed to allocate LevenshteinDistances matrix (GPU)");
         measure_crossproduct_bytes_usize(
+            settings,
             "uniform/stringzillas::LevenshteinDistances<1gpu>",
             tape_bytes_view,
             side_gpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work),
             &mut matrix,
             |queries, candidates, matrix| {
                 engine
@@ -534,16 +516,16 @@ fn perform_uniform_benchmarks(
 
     // GPU UTF-8 Levenshtein: the engine may decline inputs beyond its supported length, returning an error we skip on.
     if let (Some(gpu), Some(engine)) = (maybe_gpu, maybe_lev_utf8_gpu.as_ref()) {
-        let (cells, bytes) = crossproduct_metrics_chars(chars_view, side_gpu);
+        let work = crossproduct_work_chars(chars_view, side_gpu);
         let queries = chars_query_vec(chars_view, side_gpu);
         let candidates = chars_candidate_vec(chars_view, side_gpu);
         match engine.compute(gpu, &queries, &candidates) {
             Ok(mut matrix) => measure_crossproduct_chars_usize(
+                settings,
                 "uniform/stringzillas::LevenshteinDistancesUtf8<1gpu>",
                 chars_view,
                 side_gpu,
-                cells,
-                bytes,
+                MeasureSpec::new(Unit::Cups, work),
                 &mut matrix,
                 |queries, candidates, matrix| {
                     engine
@@ -553,9 +535,9 @@ fn perform_uniform_benchmarks(
                         });
                 },
             ),
-            Err(error) => eprintln!(
-                "uniform/stringzillas::LevenshteinDistancesUtf8<1gpu>: SKIPPED ({})",
-                error
+            Err(error) => note_unavailable(
+                "uniform/stringzillas::LevenshteinDistancesUtf8<1gpu>",
+                &error.to_string(),
             ),
         }
     }
@@ -580,12 +562,13 @@ fn max_token_len(
 /// NW/SW score benchmarks for one gap-cost group. `linear` and `affine` differ only in the
 /// `(open_cost, extend_cost)` pair and the label, so they share this body.
 fn perform_score_benchmarks(
+    settings: &Settings,
     group_name: &str,
     tape_bytes_view: &BytesTapeView<u64>,
     cpu_single: &DeviceScope,
     cpu_parallel: &DeviceScope,
     maybe_gpu: Option<&DeviceScope>,
-    num_cores: usize,
+    threads: Threads,
     side_single_cpu: usize,
     side_multi_cpu: usize,
     side_gpu: usize,
@@ -654,6 +637,7 @@ fn perform_score_benchmarks(
             },
         );
         measure(
+            settings,
             &format!("{group_name}/bio::pairwise::global<1cpu>"),
             MeasureSpec::new(Unit::Cups, baseline_work),
             || {
@@ -681,6 +665,7 @@ fn perform_score_benchmarks(
             },
         );
         measure(
+            settings,
             &format!("{group_name}/bio::pairwise::local<1cpu>"),
             MeasureSpec::new(Unit::Cups, baseline_work),
             || {
@@ -695,15 +680,15 @@ fn perform_score_benchmarks(
 
     // Needleman-Wunsch (Global alignment)
     {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_single_cpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_single_cpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_single_cpu, side_single_cpu)
             .expect("Failed to allocate NeedlemanWunschScores matrix (single)");
         measure_crossproduct_bytes_isize(
+            settings,
             &format!("{group_name}/stringzillas::NeedlemanWunschScores<1cpu>"),
             tape_bytes_view,
             side_single_cpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work),
             &mut matrix,
             |queries, candidates, matrix| {
                 nw_single
@@ -719,18 +704,15 @@ fn perform_score_benchmarks(
     }
 
     {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_multi_cpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_multi_cpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_multi_cpu, side_multi_cpu)
             .expect("Failed to allocate NeedlemanWunschScores matrix (parallel)");
         measure_crossproduct_bytes_isize(
-            &format!(
-                "{group_name}/stringzillas::NeedlemanWunschScores<{}cpu>",
-                num_cores
-            ),
+            settings,
+            &format!("{group_name}/stringzillas::NeedlemanWunschScores<{threads}cpu>"),
             tape_bytes_view,
             side_multi_cpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work).with_concurrency(threads),
             &mut matrix,
             |queries, candidates, matrix| {
                 nw_parallel
@@ -746,15 +728,15 @@ fn perform_score_benchmarks(
     }
 
     if let (Some(gpu), Some(engine)) = (maybe_gpu, maybe_nw_gpu.as_ref()) {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_gpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_gpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_gpu, side_gpu)
             .expect("Failed to allocate NeedlemanWunschScores matrix (GPU)");
         measure_crossproduct_bytes_isize(
+            settings,
             &format!("{group_name}/stringzillas::NeedlemanWunschScores<1gpu>"),
             tape_bytes_view,
             side_gpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work),
             &mut matrix,
             |queries, candidates, matrix| {
                 engine
@@ -768,15 +750,15 @@ fn perform_score_benchmarks(
 
     // Smith-Waterman (Local alignment)
     {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_single_cpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_single_cpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_single_cpu, side_single_cpu)
             .expect("Failed to allocate SmithWatermanScores matrix (single)");
         measure_crossproduct_bytes_isize(
+            settings,
             &format!("{group_name}/stringzillas::SmithWatermanScores<1cpu>"),
             tape_bytes_view,
             side_single_cpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work),
             &mut matrix,
             |queries, candidates, matrix| {
                 sw_single
@@ -792,18 +774,15 @@ fn perform_score_benchmarks(
     }
 
     {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_multi_cpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_multi_cpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_multi_cpu, side_multi_cpu)
             .expect("Failed to allocate SmithWatermanScores matrix (parallel)");
         measure_crossproduct_bytes_isize(
-            &format!(
-                "{group_name}/stringzillas::SmithWatermanScores<{}cpu>",
-                num_cores
-            ),
+            settings,
+            &format!("{group_name}/stringzillas::SmithWatermanScores<{threads}cpu>"),
             tape_bytes_view,
             side_multi_cpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work).with_concurrency(threads),
             &mut matrix,
             |queries, candidates, matrix| {
                 sw_parallel
@@ -819,15 +798,15 @@ fn perform_score_benchmarks(
     }
 
     if let (Some(gpu), Some(engine)) = (maybe_gpu, maybe_sw_gpu.as_ref()) {
-        let (cells, bytes) = crossproduct_metrics_bytes(tape_bytes_view, side_gpu);
+        let work = crossproduct_work_bytes(tape_bytes_view, side_gpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_gpu, side_gpu)
             .expect("Failed to allocate SmithWatermanScores matrix (GPU)");
         measure_crossproduct_bytes_isize(
+            settings,
             &format!("{group_name}/stringzillas::SmithWatermanScores<1gpu>"),
             tape_bytes_view,
             side_gpu,
-            cells,
-            bytes,
+            MeasureSpec::new(Unit::Cups, work),
             &mut matrix,
             |queries, candidates, matrix| {
                 engine
@@ -840,10 +819,12 @@ fn perform_score_benchmarks(
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
-    bench_similarities();
+    print_machine();
+    let settings = Settings::read("similarities");
+    settings.print();
+    bench_similarities(&settings);
 
-    finish();
+    finish()
 }

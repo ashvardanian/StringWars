@@ -6,8 +6,8 @@ Low-level memory benchmarks: lookup-table transforms, PRNG fills, memset, memcpy
 STRINGWARS_DATASET=README.md cargo bench --features bench_memory --bench bench_memory
 ```
 "#]
-use std::error::Error;
 use std::hint::black_box;
+use std::process::ExitCode;
 use std::ptr;
 use std::slice;
 
@@ -16,51 +16,39 @@ use stringzilla::sz;
 use zeroize::Zeroize;
 
 use stringwars::{
-    finish, install_panic_hook, log_stringzilla_metadata, log_timing_overhead, measure,
-    note_working_set, read_within_budget, suite_settings, token_ranges, MeasureSpec, ResultExt,
-    Unit, WorkUnits,
+    finish, install_panic_hook, log_timing_overhead, measure, note_working_set, print_machine,
+    read_dataset, working_set_ranges, Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
 };
 
 /// Cycles `tokens` by a local cursor, calls `work` on the current mutable token, and
 /// reports throughput as bytes equal to the token length.  This avoids repeating the
 /// `{ let mut cursor = 0usize; measure_throughput(…) }` block for every single-buffer
 /// variant that transforms one token in place.
-fn measure_mut_token<Work: FnMut(&mut [u8])>(name: &str, tokens: &mut [&mut [u8]], mut work: Work) {
+fn measure_mut_token<Work: FnMut(&mut [u8])>(
+    settings: &Settings,
+    name: &str,
+    tokens: &mut [&mut [u8]],
+    mut work: Work,
+) {
     let pass = WorkUnits::new(
         tokens.len() as u64,
-        tokens.iter().map(|token| token.len() as u64).sum(),
+        Bytes(tokens.iter().map(|token| token.len() as u64).sum()),
     );
-    measure(name, MeasureSpec::new(Unit::Bytes, pass), || {
+    measure(settings, name, MeasureSpec::new(Unit::Bytes, pass), || {
         for token in tokens.iter_mut() {
             work(token);
         }
     });
 }
 
-/// Reads the raw dataset bytes named by `STRINGWARS_DATASET`.
-///
-/// The in-place LUT/translate/PRNG benchmarks mutate their tokens, so they need owned,
-/// mutable bytes and mutable token slices; the shared `stringwars::load_dataset` returns an
-/// immutable, leaked tape and cannot be used here.
-pub fn load_dataset_bytes() -> Result<Vec<u8>, Box<dyn Error>> {
-    let settings = suite_settings("memory");
-    let path = settings.dataset.ok_or("No dataset for suite 'memory'")?;
-    Ok(read_within_budget(
-        &path,
-        settings.budget_bytes,
-        &settings.tokens,
-    )?)
-}
-
 /// Borrows the working set as mutable token slices.
 ///
-/// The split rule itself lives in `stringwars::token_ranges`; this only turns the
-/// ranges into disjoint `&mut` slices. The suite used to carry its own copy of the
-/// rule, and the copy had drifted: it ignored `STRINGWARS_UNIQUE` and its `file`
-/// arm applied neither the byte budget nor the UTF-8 backoff.
-pub fn tokenize_mut(haystack: &mut [u8]) -> Result<Vec<&mut [u8]>, Box<dyn Error>> {
-    let settings = suite_settings("memory");
-    let ranges = token_ranges(haystack, &settings.tokens, settings.budget_bytes);
+/// The split and deduplication rules live in `stringwars::working_set_ranges`; this only
+/// turns the ranges into disjoint `&mut` slices. The suite used to carry its own copy of the
+/// rule, and the copy had drifted. The in-place benchmarks mutate their tokens, so they
+/// need these owned, mutable slices rather than the shared immutable tape.
+pub fn tokenize_mut<'a>(settings: &Settings, haystack: &'a mut [u8]) -> Vec<&'a mut [u8]> {
+    let ranges = working_set_ranges(haystack, settings);
 
     // Hand out one disjoint `&mut` per range by splitting the tail repeatedly.
     let mut rest = haystack;
@@ -73,13 +61,13 @@ pub fn tokenize_mut(haystack: &mut [u8]) -> Result<Vec<&mut [u8]>, Box<dyn Error
         consumed = range.end;
         rest = tail;
     }
-    Ok(tokens)
+    tokens
 }
 
 /// Benchmarks in-place lookup-table transforms, transforming one token per call and cycling the
 /// dataset. Throughput is reported as bytes/s, matching the original `Throughput::Bytes` over the
 /// sum of token lengths.
-fn bench_lookup_table(tokens: &mut [&mut [u8]]) {
+fn bench_lookup_table(settings: &Settings, tokens: &mut [&mut [u8]]) {
     let lookup_invert_case: [u8; 256] = core::array::from_fn(|index| match index as u8 {
         byte @ b'A'..=b'Z' => byte + 32,
         byte @ b'a'..=b'z' => byte - 32,
@@ -87,6 +75,7 @@ fn bench_lookup_table(tokens: &mut [&mut [u8]]) {
     });
 
     measure_mut_token(
+        settings,
         "lookup-table/stringzilla::lookup_inplace",
         tokens,
         |token| {
@@ -95,7 +84,7 @@ fn bench_lookup_table(tokens: &mut [&mut [u8]]) {
         },
     );
 
-    measure_mut_token("lookup-table/serial", tokens, |token| {
+    measure_mut_token(settings, "lookup-table/serial", tokens, |token| {
         for byte in token.iter_mut() {
             *byte = lookup_invert_case[*byte as usize];
         }
@@ -106,8 +95,9 @@ fn bench_lookup_table(tokens: &mut [&mut [u8]]) {
 /// Benchmarks random-string generation, filling one token per call and cycling the dataset.
 /// Throughput is reported as bytes/s, matching the original `Throughput::Bytes` over the sum of
 /// token lengths.
-fn bench_generate_random(tokens: &mut [&mut [u8]]) {
+fn bench_generate_random(settings: &Settings, tokens: &mut [&mut [u8]]) {
     measure_mut_token(
+        settings,
         "generate-random/stringzilla::fill_random",
         tokens,
         |token| {
@@ -115,10 +105,15 @@ fn bench_generate_random(tokens: &mut [&mut [u8]]) {
         },
     );
 
-    measure_mut_token("generate-random/getrandom::fill", tokens, |token| {
-        getrandom::fill(token).expect("getrandom failed");
-        black_box(&token);
-    });
+    measure_mut_token(
+        settings,
+        "generate-random/getrandom::fill",
+        tokens,
+        |token| {
+            getrandom::fill(token).expect("getrandom failed");
+            black_box(&token);
+        },
+    );
 
     // Benchmark using `rand_chacha::ChaCha20Rng`. The generator is seeded once, outside
     // the timed region: `sz::fill_random` constructs nothing per token, so seeding per
@@ -126,6 +121,7 @@ fn bench_generate_random(tokens: &mut [&mut [u8]]) {
     {
         let mut random_generator = rand_chacha::ChaCha20Rng::from_seed([0u8; 32]);
         measure_mut_token(
+            settings,
             "generate-random/rand_chacha::ChaCha20Rng",
             tokens,
             |token| {
@@ -138,6 +134,7 @@ fn bench_generate_random(tokens: &mut [&mut [u8]]) {
     {
         let mut random_generator = rand_xoshiro::Xoshiro128Plus::from_seed([0u8; 16]);
         measure_mut_token(
+            settings,
             "generate-random/rand_xoshiro::Xoshiro128Plus",
             tokens,
             |token| {
@@ -153,29 +150,29 @@ fn bench_generate_random(tokens: &mut [&mut [u8]]) {
 /// Fills the tokens themselves rather than per-row `Vec<Vec<u8>>` copies: the generators
 /// above have already overwritten every byte, and the copies cost one allocation per token
 /// plus a corpus-sized clone for each row.
-fn bench_memset(tokens: &mut [&mut [u8]]) {
+fn bench_memset(settings: &Settings, tokens: &mut [&mut [u8]]) {
     const FILL_VALUE: u8 = 0xAA;
 
-    measure_mut_token("memset/stringzilla::fill", tokens, |buffer| {
+    measure_mut_token(settings, "memset/stringzilla::fill", tokens, |buffer| {
         sz::fill(buffer, FILL_VALUE);
         black_box(&buffer);
     });
 
-    measure_mut_token("memset/std::ptr::write_bytes", tokens, |buffer| {
+    measure_mut_token(settings, "memset/std::ptr::write_bytes", tokens, |buffer| {
         unsafe {
             ptr::write_bytes(buffer.as_mut_ptr(), FILL_VALUE, buffer.len());
         }
         black_box(&buffer);
     });
 
-    measure_mut_token("memset/slice::fill", tokens, |buffer| {
+    measure_mut_token(settings, "memset/slice::fill", tokens, |buffer| {
         buffer.fill(FILL_VALUE);
         black_box(&buffer);
     });
 
     // `zeroize` writes zeros through volatile stores, so it is a memset with a fixed value
     // rather than a generator; it used to sit in the random-generation group.
-    measure_mut_token("memset/zeroize::zeroize", tokens, |buffer| {
+    measure_mut_token(settings, "memset/zeroize::zeroize", tokens, |buffer| {
         buffer.zeroize();
         black_box(&buffer);
     });
@@ -185,7 +182,7 @@ fn bench_memset(tokens: &mut [&mut [u8]]) {
 ///
 /// Sources are the tokens and destinations one arena split into matching slices. The previous
 /// shape held three corpus-sized `Vec<Vec<u8>>` at once — a separate allocation per token.
-fn bench_memcpy(tokens: &[&mut [u8]]) {
+fn bench_memcpy(settings: &Settings, tokens: &[&mut [u8]]) {
     let total_bytes: usize = tokens.iter().map(|token| token.len()).sum();
     if total_bytes == 0 {
         return;
@@ -198,9 +195,10 @@ fn bench_memcpy(tokens: &[&mut [u8]]) {
         destinations.push(head);
         rest = tail;
     }
-    let pass = WorkUnits::new(tokens.len() as u64, total_bytes as u64);
+    let pass = WorkUnits::new(tokens.len() as u64, Bytes(total_bytes as u64));
 
     measure(
+        settings,
         "memcpy/stringzilla::copy",
         MeasureSpec::new(Unit::Bytes, pass),
         || {
@@ -212,6 +210,7 @@ fn bench_memcpy(tokens: &[&mut [u8]]) {
     );
 
     measure(
+        settings,
         "memcpy/slice::copy_from_slice",
         MeasureSpec::new(Unit::Bytes, pass),
         || {
@@ -223,6 +222,7 @@ fn bench_memcpy(tokens: &[&mut [u8]]) {
     );
 
     measure(
+        settings,
         "memcpy/std::ptr::copy_nonoverlapping",
         MeasureSpec::new(Unit::Bytes, pass),
         || {
@@ -239,7 +239,7 @@ fn bench_memcpy(tokens: &[&mut [u8]]) {
 /// Benchmarks memory-move operations, shifting one buffer per call and cycling the dataset.
 /// Only tokens longer than `SHIFT` participate, and the per-call byte count is `len - SHIFT`,
 /// matching the original `Throughput::Bytes(sum(len - SHIFT))` accounting.
-fn bench_memmove(tokens: &mut [&mut [u8]]) {
+fn bench_memmove(settings: &Settings, tokens: &mut [&mut [u8]]) {
     const SHIFT: usize = 8;
     // The tokens themselves, shifted in place: the shorter ones are filtered out here so the
     // timed loop carries no length test.
@@ -253,10 +253,11 @@ fn bench_memmove(tokens: &mut [&mut [u8]]) {
     }
     let pass = WorkUnits::new(
         movable.len() as u64,
-        movable.iter().map(|b| (b.len() - SHIFT) as u64).sum(),
+        Bytes(movable.iter().map(|b| (b.len() - SHIFT) as u64).sum()),
     );
 
     measure(
+        settings,
         "memmove/stringzilla::move_",
         MeasureSpec::new(Unit::Bytes, pass),
         || {
@@ -273,6 +274,7 @@ fn bench_memmove(tokens: &mut [&mut [u8]]) {
     );
 
     measure(
+        settings,
         "memmove/std::ptr::copy",
         MeasureSpec::new(Unit::Bytes, pass),
         || {
@@ -287,6 +289,7 @@ fn bench_memmove(tokens: &mut [&mut [u8]]) {
     );
 
     measure(
+        settings,
         "memmove/slice::copy_within",
         MeasureSpec::new(Unit::Bytes, pass),
         || {
@@ -299,32 +302,34 @@ fn bench_memmove(tokens: &mut [&mut [u8]]) {
     );
 }
 
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
+    print_machine();
+    let settings = Settings::read("memory");
+    settings.print();
 
-    let mut dataset = load_dataset_bytes().unwrap_nice();
-    let mut tokens = tokenize_mut(&mut dataset).unwrap_nice();
+    let mut dataset = read_dataset(&settings).unwrap_nice();
+    let mut tokens = tokenize_mut(&settings, &mut dataset);
     if tokens.is_empty() {
         panic!("No tokens found in the dataset.");
     }
-    note_working_set("memory", &tokens);
-    log_timing_overhead();
+    note_working_set(&settings, &tokens);
+    log_timing_overhead(&settings);
 
     println!("# lookup-table");
-    bench_lookup_table(&mut tokens[..]);
+    bench_lookup_table(&settings, &mut tokens[..]);
 
     println!("# generate-random");
-    bench_generate_random(&mut tokens[..]);
+    bench_generate_random(&settings, &mut tokens[..]);
 
     println!("# memset");
-    bench_memset(&mut tokens[..]);
+    bench_memset(&settings, &mut tokens[..]);
 
     println!("# memcpy");
-    bench_memcpy(&tokens[..]);
+    bench_memcpy(&settings, &tokens[..]);
 
     println!("# memmove");
-    bench_memmove(&mut tokens[..]);
+    bench_memmove(&settings, &mut tokens[..]);
 
-    finish();
+    finish()
 }

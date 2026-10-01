@@ -10,7 +10,7 @@ For biological sequences, the Needleman-Wunsch and Smith-Waterman algorithms are
 Each of those has two flavors - with linear and affine gap penalties, also known as the "Gotoh" variation.
 
 Performance is measured in MCUPS (Million Cell Updates Per Second).
-Both harnesses (`bench.rs` and `bench.py`) score an all-pairs cross-product: a `side x side` matrix of disjoint query and candidate batches, where each axis is `round(sqrt(STRINGWARS_BATCH_PER_CORE * cores))`.
+Both harnesses (`bench.rs` and `bench.py`) score an all-pairs cross-product: a side × side matrix of disjoint query and candidate batches, where each axis is round(√(`STRINGWARS_BATCH_PER_CORE` × cores)).
 A CPU core and a GPU streaming-multiprocessor (SM) each count as one core, so `<1xSPR>` runs one core, `<16xSPR>` all sixteen, and `<H100>` feeds the device a batch sized across the H100's 132 SMs.
 MCUPS is the aggregate cell-update count over the whole matrix divided by the wall-clock time.
 
@@ -20,7 +20,7 @@ Datasets:
 - __XLSum words / lines__ — highly non-uniform multilingual text: ~5-byte word tokens and ~3.2 KB article lines.
 
 The synthetic-DNA and word runs use `STRINGWARS_BATCH_PER_CORE=16384` to saturate the GPU (`<1xSPR>` side 128; `<16xSPR>` side 512; `<H100>` side 1,471).
-The ~3.2 KB XLSum-lines run uses `STRINGWARS_BATCH_PER_CORE=256` (`<H100>` side 184) because each line-vs-line pair carries ~1,000x more cells than a word pair, so a smaller batch already saturates the device and keeps the single-core runs tractable.
+The ~3.2 KB XLSum-lines run uses `STRINGWARS_BATCH_PER_CORE=256` (`<H100>` side 184) because each line-vs-line pair carries ~1,000× more cells than a word pair, so a smaller batch already saturates the device and keeps the single-core runs tractable.
 StringZilla scores every column with the same unary 32-class match/mismatch costs, and the `bio` / `biopython` baselines use the same unary match/mismatch scoring, so the cross-language comparison stays apples-to-apples.
 
 ## Levenshtein Distance

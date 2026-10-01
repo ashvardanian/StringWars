@@ -1,19 +1,12 @@
-# /// script
-# requires-python = ">=3.13"
-# dependencies = [
-#   "stringzilla>=5.0.0",
-#   "xxhash",
-#   "blake3",
-#   "google-crc32c",
-#   "mmh3",
-#   "cityhash",
-# ]
-# ///
-"""Hash benchmarks in Python: stateless, stateful and checksum digests. Mirrors `hash/bench.rs`."""
+"""Hash benchmarks in Python: stateless, stateful and checksum digests. Mirrors `hash/bench.rs`.
+
+Run from the repository root, configured only through `STRINGWARS_*` variables:
+
+    STRINGWARS_DATASET=README.md uv run --group hash hash/bench.py
+"""
 
 import argparse
 import hashlib
-import sys
 from collections.abc import Callable
 from importlib.metadata import version as pkg_version
 from typing import Any
@@ -25,32 +18,23 @@ import mmh3
 import stringzilla as sz
 import xxhash
 
-from utils import (
+from stringwars import (
     MeasureSpec,
-    add_common_args,
+    Settings,
     finish,
     log_dataset,
     log_timing_overhead,
     measure,
     pass_over,
+    print_machine,
+    print_settings,
+    read_settings,
     resolve_dataset,
-    set_filter,
 )
 
 
-def log_system_info():
-    """Log Python version and hash library versions."""
-    print(f"- Python: {sys.version.split()[0]}, {sys.platform}")
-    print(f"- StringZilla: {sz.__version__} with {sz.__capabilities_str__}")
-    print(f"- xxHash: {xxhash.VERSION}")
-    print(f"- Blake3: {blake3.__version__}")
-    print(f"- google-crc32c: {pkg_version('google-crc32c')}")
-    print(f"- mmh3: {pkg_version('mmh3')}")
-    print(f"- cityhash: {pkg_version('cityhash')}")
-    print()  # Add blank line
-
-
 def bench_hash_function(
+    settings: Settings,
     name: str,
     tokens: list[bytes],
     hash_func: Callable[[bytes], Any],
@@ -65,13 +49,14 @@ def bench_hash_function(
     library's own callable wherever one call suffices: an identity wrapper lambda
     measured 1.9x on `sz.hash` and on `xxh3`, and only some rows were paying it.
     """
-    measure(name, work, pass_over(hash_func, tokens))
+    measure(settings, name, work, pass_over(hash_func, tokens))
 
 
 def run_stateless_benchmarks(
+    settings: Settings,
     tokens: list[bytes],
     work: MeasureSpec,
-):
+) -> None:
     print("\nStateless Hash Benchmarks")
 
     # No built-in `hash` row: CPython caches a `bytes` object's hash inside the object, so
@@ -81,28 +66,29 @@ def run_stateless_benchmarks(
     # contenders that recompute, so the row is gone rather than misleading.
 
     # xxHash
-    bench_hash_function("stateless/xxhash.xxh3_64", tokens, xxhash.xxh3_64_intdigest, work)
+    bench_hash_function(settings, "stateless/xxhash.xxh3_64", tokens, xxhash.xxh3_64_intdigest, work)
 
     # StringZilla hashes
-    bench_hash_function("stateless/stringzilla.hash", tokens, sz.hash, work)
+    bench_hash_function(settings, "stateless/stringzilla.hash", tokens, sz.hash, work)
 
     # Google CRC32C (Castagnoli) one-shot
-    bench_hash_function("stateless/google_crc32c.value", tokens, google_crc32c.value, work)
+    bench_hash_function(settings, "stateless/google_crc32c.value", tokens, google_crc32c.value, work)
 
     # MurmurHash3 — stateless
-    bench_hash_function("stateless/mmh3.hash32", tokens, lambda x: mmh3.hash(x, signed=False), work)
-    bench_hash_function("stateless/mmh3.hash64", tokens, lambda x: mmh3.hash64(x, signed=False)[0], work)
-    bench_hash_function("stateless/mmh3.hash128", tokens, lambda x: mmh3.hash128(x, signed=False), work)
+    bench_hash_function(settings, "stateless/mmh3.hash32", tokens, lambda x: mmh3.hash(x, signed=False), work)
+    bench_hash_function(settings, "stateless/mmh3.hash64", tokens, lambda x: mmh3.hash64(x, signed=False)[0], work)
+    bench_hash_function(settings, "stateless/mmh3.hash128", tokens, lambda x: mmh3.hash128(x, signed=False), work)
 
     # CityHash — stateless
-    bench_hash_function("stateless/cityhash.CityHash64", tokens, cityhash.CityHash64, work)
-    bench_hash_function("stateless/cityhash.CityHash128", tokens, cityhash.CityHash128, work)
+    bench_hash_function(settings, "stateless/cityhash.CityHash64", tokens, cityhash.CityHash64, work)
+    bench_hash_function(settings, "stateless/cityhash.CityHash128", tokens, cityhash.CityHash128, work)
 
 
 def bench_stateful_hash(
+    settings: Settings,
     name: str,
     tokens: list[bytes],
-    hasher_factory: Callable,
+    hasher_factory: Callable[[], Any],
     work: MeasureSpec,
 ) -> None:
     """
@@ -117,91 +103,72 @@ def bench_stateful_hash(
         pass_over(hasher.update, tokens)()
         hasher.digest() if hasattr(hasher, "digest") else hasher.intdigest()
 
-    measure(name, work, one_pass)
+    measure(settings, name, work, one_pass)
 
 
 def run_stateful_benchmarks(
+    settings: Settings,
     tokens: list[bytes],
     work: MeasureSpec,
-):
+) -> None:
     print("\nStateful Hash Benchmarks")
 
     # xxHash stateful
-    bench_stateful_hash("stateful/xxhash.xxh3_64", tokens, lambda: xxhash.xxh3_64(), work)
+    bench_stateful_hash(settings, "stateful/xxhash.xxh3_64", tokens, lambda: xxhash.xxh3_64(), work)
 
     # StringZilla stateful hasher
-    bench_stateful_hash("stateful/stringzilla.Hasher", tokens, lambda: sz.Hasher(), work)
+    bench_stateful_hash(settings, "stateful/stringzilla.Hasher", tokens, lambda: sz.Hasher(), work)
 
     # Google CRC32C (Castagnoli) stateful
-    bench_stateful_hash("stateful/google_crc32c.Checksum", tokens, lambda: google_crc32c.Checksum(), work)
+    bench_stateful_hash(settings, "stateful/google_crc32c.Checksum", tokens, lambda: google_crc32c.Checksum(), work)
 
 
 def run_checksum_benchmarks(
+    settings: Settings,
     tokens: list[bytes],
     work: MeasureSpec,
-):
+) -> None:
     print("\nChecksum Hash Benchmarks")
 
     # StringZilla bytesum - reference lower bound
-    bench_hash_function("checksum/stringzilla.bytesum", tokens, sz.bytesum, work)
+    bench_hash_function(settings, "checksum/stringzilla.bytesum", tokens, sz.bytesum, work)
 
     # Blake3 - cryptographic hash
-    bench_hash_function("checksum/blake3.blake3", tokens, lambda x: blake3.blake3(x).digest(), work)
+    bench_hash_function(settings, "checksum/blake3.blake3", tokens, lambda x: blake3.blake3(x).digest(), work)
 
     # SHA256 via hashlib (Python standard library)
-    bench_hash_function("checksum/hashlib.sha256", tokens, lambda x: hashlib.sha256(x).digest(), work)
+    bench_hash_function(settings, "checksum/hashlib.sha256", tokens, lambda x: hashlib.sha256(x).digest(), work)
 
     # SHA256 via StringZilla
-    bench_hash_function("checksum/stringzilla.Sha256", tokens, lambda x: sz.Sha256().update(x).digest(), work)
+    bench_hash_function(settings, "checksum/stringzilla.Sha256", tokens, lambda x: sz.Sha256().update(x).digest(), work)
 
 
-_main_epilog = """
-Examples:
+def main() -> int:
+    argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
-  %(prog)s --dataset README.md --tokens lines
-
-  # Test only specific hash functions
-  %(prog)s --dataset data.txt --tokens lines -k "xxhash|stringzilla"
-
-  # Compare stateless vs stateful hashing
-  %(prog)s --dataset large.txt --tokens words -k "hash"
-
-  # Test cryptographic hash performance
-  %(prog)s --dataset text.txt --tokens lines -k "blake3"
-"""
-
-
-def main():
-    """Main entry point with argument parsing."""
-    parser = argparse.ArgumentParser(
-        description="Benchmark hash functions with StringZilla and other implementations",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_main_epilog,
+    print_machine(
+        {
+            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+            "xxHash": xxhash.VERSION,
+            "Blake3": blake3.__version__,
+            "google-crc32c": pkg_version("google-crc32c"),
+            "mmh3": pkg_version("mmh3"),
+            "cityhash": pkg_version("cityhash"),
+        }
     )
-
-    add_common_args(parser)
-
-    args = parser.parse_args()
-
-    # Compile filter pattern
-    set_filter(args.filter)
-
-    # Resolve the working set from the shared manifest, identically to `utils.rs`.
-    dataset = resolve_dataset("hash", as_bytes=True, dataset_path=args.dataset)
+    settings = read_settings("hash")
+    print_settings(settings)
+    dataset = resolve_dataset(settings)
     tokens = dataset.tokens
     log_dataset(dataset)
-    log_system_info()
 
-    # Run benchmarks
-    work = MeasureSpec(report="bytes", elements=dataset.token_count, total_bytes=dataset.token_bytes)
-    log_timing_overhead()
-    run_stateless_benchmarks(tokens, work)
-    run_stateful_benchmarks(tokens, work)
-    run_checksum_benchmarks(tokens, work)
-
-    finish()
-    return 0
+    work = MeasureSpec(unit="bytes", elements=dataset.token_count, total_bytes=dataset.token_bytes)
+    log_timing_overhead(settings)
+    run_stateless_benchmarks(settings, tokens, work)
+    run_stateful_benchmarks(settings, tokens, work)
+    run_checksum_benchmarks(settings, tokens, work)
+    return finish()
 
 
 if __name__ == "__main__":
-    exit(main())
+    raise SystemExit(main())

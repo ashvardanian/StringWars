@@ -15,13 +15,14 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_encryption --bench ben
 ```
 "#]
 use std::hint::black_box;
+use std::process::ExitCode;
 
 use openssl::symm::{Cipher, Crypter, Mode};
 use stringtape::BytesCowsAuto;
 
 use stringwars::{
-    expect_ok, finish, install_panic_hook, log_stringzilla_metadata, log_timing_overhead, measure,
-    resolve_dataset, MeasureSpec, ResultExt, Unit, WorkUnits,
+    expect_ok, finish, install_panic_hook, log_timing_overhead, measure, print_machine,
+    resolve_dataset, Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
 };
 
 /// The nonce bytes a given token is sealed under: the index little-endian in the
@@ -115,13 +116,14 @@ fn openssl_open(
 }
 
 /// Benchmarks key generation and cipher setup overhead. Each variant builds one key/cipher per
-/// call and cycles for the budget; throughput is reported as bytes/s over the 32-byte key.
-fn bench_key_generation() {
+/// call and cycles until the time limit; throughput is reported as bytes/s over the 32-byte key.
+fn bench_key_generation(settings: &Settings) {
     use ring::aead;
 
     measure(
+        settings,
         "keygen/ring::chacha20poly1305",
-        MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(32)),
+        MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(Bytes(32))),
         || {
             let key_bytes = [0u8; 32]; // 256-bit key
             let key = aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &key_bytes);
@@ -130,8 +132,9 @@ fn bench_key_generation() {
     );
 
     measure(
+        settings,
         "keygen/ring::aes256gcm",
-        MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(32)),
+        MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(Bytes(32))),
         || {
             let key_bytes = [0u8; 32]; // 256-bit key
             let key = aead::UnboundKey::new(&aead::AES_256_GCM, &key_bytes);
@@ -141,8 +144,9 @@ fn bench_key_generation() {
 
     {
         measure(
+            settings,
             "keygen/openssl::chacha20poly1305",
-            MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(32)),
+            MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(Bytes(32))),
             || {
                 let key = [0u8; 32];
                 // ChaCha20-Poly1305 is an AEAD, so OpenSSL requires the 12-byte IV up front; passing `None`
@@ -157,8 +161,9 @@ fn bench_key_generation() {
 
     {
         measure(
+            settings,
             "keygen/openssl::aes256gcm",
-            MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(32)),
+            MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(Bytes(32))),
             || {
                 let key = [0u8; 32];
                 // AES-256-GCM likewise needs its 12-byte IV at construction time (see the ChaCha20 note above).
@@ -172,11 +177,13 @@ fn bench_key_generation() {
 
     {
         use sodiumoxide::crypto::aead::chacha20poly1305_ietf::{self, Key};
+
         measure(
+            settings,
             "keygen/libsodium::chacha20poly1305_ietf",
             MeasureSpec::new(
                 Unit::Bytes,
-                WorkUnits::bytes(chacha20poly1305_ietf::KEYBYTES as u64),
+                WorkUnits::bytes(Bytes(chacha20poly1305_ietf::KEYBYTES as u64)),
             ),
             || {
                 let key = Key([0u8; chacha20poly1305_ietf::KEYBYTES]);
@@ -187,11 +194,13 @@ fn bench_key_generation() {
 
     {
         use sodiumoxide::crypto::aead::xchacha20poly1305_ietf::{self, Key};
+
         measure(
+            settings,
             "keygen/libsodium::xchacha20poly1305_ietf",
             MeasureSpec::new(
                 Unit::Bytes,
-                WorkUnits::bytes(xchacha20poly1305_ietf::KEYBYTES as u64),
+                WorkUnits::bytes(Bytes(xchacha20poly1305_ietf::KEYBYTES as u64)),
             ),
             || {
                 let key = Key([0u8; xchacha20poly1305_ietf::KEYBYTES]);
@@ -202,8 +211,8 @@ fn bench_key_generation() {
 }
 
 /// Benchmarks AEAD encryption (encrypt + authenticate). Each variant encrypts one token per call
-/// and cycles the dataset for the budget; throughput is reported as bytes/s over the plaintext.
-fn bench_encryption(tokens: &BytesCowsAuto) {
+/// and cycles the dataset until the time limit; throughput is reported as bytes/s over the plaintext.
+fn bench_encryption(settings: &Settings, tokens: &BytesCowsAuto) {
     use ring::aead::{self, Aad, LessSafeKey, UnboundKey};
 
     // Collect token slices once so each cyclic call indexes a single token.
@@ -211,7 +220,7 @@ fn bench_encryption(tokens: &BytesCowsAuto) {
     let longest_token = slices.iter().map(|token| token.len()).max().unwrap_or(0);
     let pass_work = WorkUnits::new(
         slices.len() as u64,
-        slices.iter().map(|token| token.len() as u64).sum(),
+        Bytes(slices.iter().map(|token| token.len() as u64).sum()),
     );
 
     {
@@ -224,6 +233,7 @@ fn bench_encryption(tokens: &BytesCowsAuto) {
         let mut in_out = Vec::with_capacity(longest_token + aead::CHACHA20_POLY1305.tag_len());
         let mut nonce_counter: u64 = 0;
         measure(
+            settings,
             "encryption/ring::chacha20poly1305",
             MeasureSpec::new(Unit::Bytes, pass_work),
             || {
@@ -248,6 +258,7 @@ fn bench_encryption(tokens: &BytesCowsAuto) {
         let mut in_out = Vec::with_capacity(longest_token + aead::AES_256_GCM.tag_len());
         let mut nonce_counter: u64 = 0;
         measure(
+            settings,
             "encryption/ring::aes256gcm",
             MeasureSpec::new(Unit::Bytes, pass_work),
             || {
@@ -268,6 +279,7 @@ fn bench_encryption(tokens: &BytesCowsAuto) {
         let mut ciphertext = vec![0u8; longest_token + cipher.block_size()];
         let mut nonce_counter: u64 = 0;
         measure(
+            settings,
             "encryption/openssl::chacha20poly1305",
             MeasureSpec::new(Unit::Bytes, pass_work),
             || {
@@ -293,6 +305,7 @@ fn bench_encryption(tokens: &BytesCowsAuto) {
         let mut ciphertext = vec![0u8; longest_token + cipher.block_size()];
         let mut nonce_counter: u64 = 0;
         measure(
+            settings,
             "encryption/openssl::aes256gcm",
             MeasureSpec::new(Unit::Bytes, pass_work),
             || {
@@ -319,6 +332,7 @@ fn bench_encryption(tokens: &BytesCowsAuto) {
         let mut in_out = Vec::with_capacity(longest_token);
         let mut nonce_counter: u64 = 0;
         measure(
+            settings,
             "encryption/libsodium::chacha20poly1305_ietf",
             MeasureSpec::new(Unit::Bytes, pass_work),
             || {
@@ -344,6 +358,7 @@ fn bench_encryption(tokens: &BytesCowsAuto) {
         let mut in_out = Vec::with_capacity(longest_token);
         let mut nonce_counter: u64 = 0;
         measure(
+            settings,
             "encryption/libsodium::xchacha20poly1305_ietf",
             MeasureSpec::new(Unit::Bytes, pass_work),
             || {
@@ -364,16 +379,16 @@ fn bench_encryption(tokens: &BytesCowsAuto) {
 }
 
 /// Benchmarks AEAD decryption (verify + decrypt). Pre-encrypts every token once before the timed
-/// loop; each measured call then decrypts one ciphertext and cycles the dataset for the budget.
+/// loop; each measured call then decrypts one ciphertext and cycles the dataset until the time limit.
 /// Throughput is reported over the original plaintext lengths to match the encryption accounting.
-fn bench_decryption(tokens: &BytesCowsAuto) {
+fn bench_decryption(settings: &Settings, tokens: &BytesCowsAuto) {
     use ring::aead::{self, Aad, LessSafeKey, UnboundKey};
 
     // Byte work is the original plaintext: the sealed blobs carry tag bytes the encryption
     // accounting excluded too.
     let decrypt_pass_work = WorkUnits::new(
         tokens.len() as u64,
-        tokens.iter().map(|token| token.len() as u64).sum(),
+        Bytes(tokens.iter().map(|token| token.len() as u64).sum()),
     );
     let longest_token = tokens.iter().map(|token| token.len()).max().unwrap_or(0);
 
@@ -419,6 +434,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
                 .unwrap_or(0),
         );
         measure(
+            settings,
             "decryption/ring::chacha20poly1305",
             MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
             || {
@@ -440,6 +456,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
         let mut in_out =
             Vec::with_capacity(encrypted_tokens_aes.iter().map(Vec::len).max().unwrap_or(0));
         measure(
+            settings,
             "decryption/ring::aes256gcm",
             MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
             || {
@@ -458,6 +475,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
     }
 
     use openssl::symm::encrypt_aead;
+
     let cipher_chacha = Cipher::chacha20_poly1305();
     let mut encrypted_tokens_openssl_chacha: Vec<(Vec<u8>, [u8; 16])> = Vec::new();
     {
@@ -487,6 +505,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
     {
         let mut plaintext = vec![0u8; longest_token + cipher_chacha.block_size()];
         measure(
+            settings,
             "decryption/openssl::chacha20poly1305",
             MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
             || {
@@ -509,6 +528,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
     {
         let mut plaintext = vec![0u8; longest_token + cipher_aes.block_size()];
         measure(
+            settings,
             "decryption/openssl::aes256gcm",
             MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
             || {
@@ -528,6 +548,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
     }
 
     use sodiumoxide::crypto::aead::chacha20poly1305_ietf::{self, Key as SodiumChaCha20Key};
+
     let key_sodium_chacha = SodiumChaCha20Key([0u8; chacha20poly1305_ietf::KEYBYTES]);
     let mut encrypted_tokens_sodium_chacha: Vec<(Vec<u8>, chacha20poly1305_ietf::Tag)> = Vec::new();
     {
@@ -548,6 +569,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
     {
         let mut in_out = Vec::with_capacity(longest_token);
         measure(
+            settings,
             "decryption/libsodium::chacha20poly1305_ietf",
             MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
             || {
@@ -570,6 +592,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
     }
 
     use sodiumoxide::crypto::aead::xchacha20poly1305_ietf::{self, Key as SodiumXChaCha20Key};
+
     let key_sodium_xchacha = SodiumXChaCha20Key([0u8; xchacha20poly1305_ietf::KEYBYTES]);
     let mut encrypted_tokens_sodium_xchacha: Vec<(Vec<u8>, xchacha20poly1305_ietf::Tag)> =
         Vec::new();
@@ -591,6 +614,7 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
     {
         let mut in_out = Vec::with_capacity(longest_token);
         measure(
+            settings,
             "decryption/libsodium::xchacha20poly1305_ietf",
             MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
             || {
@@ -613,26 +637,28 @@ fn bench_decryption(tokens: &BytesCowsAuto) {
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
+    print_machine();
+    let settings = Settings::read("encryption");
+    settings.print();
 
     sodiumoxide::init().expect("Failed to initialize libsodium");
 
-    let tape = resolve_dataset("encryption").unwrap_nice();
-    log_timing_overhead();
+    let tape = resolve_dataset(&settings).unwrap_nice();
+    log_timing_overhead(&settings);
 
     // Profile key generation and cipher initialization overhead
     println!("# keygen");
-    bench_key_generation();
+    bench_key_generation(&settings);
 
     // Profile encryption operations
     println!("# encryption");
-    bench_encryption(&tape);
+    bench_encryption(&settings, &tape);
 
     // Profile decryption operations
     println!("# decryption");
-    bench_decryption(&tape);
+    bench_decryption(&settings, &tape);
 
-    finish();
+    finish()
 }

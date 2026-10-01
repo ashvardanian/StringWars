@@ -7,6 +7,7 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_find --bench bench_fin
 ```
 "#]
 use std::hint::black_box;
+use std::process::ExitCode;
 
 use stringtape::BytesCowsAuto;
 
@@ -17,8 +18,8 @@ use regex::bytes::Regex;
 use stringzilla::sz;
 
 use stringwars::{
-    finish, install_panic_hook, log_stringzilla_metadata, log_timing_overhead, measure,
-    resolve_dataset, MeasureSpec, ResultExt, Unit, WorkUnits,
+    finish, install_panic_hook, log_timing_overhead, measure, print_machine, resolve_dataset,
+    Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
 };
 
 /// How many needles make one pass.
@@ -49,13 +50,17 @@ fn needle_sample<'a>(needles: &'a BytesCowsAuto) -> Vec<&'a [u8]> {
 /// One pass scans every needle in the sample across the whole haystack, so the
 /// needle mixture is identical in every sample and cancels exactly.
 fn measure_search<Search: FnMut(&[u8])>(
+    settings: &Settings,
     name: &str,
     sample: &[&[u8]],
     haystack_bytes: u64,
     mut search: Search,
 ) {
-    let work = WorkUnits::new(sample.len() as u64, haystack_bytes * sample.len() as u64);
-    measure(name, MeasureSpec::new(Unit::Bytes, work), || {
+    let work = WorkUnits::new(
+        sample.len() as u64,
+        Bytes(haystack_bytes * sample.len() as u64),
+    );
+    measure(settings, name, MeasureSpec::new(Unit::Bytes, work), || {
         for needle in sample {
             search(black_box(needle));
         }
@@ -67,10 +72,11 @@ fn measure_search<Search: FnMut(&[u8])>(
 /// Each call cycles to the next needle and scans the whole haystack for every occurrence of it,
 /// so the per-call work is one full haystack pass (`haystack.len()` bytes), matching the original
 /// `Throughput::Bytes(haystack.len())` accounting.
-fn bench_substring_forward(haystack: &[u8], sample: &[&[u8]]) {
+fn bench_substring_forward(settings: &Settings, haystack: &[u8], sample: &[&[u8]]) {
     let haystack_bytes = haystack.len() as u64;
 
     measure_search(
+        settings,
         "substring-forward/stringzilla::find",
         sample,
         haystack_bytes,
@@ -83,6 +89,7 @@ fn bench_substring_forward(haystack: &[u8], sample: &[&[u8]]) {
     );
 
     measure_search(
+        settings,
         "substring-forward/memmem::find",
         sample,
         haystack_bytes,
@@ -95,6 +102,7 @@ fn bench_substring_forward(haystack: &[u8], sample: &[&[u8]]) {
     );
 
     measure_search(
+        settings,
         "substring-forward/memmem::Finder",
         sample,
         haystack_bytes,
@@ -108,6 +116,7 @@ fn bench_substring_forward(haystack: &[u8], sample: &[&[u8]]) {
     );
 
     measure_search(
+        settings,
         "substring-forward/std::str::find",
         sample,
         haystack_bytes,
@@ -124,10 +133,11 @@ fn bench_substring_forward(haystack: &[u8], sample: &[&[u8]]) {
 ///
 /// Each call cycles to the next needle and scans the whole haystack backward, so the per-call
 /// work is one full haystack pass, matching the original `Throughput::Bytes(haystack.len())`.
-fn bench_substring_backward(haystack: &[u8], sample: &[&[u8]]) {
+fn bench_substring_backward(settings: &Settings, haystack: &[u8], sample: &[&[u8]]) {
     let haystack_bytes = haystack.len() as u64;
 
     measure_search(
+        settings,
         "substring-backward/stringzilla::rfind",
         sample,
         haystack_bytes,
@@ -144,6 +154,7 @@ fn bench_substring_backward(haystack: &[u8], sample: &[&[u8]]) {
     );
 
     measure_search(
+        settings,
         "substring-backward/memmem::rfind",
         sample,
         haystack_bytes,
@@ -160,6 +171,7 @@ fn bench_substring_backward(haystack: &[u8], sample: &[&[u8]]) {
     );
 
     measure_search(
+        settings,
         "substring-backward/memmem::FinderRev",
         sample,
         haystack_bytes,
@@ -177,6 +189,7 @@ fn bench_substring_backward(haystack: &[u8], sample: &[&[u8]]) {
     );
 
     measure_search(
+        settings,
         "substring-backward/std::str::rfind",
         sample,
         haystack_bytes,
@@ -198,11 +211,11 @@ fn bench_substring_backward(haystack: &[u8], sample: &[&[u8]]) {
 /// Each call cycles to the next needle token and runs all three bytesets over it. The original
 /// looped over every needle in one iteration with `Throughput::Bytes(3 * haystack.len())`; since
 /// the needles collectively span the haystack, the per-token equivalent is `3 * token.len()`.
-fn bench_byteset_forward(needles: &BytesCowsAuto) {
+fn bench_byteset_forward(settings: &Settings, needles: &BytesCowsAuto) {
     // Each token is scanned once per byteset, so a pass covers three times the tape.
     let byteset_work = WorkUnits::new(
         needles.len() as u64,
-        3 * needles.iter().map(|t| t.len() as u64).sum::<u64>(),
+        Bytes(3 * needles.iter().map(|t| t.len() as u64).sum::<u64>()),
     );
     // Define the three bytesets we will analyze.
     const BYTES_TABS: &[u8] = b"\n\r\x0B\x0C";
@@ -214,6 +227,7 @@ fn bench_byteset_forward(needles: &BytesCowsAuto) {
     let sz_html = sz::Byteset::from(BYTES_HTML);
     let sz_digits = sz::Byteset::from(BYTES_DIGITS);
     measure(
+        settings,
         "byteset-forward/stringzilla::find_byteset",
         MeasureSpec::new(Unit::Bytes, byteset_work),
         || {
@@ -236,6 +250,7 @@ fn bench_byteset_forward(needles: &BytesCowsAuto) {
     );
 
     measure(
+        settings,
         "byteset-forward/bstr::find_byteset",
         MeasureSpec::new(Unit::Bytes, byteset_work),
         || {
@@ -262,6 +277,7 @@ fn bench_byteset_forward(needles: &BytesCowsAuto) {
     let re_html = Regex::new("[</>&'\"=\\[\\]]").unwrap();
     let re_digits = Regex::new("[0-9]").unwrap();
     measure(
+        settings,
         "byteset-forward/regex::find_iter",
         MeasureSpec::new(Unit::Bytes, byteset_work),
         || {
@@ -280,6 +296,7 @@ fn bench_byteset_forward(needles: &BytesCowsAuto) {
     let ac_digits =
         AhoCorasick::new(BYTES_DIGITS.chunks(1)).expect("failed to create AhoCorasick FSA");
     measure(
+        settings,
         "byteset-forward/aho_corasick::find_iter",
         MeasureSpec::new(Unit::Bytes, byteset_work),
         || {
@@ -293,16 +310,18 @@ fn bench_byteset_forward(needles: &BytesCowsAuto) {
     );
 }
 
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
+    print_machine();
+    let settings = Settings::read("find");
+    settings.print();
 
-    let tape = resolve_dataset("find").unwrap_nice();
-    log_timing_overhead();
+    let tape = resolve_dataset(&settings).unwrap_nice();
+    log_timing_overhead(&settings);
 
     // The resolved tokens concatenated, not `tape.parent()`. The parent is the raw read:
     // it carries the separators between tokens and whatever trailing bytes the reader
-    // pulled past the budget, so it is neither `token_bytes` long nor the same haystack
+    // pulled past `STRINGWARS_BYTES`, so it is neither `token_bytes` long nor the same haystack
     // `find/bench.py` scans, which is exactly this concatenation. One startup allocation
     // buys a denominator both languages agree on.
     let joined: Vec<u8> = tape.iter().flatten().copied().collect();
@@ -311,13 +330,13 @@ fn main() {
     let sample = needle_sample(needles);
 
     println!("# substring-forward");
-    bench_substring_forward(haystack, &sample);
+    bench_substring_forward(&settings, haystack, &sample);
 
     println!("# substring-backward");
-    bench_substring_backward(haystack, &sample);
+    bench_substring_backward(&settings, haystack, &sample);
 
     println!("# byteset-forward");
-    bench_byteset_forward(needles);
+    bench_byteset_forward(&settings, needles);
 
-    finish();
+    finish()
 }

@@ -7,13 +7,11 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_normalization --bench 
 ```
 "#]
 use std::hint::black_box;
+use std::process::ExitCode;
 
 /// Needles scanned per pass. Matches `find/bench.rs`: one pass covers the whole set
 /// so the needle mixture cancels instead of varying between samples.
 const NEEDLES_PER_PASS: usize = 16;
-
-use rand::prelude::IndexedRandom;
-use rand::SeedableRng;
 
 use icu::casemap::CaseMapper;
 use icu::normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed};
@@ -25,22 +23,24 @@ use unicase::UniCase;
 use unicode_normalization::UnicodeNormalization;
 
 use stringwars::{
-    finish, install_panic_hook, log_stringzilla_metadata, log_timing_overhead, measure,
-    note_unavailable, resolve_dataset, token_ranges, MeasureSpec, ResultExt, Unit, WorkUnits,
+    finish, install_panic_hook, log_timing_overhead, measure, note_unavailable, print_machine,
+    resolve_dataset, stream_key, token_ranges, Bytes, MeasureSpec, ResultExt, Settings, SplitMix64,
+    Tokenization, Unit, WorkUnits,
 };
 
-fn log_pcre2_metadata() {
+/// Adds the PCRE2 version and JIT availability to the machine block.
+fn print_pcre2() {
     let (major, minor) = pcre2::version();
-    println!("PCRE2 v{}.{}", major, minor);
-    println!("- JIT available: {}", pcre2::is_jit_available());
+    println!("- PCRE2: {major}.{minor}");
+    println!("- PCRE2 JIT: {}", pcre2::is_jit_available());
 }
 /// Benchmarks case folding transformation throughput.
 ///
 /// Unicode case folding may expand characters (e.g., German ß → ss).
 /// - `stringzilla::utf8_uncased_fold()`: Full Unicode case folding per Unicode Standard
 /// - `stdlib::to_lowercase()`: Full Unicode lowercasing (locale-independent, allocates)
-fn bench_case_fold(haystack: &[u8]) {
-    let haystack_length = haystack.len() as u64;
+fn bench_case_fold(settings: &Settings, haystack: &[u8]) {
+    let haystack_length = Bytes(haystack.len() as u64);
 
     let haystack_str = std::str::from_utf8(haystack).unwrap();
 
@@ -48,6 +48,7 @@ fn bench_case_fold(haystack: &[u8]) {
     let mut fold_buffer = vec![0u8; haystack.len() * 3];
 
     measure(
+        settings,
         "case-fold/stringzilla::utf8_uncased_fold",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -58,6 +59,7 @@ fn bench_case_fold(haystack: &[u8]) {
     );
 
     measure(
+        settings,
         "case-fold/std::to_lowercase",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -75,7 +77,7 @@ fn bench_case_fold(haystack: &[u8]) {
 ///
 /// Normalization is most meaningful on Indic / Arabic / Vietnamese / Korean corpora; on
 /// ASCII-heavy inputs every implementation degenerates to a near-passthrough copy.
-fn bench_normalize(haystack: &[u8]) {
+fn bench_normalize(settings: &Settings, haystack: &[u8]) {
     let haystack_str = match std::str::from_utf8(haystack) {
         Ok(text) => text,
         Err(_) => {
@@ -84,7 +86,7 @@ fn bench_normalize(haystack: &[u8]) {
         }
     };
 
-    let haystack_length = haystack.len() as u64;
+    let haystack_length = Bytes(haystack.len() as u64);
 
     // Benchmark for StringZilla normalization across all four forms. The form is a
     // runtime enum value, so a single loop covers every form without duplication.
@@ -101,6 +103,7 @@ fn bench_normalize(haystack: &[u8]) {
             form_name.to_lowercase()
         );
         measure(
+            settings,
             &identifier,
             MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
             || {
@@ -121,6 +124,7 @@ fn bench_normalize(haystack: &[u8]) {
     // iterator type (Decompositions vs Recompositions), so the four cases are spelled out.
     // `String::extend` consumes the iterator into the reused buffer without reallocating.
     measure(
+        settings,
         "normalize-nfc/unicode-normalization::nfc",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -130,6 +134,7 @@ fn bench_normalize(haystack: &[u8]) {
         },
     );
     measure(
+        settings,
         "normalize-nfd/unicode-normalization::nfd",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -139,6 +144,7 @@ fn bench_normalize(haystack: &[u8]) {
         },
     );
     measure(
+        settings,
         "normalize-nfkc/unicode-normalization::nfkc",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -148,6 +154,7 @@ fn bench_normalize(haystack: &[u8]) {
         },
     );
     measure(
+        settings,
         "normalize-nfkd/unicode-normalization::nfkd",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -165,6 +172,7 @@ fn bench_normalize(haystack: &[u8]) {
     let icu_nfd = DecomposingNormalizerBorrowed::new_nfd();
     let icu_nfkd = DecomposingNormalizerBorrowed::new_nfkd();
     measure(
+        settings,
         "normalize-nfc/icu::ComposingNormalizer::normalize_to",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -176,6 +184,7 @@ fn bench_normalize(haystack: &[u8]) {
         },
     );
     measure(
+        settings,
         "normalize-nfd/icu::DecomposingNormalizer::normalize_to",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -187,6 +196,7 @@ fn bench_normalize(haystack: &[u8]) {
         },
     );
     measure(
+        settings,
         "normalize-nfkc/icu::ComposingNormalizer::normalize_to",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -198,6 +208,7 @@ fn bench_normalize(haystack: &[u8]) {
         },
     );
     measure(
+        settings,
         "normalize-nfkd/icu::DecomposingNormalizer::normalize_to",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
@@ -210,7 +221,7 @@ fn bench_normalize(haystack: &[u8]) {
     );
 }
 /// Benchmarks case-insensitive string equality comparison.
-fn bench_case_insensitive_compare(needles: &[&[u8]]) {
+fn bench_case_insensitive_compare(settings: &Settings, needles: &[&[u8]]) {
     // We compare each pair of adjacent tokens
     // Adjacent pairs; two slices rather than a Vec of tuples.
     let pairs: Vec<(&[u8], &[u8])> = needles
@@ -230,10 +241,12 @@ fn bench_case_insensitive_compare(needles: &[&[u8]]) {
     // from whichever representation each row happens to iterate.
     let pair_work = WorkUnits::new(
         pairs.len() as u64,
-        pairs
-            .iter()
-            .map(|(left, right)| (left.len() + right.len()) as u64)
-            .sum(),
+        Bytes(
+            pairs
+                .iter()
+                .map(|(left, right)| (left.len() + right.len()) as u64)
+                .sum(),
+        ),
     );
 
     // Decode each pair to `&str` once, outside the timed closures, so the string-based baselines
@@ -252,6 +265,7 @@ fn bench_case_insensitive_compare(needles: &[&[u8]]) {
     // cycling through the pairs; throughput is reported as the bytes spanned by both sides.
     {
         measure(
+            settings,
             "case-insensitive-compare/stringzilla::utf8_uncased_order",
             MeasureSpec::new(Unit::Bytes, pair_work),
             || {
@@ -265,6 +279,7 @@ fn bench_case_insensitive_compare(needles: &[&[u8]]) {
 
     {
         measure(
+            settings,
             "case-insensitive-compare/unicase::eq",
             MeasureSpec::new(Unit::Bytes, pair_work),
             || {
@@ -278,6 +293,7 @@ fn bench_case_insensitive_compare(needles: &[&[u8]]) {
 
     {
         measure(
+            settings,
             "case-insensitive-compare/std::to_lowercase.eq",
             MeasureSpec::new(Unit::Bytes, pair_work),
             || {
@@ -290,8 +306,8 @@ fn bench_case_insensitive_compare(needles: &[&[u8]]) {
     }
 }
 /// Benchmarks case-insensitive substring search.
-fn bench_case_insensitive_find(haystack: &[u8], needles: &[&[u8]]) {
-    let haystack_length = haystack.len() as u64;
+fn bench_case_insensitive_find(settings: &Settings, haystack: &[u8], needles: &[&[u8]]) {
+    let haystack_length = Bytes(haystack.len() as u64);
     let haystack_str = std::str::from_utf8(haystack).unwrap();
 
     // Collect candidate needles (valid UTF-8, length >= 3)
@@ -306,19 +322,18 @@ fn bench_case_insensitive_find(haystack: &[u8], needles: &[&[u8]]) {
         return;
     }
 
-    // Random-sample 100 needles with fixed seed for reproducibility
-    let mut random_generator = rand::rngs::StdRng::seed_from_u64(42);
-    let search_needles: Vec<&str> = candidates
-        .sample(
-            &mut random_generator,
-            NEEDLES_PER_PASS.min(candidates.len()),
-        )
-        .copied()
+    // Drawn from `STRINGWARS_SEED` the way `normalization/bench.py` draws them, so both
+    // languages search for the same needles.
+    let mut generator = SplitMix64 {
+        state: stream_key(settings.seed, "normalization/needles", 0),
+    };
+    let search_needles: Vec<&str> = (0..NEEDLES_PER_PASS.min(candidates.len()))
+        .map(|_| candidates[generator.below(candidates.len() as u64) as usize])
         .collect();
     // One pass scans the haystack once per needle, so every sample does identical
     // work. Rotating one needle per pass made the cost depend on which needle came
     // up, and the rows never converged.
-    let scan_work = WorkUnits::bytes(haystack_length * search_needles.len() as u64);
+    let scan_work = WorkUnits::bytes(Bytes(haystack_length.0 * search_needles.len() as u64));
 
     // Rotate through needles across iterations with a plain counter. The harness runs the
     // measured closure serially, so a captured `FnMut` counter suffices and avoids the
@@ -326,6 +341,7 @@ fn bench_case_insensitive_find(haystack: &[u8], needles: &[&[u8]]) {
     // once with a single needle; throughput is the haystack size.
     {
         measure(
+            settings,
             "case-insensitive-find/stringzilla::utf8_uncased_search",
             MeasureSpec::new(Unit::Bytes, scan_work),
             || {
@@ -375,6 +391,7 @@ fn bench_case_insensitive_find(haystack: &[u8], needles: &[&[u8]]) {
             );
         } else {
             measure(
+                settings,
                 "case-insensitive-find/pcre2::pre-jit",
                 MeasureSpec::new(Unit::Bytes, scan_work),
                 || {
@@ -390,6 +407,7 @@ fn bench_case_insensitive_find(haystack: &[u8], needles: &[&[u8]]) {
     // Variant 2: JIT compilation included in benchmark (compile + search per iteration)
     {
         measure(
+            settings,
             "case-insensitive-find/pcre2::jit-on-fly",
             MeasureSpec::new(Unit::Bytes, scan_work),
             || {
@@ -433,6 +451,7 @@ fn bench_case_insensitive_find(haystack: &[u8], needles: &[&[u8]]) {
             );
         } else {
             measure(
+                settings,
                 "case-insensitive-find/pcre2::no-jit",
                 MeasureSpec::new(Unit::Bytes, scan_work),
                 || {
@@ -451,6 +470,7 @@ fn bench_case_insensitive_find(haystack: &[u8], needles: &[&[u8]]) {
     {
         let case_mapper = CaseMapper::new();
         measure(
+            settings,
             "case-insensitive-find/memchr::Finder<icu-fold>",
             MeasureSpec::new(Unit::Bytes, scan_work),
             || {
@@ -466,39 +486,39 @@ fn bench_case_insensitive_find(haystack: &[u8], needles: &[&[u8]]) {
         );
     }
 }
-fn main() {
+fn main() -> ExitCode {
     install_panic_hook();
-    log_stringzilla_metadata();
-    log_pcre2_metadata();
+    print_machine();
+    print_pcre2();
+    let settings = Settings::read("normalization");
+    settings.print();
 
-    let tape = resolve_dataset("normalization").unwrap_nice();
-    log_timing_overhead();
+    let tape = resolve_dataset(&settings).unwrap_nice();
+    log_timing_overhead(&settings);
 
-    // The tape's single token, not `parent()`: the parent is the raw read, cut at exactly
-    // the budget and so liable to end mid-character, while the token carries the UTF-8
-    // backoff. It is also what the Python side measures, so the two stay comparable.
+    // The tape's single token, which is also what the Python side measures.
     let haystack: &[u8] = tape.iter().next().expect("empty working set");
     // The manifest gives this suite `tokens = "file"`, so the tape is one 16 MB
     // token. Case-folding and normalization want exactly that, but the find and
     // compare groups need real needles - searching for the whole haystack inside
     // itself matched once and made PCRE2 refuse a 16 MB literal. Split words off
     // the same buffer with the shared rule.
-    let needles: Vec<&[u8]> = token_ranges(haystack, "words", haystack.len() as u64)
+    let needles: Vec<&[u8]> = token_ranges(haystack, Tokenization::Words)
         .into_iter()
         .map(|range| &haystack[range])
         .collect();
 
     println!("# case-fold");
-    bench_case_fold(haystack);
+    bench_case_fold(&settings, haystack);
 
     println!("# normalize");
-    bench_normalize(haystack);
+    bench_normalize(&settings, haystack);
 
     println!("# case-insensitive-compare");
-    bench_case_insensitive_compare(&needles);
+    bench_case_insensitive_compare(&settings, &needles);
 
     println!("# case-insensitive-find");
-    bench_case_insensitive_find(haystack, &needles);
+    bench_case_insensitive_find(&settings, haystack, &needles);
 
-    finish();
+    finish()
 }

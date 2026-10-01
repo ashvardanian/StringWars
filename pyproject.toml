@@ -9,67 +9,47 @@ readme = "README.md"
 requires-python = ">=3.13"
 version = "1.8.3"
 
-# Keep the base install minimal; opt into extras per-bench
 dependencies = []
 
 [project.urls]
 Homepage = "https://ashvardanian.com/posts/stringwars-on-gpus"
 Repository = "https://github.com/ashvardanian/StringWars"
 
-[project.optional-dependencies]
-# Substring/byteset + transforms
-find = ["stringzilla>=5.0.0", "pyahocorasick"]
-
-# Sequence ops (split/sort)
-sequence = ["stringzilla>=5.0.0", "numpy", "pandas", "pyarrow", "polars"]
-
-# Fingerprinting/sketching
-fingerprints = [
-  "stringzilla>=5.0.0",
-  "stringzillas-cpus",
-  "datasketch",
-  "numpy",
-  "tqdm",
-]
-
-# Similarities / edit distances
-similarities = [
-  "stringzilla>=5.0.0",
-  "stringzillas-cpus",
-  "jellyfish",
-  "python-Levenshtein",
-  "editdistance",
-  "rapidfuzz",
-  "nltk",
-  "edlib",
-  "biopython",
-  "polyleven",
-]
-
-# Hash functions
+# One group per suite, run as `uv run --group <suite> <suite>/bench.py`; exact versions live in `uv.lock`
+[dependency-groups]
+containers = ["stringzilla>=5.0.0", "numpy>=2.5.1", "pyprobables>=0.7.0", "xxhash>=3.8.1"]
+encryption = ["cryptography>=49.0.0", "pycryptodome>=3.23.0", "pynacl>=1.6.2"]
+find = ["stringzilla>=5.0.0", "pyahocorasick>=2.3.1"]
+fingerprints = ["stringzilla>=5.0.0", "stringzillas-cpus>=5.0.0", "datasketch>=2.0.0", "numpy>=2.5.1"]
 hash = [
   "stringzilla>=5.0.0",
-  "xxhash",
-  "blake3",
-  "google-crc32c",
-  "mmh3",
-  "cityhash",
+  "blake3>=1.0.9",
+  "cityhash>=0.4.10",
+  "google-crc32c>=1.8.0",
+  "mmh3>=5.2.1",
+  "xxhash>=3.8.1",
 ]
+memory = ["stringzilla>=5.0.0", "numpy>=2.5.1", "opencv-python>=5.0.0.93", "pycryptodome>=3.23.0"]
+normalization = ["stringzilla>=5.0.0", "pyicu>=2.16.2", "pyunormalize>=17.0.0", "regex>=2025.11.3"]
+sequence = ["stringzilla>=5.0.0", "numpy>=2.5.1", "pandas>=3.0.3", "polars>=1.43.0", "pyarrow>=25.0.0"]
+similarities = [
+  "stringzilla>=5.0.0",
+  "stringzillas-cpus>=5.0.0",
+  "biopython>=1.87",
+  "editdistance>=0.8.1",
+  "edlib>=1.3.9.post1",
+  "jellyfish>=1.2.1",
+  "levenshtein>=0.27.3",
+  "nltk>=3.10.0",
+  "numpy>=2.5.1",
+  "polyleven>=0.11.0",
+  "rapidfuzz>=3.14.5",
+]
+tokenization = ["stringzilla>=5.0.0", "grapheme>=0.6.0", "pyicu>=2.16.2", "regex>=2025.11.3", "uniseg>=0.10.1"]
 
-# Random byte generators and translation tables
-memory = ["stringzilla>=5.0.0", "numpy", "pycryptodome", "opencv-python"]
-
-# UTF-8 tokenization / iteration (whitespace, newline, TR29 words, codepoints)
-tokenization = ["stringzilla>=5.0.0", "regex", "PyICU"]
-
-# Case folding + Unicode normalization
-normalization = ["stringzilla>=5.0.0", "regex", "PyICU", "pyunormalize"]
-
-# Multi-way hashing + probabilistic membership
-containers = ["stringzilla>=5.0.0", "pyprobables", "xxhash", "numpy"]
-
-# AEAD encryption/decryption (ChaCha20-Poly1305, AES-256-GCM)
-encryption = ["cryptography", "pycryptodome", "pynacl"]
+# Installs `stringwars.py` editable, so every `<suite>/bench.py` imports it without path edits
+[tool.hatch.build.targets.wheel]
+only-include = ["stringwars.py"]
 
 [tool.ruff]
 # Enforce 120-column lines across formatting and linting
@@ -91,8 +71,8 @@ select = [
 ]
 
 [tool.ruff.lint.isort]
-# Group the local `utils` module into its own final import block
-known-first-party = ["utils"]
+# Group the local `stringwars` module into its own final import block
+known-first-party = ["stringwars"]
 
 [tool.ruff.format]
 indent-style = "space"

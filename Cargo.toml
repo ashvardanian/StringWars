@@ -17,7 +17,7 @@ version = "1.8.3"
 # internal scaffolding, not part of what this crate publishes.
 [lib]
 name = "stringwars"
-path = "utils.rs"
+path = "stringwars.rs"
 doc = false
 
 [dependencies]
@@ -58,7 +58,6 @@ bench_find = [
 ]
 bench_fingerprints = [
   "probabilistic-collections", # MinHash
-  "forkunion",                 # CPU core counting for device scopes
 ]
 bench_hash = [
   "bit-set",      # for collision counting
@@ -82,7 +81,6 @@ bench_memory = [
 bench_normalization = [
   "icu",                   # Case mapping + NFC/NFD/NFKC/NFKD normalizers
   "unicase",               # Case-insensitive string wrapper
-  "rand",                  # Random needle sampling
   "unicode-normalization", # NFC/NFD/NFKC/NFKD normalization baseline
   "pcre2",                 # Full Unicode case folding in regex (unlike `regex` crate)
   "memchr",                # Fast SIMD substring search (for ICU fold + search baseline)

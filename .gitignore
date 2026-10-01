@@ -1,5 +1,6 @@
 # Builds
 __pycache__
+.DS_Store
 /target
 
 # Local-only Cargo build overrides (fast linker, optional target-cpu) — never enforced on the repo
@@ -7,6 +8,8 @@ __pycache__
 
 # Datasets
 /xlsum*.csv
+/xlsum*.txt
+/*.fa
 /leipzig*.txt
 /cc100_*.txt
 /wiki_*.jsonl

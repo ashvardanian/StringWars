@@ -1,26 +1,25 @@
-# Shared defaults for both harnesses. `utils.rs` and `utils.py` hold none of their own,
+# Shared defaults for both harnesses. `stringwars.rs` and `stringwars.py` hold none of their own,
 # so everything below cannot drift between the two.
 #
-# Per-suite fixtures are not here yet and are still mirrored by hand: `DEFAULT_BATCH_PER_CORE`
-# (similarities, fingerprints), `NGRAM_WIDTHS` (fingerprints) and `NEEDLES_PER_PASS`
-# (normalization) each exist as a Rust `const` and a Python module constant. They agree
-# today, so the drift is latent rather than live.
+# Two per-suite fixtures are not here yet and are still mirrored by hand: `NGRAM_WIDTHS`
+# (fingerprints) and `NEEDLES_PER_PASS` (normalization) each exist as a Rust `const` and a
+# Python module constant. They agree today, so the drift is latent rather than live.
 
 [limits]
-# Working-set budget, counted in *token bytes* (the denominator of every bytes/s
-# figure), decimal SI.
+# Working-set size: the bytes read from the start of the dataset, rounded down to a
+# power of two as StringZilla's benchmarks do, so `STRINGWARS_BYTES` means the same in both.
 #
 # Two things bound this, and they pull against each other:
 #
-#   residency — a budget below the last-level cache measures the cache, not the
+#   residency — a working set below the last-level cache measures the cache, not the
 #     memory hierarchy. A Xeon 8480+ has 105 MB of L3 and a Zen5 X3D part has more
 #     than 500 MB, so no fixed number is "past cache" everywhere. Portability is the
-#     reason this is not tuned per machine: a machine-derived budget would also make
+#     reason this is not tuned per machine: a machine-derived size would also make
 #     the identity CRC machine-dependent and destroy the cross-machine check.
 #
 #   collectability — a pass must be short enough that the slowest contender in the
-#     suite yields `min_samples` inside `max_seconds`. The ceiling is roughly
-#     `slowest_rate * min_seconds * min_samples`, and for a 10 MB/s pure-Python
+#     suite yields `min_samples` inside `time_limit`. The ceiling is roughly
+#     `slowest_rate * min_measure_time * min_samples`, and for a 10 MB/s pure-Python
 #     baseline that is tens of megabytes, not hundreds.
 #
 # Where the two conflict, collectability wins and the suite carries its own `bytes`
@@ -35,53 +34,58 @@ bytes = "256MB"
 
 # A sample is one or more complete passes over the working set. It must last long
 # enough that the two clock reads bracketing it are noise: 2 x ~25ns / 1ms = 0.005%.
-min_sample_ms = 1.0
+min_sample_time = "1ms"
 
 # Below ~10 samples a dispersion estimate is meaningless.
 min_samples = 10
-min_seconds = 1.0
-max_seconds = 60.0
+min_measure_time = "1s"
+time_limit = "10s"
+
+# Seed of the drawn inputs, like `normalization`'s needles. `STRINGWARS_SEED=random` draws one.
+seed = 42
 
 # The smallest claim the READMEs make is "1.2x"; distinguishing that from 1.0x
 # needs a few percent per side.
 target_spread = 0.025
-warmup_max_seconds = 10.0
+warmup = "1s"
 
 # `dataset` and `tokens` are what a suite runs on when STRINGWARS_DATASET and
 # STRINGWARS_TOKENS are unset, and record what its published numbers were taken
 # with. Suites whose tables have several dataset columns name the first one here.
-# `bytes` overrides the global budget where a pass would otherwise be too slow to
-# collect `min_samples` inside `max_seconds`.
+# `bytes` overrides the global size where a pass would otherwise be too slow to
+# collect `min_samples` inside `time_limit`. `batch_per_core` and `dims` are the
+# defaults of `STRINGWARS_BATCH_PER_CORE` and `STRINGWARS_DIMS` in the suites that read them.
 [suite]
 containers = { dataset = "xlsum.csv", tokens = "words" }
 find = { dataset = "xlsum.csv", tokens = "words" }
 hash = { dataset = "xlsum.csv", tokens = "words" }
 memory = { dataset = "xlsum.csv", tokens = "lines" }
 encryption = { dataset = "acgt_100.txt", tokens = "lines" }
-# A cross-product touches `2 * side` tokens - 32 at the default pair budget - so the
-# pool only has to be large enough to draw a batch from. `take_within_budget` keeps
-# tokens in file order, so a smaller pool hands the kernels byte-identical inputs
-# while dropping a 256 MB read, a CRC over 2.56 M tokens, and a 256 MB unified
-# allocation. `bytes` here bounds the pool; it is not the denominator of anything.
-similarities = { dataset = "acgt_100.txt", tokens = "words", bytes = "8MB" }
+# A cross-product touches `2 * side` tokens - 32 at the default pairs per batch - so the
+# pool only has to be large enough to draw a batch from. Tokens stay in file order,
+# so a smaller pool hands the kernels byte-identical inputs while dropping a 256 MB
+# read, a CRC over 2.56 M tokens, and a 256 MB unified allocation. `bytes` here
+# bounds the pool; it is not the denominator of anything. 256 pairs per core is the
+# measured GPU saturation knee for short-word edit distance.
+similarities = { dataset = "acgt_100.txt", tokens = "words", bytes = "8MB", batch_per_core = 256 }
 
 # Sorting is O(N log N) and the slowest engine here runs ~110 M compares/s, so a
 # 256MB pass would be tens of seconds.
 sequence = { dataset = "xlsum.csv", tokens = "lines", bytes = "32MB" }
 
-# Whole-corpus passes over one `file`-mode token, so the budget is also the length of the
+# Whole-corpus passes over one `file`-mode token, so `bytes` is also the length of the
 # single string every engine is handed.
 #
 # `pyunormalize` sets this one: it holds ~53 MChar/s up to 800 K characters and then falls
-# off a cliff — 1.02 M characters did not finish in 295 s, a >20,000x collapse. A budget
+# off a cliff — 1.02 M characters did not finish in 295 s, a >20,000x collapse. A size
 # above that ceiling cannot produce a number for it at all, and the too-slow refusal is no
 # help because it only fires *after* one pass has completed. 512KB keeps the whole field
 # collectable: pure ASCII yields 512 K characters and multi-byte scripts fewer still.
 normalization = { dataset = "leipzig1M_en.txt", tokens = "file", bytes = "512KB" }
 tokenization = { dataset = "leipzig1M_en.txt", tokens = "file", bytes = "16MB" }
 
-# Sweeps NDIM 64/128/256/512, so a pass is paid four times over. `serial::MinHash`
-# runs at ~0.23 MB/s, which puts the collectability ceiling near 1 MB — three orders
+# Sweeps DIMS 64/128/256/512, so a pass is paid four times over. `serial::MinHash`
+# runs at ~0.22 MB/s, which puts the collectability ceiling near 1 MB — three orders
 # below anything resident. This is the widest gap in the repo and the clearest case
-# of collectability overriding residency.
-fingerprints = { dataset = "acgt_100.txt", tokens = "lines", bytes = "1MB" }
+# of collectability overriding residency. 128 documents per core already saturates it.
+fingerprints = { dataset = "acgt_100.txt", tokens = "lines", bytes = "1MB", batch_per_core = 128, dims = "64,128,256,512" }

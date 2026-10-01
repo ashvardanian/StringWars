@@ -37,15 +37,15 @@ Throughput on short words and long lines:
 ```
                     Short Words                  Long Lines
 Rust:
-stringzilla::hash   ████████████████████ 1.84    ████████████████████ 11.38 GB/s
-aHash::hash_one     █████████████▍       1.23    ███████████████▏      8.61 GB/s
-xxh3::xxh3_64       ███████████▊         1.08    ████████████████▋     9.48 GB/s
-std::hash           ████▋                0.43    ██████▌               3.74 GB/s
+stringzilla::hash   ████████████████████ 1.71    ████████████████████ 10.60 GB/s
+aHash::hash_one     █████████████▍       1.15    ███████████████▏      8.02 GB/s
+xxh3::xxh3_64       ███████████▊         1.01    ████████████████▋     8.83 GB/s
+std::hash           ████▋                0.40    ██████▌               3.48 GB/s
 
 Python:
-stringzilla.hash    ████████████████████ 0.14    ████████████████████  9.19 GB/s
-hash                ██████████████████▌  0.13    █████████▎            4.27 GB/s
-xxhash.xxh3_64      █████▋               0.04    █████████████▉        6.38 GB/s
+stringzilla.hash    ████████████████████ 0.13    ████████████████████  8.56 GB/s
+hash                ██████████████████▌  0.12    █████████▎            3.98 GB/s
+xxhash.xxh3_64      █████▋               0.04    █████████████▉        5.94 GB/s
 ```
 
 See [hash/README.md](hash/README.md) for details
@@ -77,21 +77,21 @@ Throughput searching across ~100MB multilingual corpora:
 ```
 Rust:
                       English                      German
-stringzilla           ████████████████████ 12.79   ████████████████████ 10.67 GB/s
-icu                   ▏                     0.08   ▏                     0.08 GB/s
+stringzilla           ████████████████████ 11.91   ████████████████████ 9.937 GB/s
+icu                   ▏                     0.07   ▏                     0.07 GB/s
 
                       Russian                      Korean
-stringzilla           ████████████████████  7.12   ████████████████████ 35.10 GB/s
-icu                   ▏                     0.14   ▏                     0.23 GB/s
+stringzilla           ████████████████████  6.63   ████████████████████ 32.69 GB/s
+icu                   ▏                     0.13   ▏                     0.21 GB/s
 
 Python:
                       English                      German
-stringzilla           ████████████████████  5.61   ████████████████████  6.08 GB/s
-regex                 ██▋                   0.77   ███                   0.90 GB/s
+stringzilla           ████████████████████  5.22   ████████████████████  5.66 GB/s
+regex                 ██▋                   0.72   ███                   0.84 GB/s
 
                       Russian                      Korean
-stringzilla           ████████████████████  5.70   ████████████████████ 20.05 GB/s
-regex                 ████████              2.30   ████▋                 4.59 GB/s
+stringzilla           ████████████████████  5.31   ████████████████████ 18.67 GB/s
+regex                 ████████              2.14   ████▋                 4.27 GB/s
 ```
 
 See [normalization/README.md](normalization/README.md) for details
@@ -104,13 +104,13 @@ Throughput on long lines:
 ```
                     Left to right                Reverse order
 Rust:
-memmem::Finder      ████████████████████ 10.99
-stringzilla         ███████████████████▋ 10.82   ████████████████████ 10.66 GB/s
-std::str            ███████████████████▊ 10.88   ███████████▏          5.94 GB/s
+memmem::Finder      ████████████████████ 10.24
+stringzilla         ███████████████████▋ 10.08   ████████████████████ 9.928 GB/s
+std::str            ███████████████████▊ 10.13   ███████████▏          5.53 GB/s
 
 Python:
-stringzilla         ████████████████████ 11.79   ████████████████████ 11.56 GB/s
-str                 ██                    1.23   ██████▋               3.84 GB/s
+stringzilla         ████████████████████ 10.98   ████████████████████ 10.77 GB/s
+str                 ██                    1.15   ██████▋               3.58 GB/s
 ```
 
 See [find/README.md](find/README.md) for details
@@ -122,13 +122,13 @@ Throughput counting all matches on long lines:
 
 ```
 Rust:
-stringzilla         ████████████████████   8.17 GB/s
-regex::find_iter    ████████████▊          5.22 GB/s
-aho_corasick        █▏                     0.50 GB/s
+stringzilla         ████████████████████   7.61 GB/s
+regex::find_iter    ████████████▊          4.86 GB/s
+aho_corasick        █▏                     0.47 GB/s
 
 Python:
-stringzilla         ████████████████████   8.79 GB/s
-re.finditer         ▍                      0.19 GB/s
+stringzilla         ████████████████████   8.19 GB/s
+re.finditer         ▍                      0.18 GB/s
 ```
 
 See [find/README.md](find/README.md) for details
@@ -141,14 +141,14 @@ Throughput on AMD Zen5 Turin:
 ```
 Newline splitting:
                       English                     Arabic
-stringzilla           ████████████████ 15.45      ████████████████████ 18.34 GB/s
-stdlib                ██                1.90      ██                    1.82 GB/s
+stringzilla           ████████████████ 14.39      ████████████████████ 17.08 GB/s
+stdlib                ██                1.77      ██                    1.70 GB/s
 
 Whitespace splitting:
                       English                     Korean
-stringzilla           ████████████████████ 0.82   ████████████████████ 1.88 GB/s
-stdlib                ██████████████████▊  0.77   ██████████▍          0.98 GB/s
-icu::WhiteSpace       ██▋                  0.11   █▌                   0.15 GB/s
+stringzilla           ████████████████████ 0.76   ████████████████████ 1.75 GB/s
+stdlib                ██████████████████▊  0.72   ██████████▍          0.91 GB/s
+icu::WhiteSpace       ██▋                  0.10   █▌                   0.14 GB/s
 ```
 
 Case folding on bicameral scripts (Latin, Cyrillic, Greek, Armenian) plus Chinese for reference:
@@ -177,8 +177,8 @@ Codepoint indexing — the byte offset of the Nth codepoint — is where SIMD pa
 ```
 Byte offset of the Nth codepoint, full corpora:
                       English                      Korean
-stringzilla::find_nth ████████████████████  7.14   ████████████████████ 12.14 GB/s
-std::char_indices     ██▎                   0.83   █▏                   0.72 GB/s
+stringzilla::find_nth ████████████████████  6.65   ████████████████████ 11.31 GB/s
+std::char_indices     ██▎                   0.77   █▏                   0.67 GB/s
 ```
 
 See [tokenization/README.md](tokenization/README.md) and [normalization/README.md](normalization/README.md) for details
@@ -215,14 +215,14 @@ Throughput on long lines:
 
 ```
 Rust:
-stringzilla         ████████████████████  10.57 GB/s
-zeroize             ████████▉              4.73 GB/s
-rand_xoshiro        ███████▎               3.85 GB/s
+stringzilla         ████████████████████  9.844 GB/s
+zeroize             ████████▉              4.41 GB/s
+rand_xoshiro        ███████▎               3.59 GB/s
 
 Python:
-stringzilla         ████████████████████  20.37 GB/s
-pycryptodome        ████████████▉         13.16 GB/s
-numpy.Philox        █▌                     1.59 GB/s
+stringzilla         ████████████████████  18.97 GB/s
+pycryptodome        ████████████▉         12.26 GB/s
+numpy.Philox        █▌                     1.48 GB/s
 ```
 
 See [memory/README.md](memory/README.md) for details
@@ -230,7 +230,7 @@ See [memory/README.md](memory/README.md) for details
 ### Similarity Scoring
 
 Edit distance is essential for search engines, data cleaning, NLP, and bioinformatics.
-It's computationally expensive with O(n\*m) complexity, but GPUs and multi-core parallelism help.
+It's computationally expensive with O(n·m) complexity, but GPUs and multi-core parallelism help.
 Levenshtein distance on ~1,000 byte lines (MCUPS = Million Cell Updates Per Second):
 
 ```
@@ -253,9 +253,9 @@ Throughput on ~1,000 byte lines:
 ```
 Rust:
                         1 Core                       1 Socket
-pc::MinHash             ████████████████████   3.16
-stringzilla<384xGNR>    ███▏                   0.51  ███████████████▍      302.30 MB/s
-stringzilla<H100>                                    ████████████████████  392.37 MB/s
+pc::MinHash             ████████████████████   3.01
+stringzilla<384xGNR>    ███▏                   0.49  ███████████████▍      288.30 MB/s
+stringzilla<H100>                                    ████████████████████  374.19 MB/s
 ```
 
 See [fingerprints/README.md](fingerprints/README.md) for details
@@ -266,9 +266,9 @@ ChaCha20 and AES256 encryption throughput comparison on long lines:
 
 ```
 Rust:
-ring::aes256        ████████████████████   2.89 GB/s
-ring::chacha20      ████████▏              1.19 GB/s
-libsodium::chacha20 █████                  0.71 GB/s
+ring::aes256        ████████████████████   2.69 GB/s
+ring::chacha20      ████████▏              1.11 GB/s
+libsodium::chacha20 █████                  0.66 GB/s
 ```
 
 See [encryption/README.md](encryption/README.md) for details
@@ -296,19 +296,39 @@ RUSTFLAGS="-C target-cpu=native" \
 ```
 
 Wars always take long, and so do these benchmarks.
-Every one of them includes a few seconds of a warm-up phase to ensure that the CPU caches are filled and the results are not affected by cold start or SIMD-related frequency scaling.
-Each of them accepts a few environment variables to control the dataset, the tokenization, and the error bounds.
-You can log those by printing file-level documentation using `awk` on Linux:
+Every one of them includes a warm-up phase to ensure that the CPU caches are filled and the results are not affected by cold start or SIMD-related frequency scaling.
+Each of them accepts a few environment variables to control the dataset, the tokenization, and the time limits.
+Suite-specific ones are listed in each benchmark's file-level documentation, which you can print with:
 
 ```bash
-awk '/^\/\/!/ { print } !/^\/\/!/ { exit }' find/bench.rs
+awk '/^"#\]/ { exit } { print }' find/bench.rs
 ```
 
-Commonly used environment variables are:
+The shared harness variables are below, and the Python scripts read the same ones, taking no flags beyond `--help`.
+Defaults come from `stringwars.toml`, and every run prints the values it uses.
+An empty variable means the same as an unset one, and a value that does not parse stops the run before it starts.
 
-- `STRINGWARS_DATASET` - the path to the textual dataset file.
-- `STRINGWARS_TOKENS` - the tokenization mode: `file`, `lines`, or `words`.
-- `STRINGWARS_ERROR_BOUND` - the maximum allowed error in the Levenshtein distance.
+| Variable                    | Default            | Meaning                                                                      |
+| :-------------------------- | :----------------- | :--------------------------------------------------------------------------- |
+| `STRINGWARS_SEED`           | `42`               | Seed of the drawn inputs, like `normalization`'s needles, or `random`        |
+| `STRINGWARS_FILTER`         | none               | Regex over benchmark names, falling back to a substring match                |
+| `STRINGWARS_WARMUP`         | `1s`               | Warm-up cap per benchmark, like `1s` or `200ms`                              |
+| `STRINGWARS_TIME_LIMIT`     | `10s`              | Measurement cap per benchmark, like `10s` or `500ms`                         |
+| `STRINGWARS_BYTES`          | per suite, `256MB` | Bytes read from the dataset, like `256MB`, rounded down to a power of two    |
+| `STRINGWARS_BATCH_PER_CORE` | per suite          | Items per core, or per GPU streaming multiprocessor, in batched suites       |
+| `STRINGWARS_THREADS`        | all cores          | Cores for multi-core rows, `0` for all of them                               |
+| `STRINGWARS_DIMS`           | per suite          | MinHash widths in `fingerprints`, one like `128` or a list like `64,128,256` |
+| `STRINGWARS_DATASET`        | per suite          | Path to the textual dataset file                                             |
+| `STRINGWARS_TOKENS`         | per suite          | Tokenization mode: `file`, `lines`, or `words`                               |
+| `STRINGWARS_UNIQUE`         | `false`            | `1` or `true` deduplicates the tokens read                                   |
+| `STRINGWARS_MIN_SAMPLES`    | `10`               | Fewest samples a row needs before it may converge                            |
+| `STRINGWARS_TARGET_SPREAD`  | `0.025`            | Relative half-width at which a row counts as converged                       |
+| `STRINGWARS_RESULTS_DIR`    | none               | Directory for per-row NDJSON records                                         |
+| `STRINGWARS_COUNTERS`       | `false`            | `1` or `true` adds cycles-per-byte and IPC columns, Rust on Linux only       |
+| `STRINGWARS_COLLISIONS`     | `false`            | `1` or `true` adds collision rates to `hash`, Rust only                      |
+
+"Per suite" defaults are in `stringwars.toml`.
+Sizes are whole bytes or `KB`, `MB`, `GB` and `TB` in any case, and booleans are `0`, `1`, `true` or `false`.
 
 Here is an example of a common benchmark run on a Unix-like system:
 
@@ -328,50 +348,26 @@ cargo bench --features bench_hash --bench bench_hash --jobs $(nproc)
 
 ### Replicating the Results in Python
 
-It's recommended to use `uv` for Python dependency management and running the benchmarks.
-To install all dependencies for all benchmarks:
+Each suite has a dependency group of the same name in `pyproject.toml`, with exact versions in `uv.lock`.
+From the repository root, `uv run --group <suite>` installs that group together with the shared `stringwars.py` harness and runs the script:
 
 ```sh
-uv venv --python 3.12
-uv pip install -r requirements.txt -r requirements-cuda.txt
-uv pip install --only-binary=:all: -r requirements.txt -r requirements-cuda.txt
+STRINGWARS_DATASET=README.md STRINGWARS_TOKENS=lines uv run --group find find/bench.py
+uv run --group hash hash/bench.py --help
+uv run --group memory memory/bench.py --help
+uv run --group sequence sequence/bench.py --help
+uv run --group similarities similarities/bench.py --help
+uv run --group fingerprints fingerprints/bench.py --help
+uv run --group tokenization tokenization/bench.py --help
+uv run --group normalization normalization/bench.py --help
+uv run --group containers containers/bench.py --help
+uv run --group encryption encryption/bench.py --help
 ```
 
-To install dependencies for individual benchmarks:
+The cuDF rows need RAPIDS from NVIDIA's index, which cannot share `uv.lock` with the CPU pins, so layer it on top:
 
 ```sh
-PIP_EXTRA_INDEX_URL=https://pypi.nvidia.com \
-uv pip install '.[find,hash,memory,sequence,fingerprints,similarities,tokenization,normalization,containers,encryption]'
-```
-
-To run individual benchmarks, you can call:
-
-```sh
-uv run --no-project python find/bench.py --help
-uv run --no-project python hash/bench.py --help
-uv run --no-project python memory/bench.py --help
-uv run --no-project python sequence/bench.py --help
-uv run --no-project python similarities/bench.py --help
-uv run --no-project python fingerprints/bench.py --help
-uv run --no-project python tokenization/bench.py --help
-uv run --no-project python normalization/bench.py --help
-```
-
-### Running Without Cloning
-
-The Python benchmarks are self-contained [PEP 723](https://peps.python.org/pep-0723/) scripts, so `uv` can fetch a script and resolve its dependencies straight from a URL — no clone, no manual `pip install`:
-
-```sh
-uv run https://raw.githubusercontent.com/ashvardanian/StringWars/main/tokenization/bench.py \
-    --dataset README.md --tokens file
-```
-
-The Rust benchmarks are a Cargo workspace with a path dependency on StringZilla, so there is no exact zero-clone equivalent — `cargo install --git` only installs `[[bin]]`/`[[example]]` targets, not `[[bench]]`.
-The lightest path is a shallow clone:
-
-```sh
-git clone --depth 1 https://github.com/ashvardanian/StringWars && cd StringWars
-RUSTFLAGS="-C target-cpu=native" cargo bench --features bench_hash --bench bench_hash --jobs $(nproc)
+uv run --group sequence --with-requirements requirements-cuda.txt sequence/bench.py
 ```
 
 ## Datasets
@@ -429,7 +425,7 @@ Files are XZ-compressed plain text with documents separated by double-newlines.
 
 | Workload                    | Relevant Scripts                  | Best Test Languages                                  |
 | --------------------------- | --------------------------------- | ---------------------------------------------------- |
-| __Case Folding__            | Latin, Cyrillic, Greek, Armenian  | Turkish (I/i), German (ss->SS), Greek, Russian       |
+| __Case Folding__            | Latin, Cyrillic, Greek, Armenian  | Turkish (I/i), German (ss → SS), Greek, Russian      |
 | __Normalization__           | Indic, Arabic, Vietnamese, Korean | Vietnamese, Hindi, Korean, Arabic                    |
 | __Whitespace Tokenization__ | Most scripts except CJK/Thai      | English, Russian, Arabic vs. Chinese, Japanese, Thai |
 | __Grapheme Clusters__       | Indic, Thai, Khmer, Myanmar       | Thai, Tamil, Myanmar, Khmer                          |
@@ -480,7 +476,8 @@ curl -fL https://data.statmt.org/cc-100/si.txt.xz | xz -d > cc100_si.txt      # 
 
 The [Leipzig Corpora Collection](https://wortschatz.uni-leipzig.de/en/download/) provides pre-segmented sentences in 200+ languages.
 Each tar.gz contains `*-sentences.txt` (tab-separated `id\tsentence`), `*-words.txt` (frequencies), and co-occurrence files.
-Standard sizes: 10K, 30K, 100K, 300K, 1M sentences. Check for newer years at the download page.
+Standard sizes: 10K, 30K, 100K, 300K, 1M sentences.
+Check for newer years at the download page.
 
 __Bicameral scripts__ with various case folding rules:
 
@@ -563,9 +560,9 @@ for url in "${source_urls[@]}"; do
 done
 
 # Concatenate every file and shuffle all lines into one adversarial document. The shuffle is
-# reproducible: a seeded AES-CTR keystream feeds `shuf --random-source`, so the same STRINGWARS_SEED
-# always yields the same ordering (default 42, matching the benchmark harnesses).
-seed="${STRINGWARS_SEED:-42}"
+# reproducible: a seeded AES-CTR keystream feeds `shuf --random-source`, so the same seed
+# always yields the same ordering.
+seed=42
 seeded_random() { openssl enc -aes-256-ctr -pass "pass:$1" -nosalt </dev/zero 2>/dev/null; }
 cat unicode/*.txt | shuf --random-source=<(seeded_random "$seed") > unicode_tests.txt
 ```
@@ -600,10 +597,8 @@ After cloning, enable the repository's git hooks once:
 git config core.hooksPath .githooks
 ```
 
-The `pre-commit` hook rejects banner marks (three or more consecutive `-` or `=`) in
-Python and Rust sources. Use plain text for section titles, and `# region:` /
-`# endregion:` at module scope for foldable sections.
+The `pre-commit` hook rejects banner marks (three or more consecutive `-` or `=`) in Python and Rust sources.
+Use plain text for section titles, and `# region:` / `# endregion:` at module scope for foldable sections.
 
-It also runs `ruff check` and `ruff format --check` on staged Python (the project
-requires Python 3.13). Fix issues with `ruff check --fix . && ruff format .` rather
-than silencing them with `# noqa`.
+It also runs `ruff check` and `ruff format --check` on staged Python (the project requires Python 3.13).
+Fix issues with `ruff check --fix . && ruff format .` rather than silencing them with `# noqa`.
