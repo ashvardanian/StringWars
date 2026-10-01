@@ -1,29 +1,45 @@
 #!/bin/sh
-# Reject banner marks (3+ consecutive "-" or "=") in staged Python/Rust source.
-# Use plain text for section titles and "# region:" / "# endregion:" (module scope
-# only) for foldable sections instead. Markdown files and the PEP-723 "# ///" and
-# Rust "///" doc markers are never matched, so they are unaffected.
+
+export LC_ALL=C # Byte-wise regexes, immune to the committer's locale
 
 status=0
-files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py|rs)$')
 
-for file in $files; do
-    hits=$(git show ":$file" | grep -nE '(-{3,}|={3,})')
-    if [ -n "$hits" ]; then
-        if [ "$status" -eq 0 ]; then
-            echo "Banned banner marks (--- / ===) in staged source:"
-            echo
-        fi
-        printf '%s\n' "$hits" | sed "s|^|  $file:|"
-        status=1
-    fi
+# Rejects an added banner ruler outside Markdown: a comment that opens or closes on a run of `---`, `===`, `####`,
+# `////`, `***` or horizontal box-drawing strokes, a line of such runs around an optional label, or a string literal
+# that prints one. Box corners and verticals stay free for diagrams, a `|` line for Markdown tables, and YAML keeps
+# its `---` document marker. Reads `+` lines, or a whole diff, from stdin.
+check_banners() { # check_banners <path> < added-lines
+    case "$1" in
+    *.c | *.h | *.cc | *.cpp | *.cxx | *.hpp | *.hxx | *.cu | *.cuh | *.hip | *.metal | *.pml | *.py | *.pyi | *.pyx | \
+        *.rs | *.go | *.zig | *.mojo | *.js | *.mjs | *.cjs | *.ts | *.mts | *.tsx | *.swift | *.java | *.kt | *.cs | \
+        *.toml | *.yml | *.yaml | *.cmake | *CMakeLists.txt | *.sh) ;;
+    *) return 0 ;;
+    esac
+    local rulers
+    rulers=$(awk -v path="$1" -v quote="'" '
+        BEGIN {
+            stroke = "(─|━|┄|┅|┈|┉|╌|╍|═)"
+            run = "(---+|===+|####+|////+|\\*\\*\\*+|" stroke stroke stroke "+)"
+            marker = "^(#|//|/\\*|\\*|--|;)[!/*<]?[ \t]*"
+            printed = "(----+|====+|####+|" stroke stroke stroke "+)"
+            literal = "[\"" quote "][ \t]*" printed "|" printed "[ \t]*[\"" quote "]"
+        }
+        /^\+/ {
+            text = substr($0, 2); sub(/^[ \t]+/, "", text); sub(/[ \t\r]+$/, "", text)
+            if (text == "---" && path ~ /\.ya?ml$/) next
+            if (text ~ ("^" run "([ \t].*[ \t]" run ")?$") || text ~ (marker run "[ \t]*(\\*/)?([ \t]|$)") ||
+                (text ~ marker && text ~ ("[ \t]" run "[ \t]*(\\*/)?$")) || (text ~ literal && text !~ /\|/))
+                print
+        }')
+    [ -z "$rulers" ] && return 0
+    echo "pre-commit: $1 adds a banner ruler; name a section with #pragma region or # region, or a plain sentence:"
+    printf '%s\n' "$rulers" | head -5
+    return 1
+}
+
+for file in $(git diff --cached --name-only --diff-filter=ACM); do
+    git diff --cached --unified=0 -- "$file" | check_banners "$file" || status=1
 done
-
-if [ "$status" -ne 0 ]; then
-    echo
-    echo "Remove the --- / === runs. Use plain text titles, or '# region:' / '# endregion:'"
-    echo "at module scope for foldable sections."
-fi
 
 # Keep the Python suite conformant to [tool.ruff] in pyproject.toml.
 # Fix issues for real with `ruff check --fix . && ruff format .` rather than
@@ -132,5 +148,18 @@ check_rust_use_groups() { # check_rust_use_groups <own-crate> <path> < source
 for file in $(git diff --cached --name-only --diff-filter=ACM -- '*.rs'); do
     git show ":$file" | check_rust_use_groups stringwars "$file" || status=1
 done
+
+# Rejects a pipe-table row in a comment of a code file, because a header table is plain columns aligned with
+# spaces, which reads the same in an editor, a terminal and a diff; pipe tables belong only in Markdown files.
+piped=$(git diff --cached --unified=0 --diff-filter=ACM -- '*.c' '*.h' '*.hpp' '*.cpp' '*.cc' '*.cu' '*.cuh' '*.py' \
+    '*.pyi' '*.rs' '*.go' '*.swift' '*.zig' '*.mojo' '*.js' '*.ts' '*.java' '*.sh' '*.cmake' 'CMakeLists.txt' | awk '
+    /^\+\+\+ b\// { path = substr($0, 7); next }
+    /^\+[[:space:]]*(\*|\/\/[\/!]?|#)[[:space:]]+\|.*\|[[:space:]]*$/ { print path ": " substr($0, 2) }')
+if [ -n "$piped" ]; then
+    echo "pre-commit: a comment draws a pipe table; pipe tables belong only in Markdown, so align plain columns"
+    echo "            with spaces, indented 4 past the prose:"
+    printf '%s\n' "$piped" | head -5
+    status=1
+fi
 
 exit $status
