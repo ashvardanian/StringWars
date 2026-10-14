@@ -76,23 +76,27 @@ def bench_fingerprint(
 def benchmark_stringzillas(
     settings: Settings, documents: list[str], document_byte_lengths: np.ndarray, dimensions: int
 ) -> None:
-    """StringZilla Fingerprints on 1 core, all cores, and the GPU (if present)."""
+    """StringZilla Fingerprints on 1 core, all cores, and the GPU (if present).
+
+    Each variant opens its own scope and drops it on return: an idle ForkUnion pool spin-waits, so a
+    multi-core scope alive during the single-core variant would consume the very cores it is measured on.
+    """
     cpu_cores = settings.threads
-    default_scope = szs.DeviceScope()
-    cpu_scope = szs.DeviceScope(cpu_cores=cpu_cores)
-    gpu_scopes: list[tuple[int, szs.DeviceScope]] = []
+    gpu_ordinals_available: list[int] = []
     for ordinal in gpu_ordinals(settings):
         if not gpu_require(settings, ordinal):
             continue
         try:
-            gpu_scopes.append((ordinal, szs.DeviceScope(gpu_device=ordinal)))
+            szs.DeviceScope(gpu_device=ordinal)
+            gpu_ordinals_available.append(ordinal)
         except Exception as error:  # any failure here means there is no usable GPU
             if settings.devices is not None:
                 raise SystemExit(f"Requested CUDA device cuda:{ordinal} is unavailable: {error}") from error
 
     moved = sz.Strs(documents)
 
-    def run_variant(name: str, scope: szs.DeviceScope, documents_per_batch: int, concurrency: Threads) -> None:
+    def run_variant(name: str, scope_arguments: dict[str, int], documents_per_batch: int, concurrency: Threads) -> None:
+        scope = szs.DeviceScope(**scope_arguments)
         engine = szs.Fingerprints(ndim=dimensions, window_widths=NGRAM_WIDTHS_ARRAY, capabilities=scope)
 
         def kernel(strs_slice: sz.Strs) -> None:
@@ -108,16 +112,16 @@ def benchmark_stringzillas(
     all_cpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<{cpu_cores}cpu>"
 
     if settings.selects(single_cpu_name):
-        run_variant(single_cpu_name, default_scope, batch_size(settings, 1), Threads(1))
+        run_variant(single_cpu_name, {}, batch_size(settings, 1), Threads(1))
     if settings.selects(all_cpu_name):
-        run_variant(all_cpu_name, cpu_scope, batch_size(settings, cpu_cores), cpu_cores)
-    for ordinal, gpu_scope in gpu_scopes:
+        run_variant(all_cpu_name, {"cpu_cores": cpu_cores}, batch_size(settings, cpu_cores), cpu_cores)
+    for ordinal in gpu_ordinals_available:
         gpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<cuda:{ordinal}>"
         if not settings.selects(gpu_name):
             continue
         if not gpu_require(settings, ordinal):
             continue
-        run_variant(gpu_name, gpu_scope, gpu_batch_size(settings, ordinal), Threads(1))
+        run_variant(gpu_name, {"gpu_device": ordinal}, gpu_batch_size(settings, ordinal), Threads(1))
 
 
 def benchmark_datasketch(

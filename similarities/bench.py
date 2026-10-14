@@ -150,10 +150,15 @@ def unary_class_costs(match_cost: int, mismatch_cost: int) -> tuple[np.ndarray, 
 
 @dataclass(frozen=True)
 class DeviceVariant:
-    """A named benchmark variant for one device configuration, with its cross-product side."""
+    """A named benchmark variant for one device configuration, with its cross-product side.
+
+    It holds the arguments of its scope rather than the scope: an idle ForkUnion pool spin-waits, so
+    a multi-core scope alive during a single-threaded row would consume the very cores that row is
+    measured on. Each row opens its own scope and drops it with the row.
+    """
 
     label: str
-    scope: szs.DeviceScope
+    scope_arguments: dict[str, int]
     side: int
     concurrency: Threads = Threads(1)
     ordinal: int | None = None
@@ -173,14 +178,14 @@ def build_device_variants(settings: Settings, token_count: int) -> list[DeviceVa
     variants.append(
         DeviceVariant(
             "<1cpu>",
-            szs.DeviceScope(cpu_cores=1),
+            {"cpu_cores": 1},
             crossproduct_side(batch_size(settings, 1), token_count),
         ),
     )
     variants.append(
         DeviceVariant(
             f"<{cpu_cores}cpu>",
-            szs.DeviceScope(cpu_cores=cpu_cores),
+            {"cpu_cores": cpu_cores},
             crossproduct_side(batch_size(settings, cpu_cores), token_count),
             cpu_cores,
         ),
@@ -190,7 +195,7 @@ def build_device_variants(settings: Settings, token_count: int) -> list[DeviceVa
         if not gpu_require(settings, ordinal):
             continue
         try:
-            gpu_scope = szs.DeviceScope(gpu_device=ordinal)
+            szs.DeviceScope(gpu_device=ordinal)
         except Exception as error:
             if settings.devices is not None:
                 raise SystemExit(f"Requested CUDA device cuda:{ordinal} is unavailable: {error}") from error
@@ -199,7 +204,7 @@ def build_device_variants(settings: Settings, token_count: int) -> list[DeviceVa
         variants.append(
             DeviceVariant(
                 f"<cuda:{ordinal}>",
-                gpu_scope,
+                {"gpu_device": ordinal},
                 crossproduct_side(gpu_batch_size(settings, ordinal), token_count),
                 ordinal=ordinal,
             )
@@ -236,9 +241,10 @@ def benchmark_stringzillas_distances(
         side = variant.side
         queries = sz.Strs(tokens[0:side])
         candidates = sz.Strs(tokens[side : 2 * side])
+        scope = szs.DeviceScope(**variant.scope_arguments)
 
         try:
-            engine = engine_class(capabilities=variant.scope)
+            engine = engine_class(capabilities=scope)
         except Exception as creation_error:
             note_unavailable(full_name, str(creation_error))
             continue
@@ -260,7 +266,7 @@ def benchmark_stringzillas_distances(
             engine: Any = engine,
             queries: sz.Strs = queries,
             candidates: sz.Strs = candidates,
-            scope: szs.DeviceScope = variant.scope,
+            scope: szs.DeviceScope = scope,
             matrix: np.ndarray = matrix,
         ) -> None:
             engine(queries, candidates, scope, out=matrix)
@@ -306,6 +312,7 @@ def benchmark_stringzillas_scores(
         side = variant.side
         queries = sz.Strs(tokens[0:side])
         candidates = sz.Strs(tokens[side : 2 * side])
+        scope = szs.DeviceScope(**variant.scope_arguments)
 
         try:
             engine = engine_class(
@@ -313,7 +320,7 @@ def benchmark_stringzillas_scores(
                 class_substitution_costs,
                 open=gap_open,
                 extend=gap_extend,
-                capabilities=variant.scope,
+                capabilities=scope,
             )
         except Exception as creation_error:
             note_unavailable(full_name, str(creation_error))
@@ -336,7 +343,7 @@ def benchmark_stringzillas_scores(
             engine: Any = engine,
             queries: sz.Strs = queries,
             candidates: sz.Strs = candidates,
-            scope: szs.DeviceScope = variant.scope,
+            scope: szs.DeviceScope = scope,
             matrix: np.ndarray = matrix,
         ) -> None:
             engine(queries, candidates, scope, out=matrix)
@@ -381,15 +388,20 @@ def benchmark_edit_distance_baselines(
         query_lengths, candidate_lengths = length_metric
         total_cells = int((query_lengths * candidate_lengths).sum())
         total_bytes = Bytes(int(query_bytes.sum()) + int(candidate_bytes.sum()))
-        measure_pairwise_baseline(
-            settings,
-            name,
-            scalar_function,
-            queries,
-            candidates,
-            total_cells,
-            total_bytes,
-        )
+        # A baseline that declines these inputs skips its own row rather than aborting the suite:
+        # `edlib` rejects any pair whose combined alphabet exceeds 256 symbols, as multilingual corpora do.
+        try:
+            measure_pairwise_baseline(
+                settings,
+                name,
+                scalar_function,
+                queries,
+                candidates,
+                total_cells,
+                total_bytes,
+            )
+        except Exception as baseline_error:
+            note_unavailable(name, str(baseline_error))
 
     codepoint_metric = (query_codepoints, candidate_codepoints)
     byte_metric = (query_bytes, candidate_bytes)

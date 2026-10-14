@@ -521,7 +521,7 @@ pub enum Collisions {
 }
 
 /// Suites that put rows on a GPU, and so accept `STRINGWARS_DEVICES`.
-pub const GPU_SUITES: [&str; 3] = ["similarities", "fingerprints", "sequence"];
+pub const GPU_SUITES: [&str; 4] = ["similarities", "fingerprints", "sequence", "substrings"];
 
 /// Every setting of one suite, read once at the top of `main` and passed down. Defaults come
 /// from `stringwars.toml`, the suite's `[suite]` entry first and `[limits]` second, so neither

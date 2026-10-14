@@ -201,7 +201,7 @@ def print_machine(libraries: Mapping[str, str]) -> None:
 FALLBACK_GPU_MULTIPROCESSORS = 64
 
 # Suites that put rows on a GPU, and so accept `STRINGWARS_DEVICES`.
-GPU_SUITES = ("similarities", "fingerprints", "sequence")
+GPU_SUITES = ("similarities", "fingerprints", "sequence", "substrings")
 
 
 def batch_size(settings: "Settings", cores: int) -> int:

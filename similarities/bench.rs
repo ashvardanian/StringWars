@@ -253,11 +253,10 @@ fn bench_similarities(settings: &Settings) {
     println!("- Tokens available: {}", token_count);
     println!();
 
-    // One thread pool per device width for the whole run: each `DeviceScope` spins up its own,
-    // and the three benchmark groups used to build a fresh set apiece.
+    // The single-core and GPU scopes live for the whole run, as neither holds a thread pool. The
+    // multi-core scope is opened by each row that uses it: an idle ForkUnion pool spin-waits, so
+    // one alive during a single-threaded row would consume the very cores that row is measured on.
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
-    let cpu_parallel =
-        DeviceScope::cpu_cores(threads.0.get()).expect("Failed to create multi-core device scope");
     let mut gpu_devices: Vec<GpuDevice<DeviceScope>> = Vec::new();
     for ordinal in gpu_ordinals(settings) {
         if !gpu_require(settings, ordinal) {
@@ -294,7 +293,6 @@ fn bench_similarities(settings: &Settings) {
         &tape_bytes_view,
         &chars_view,
         &cpu_single,
-        &cpu_parallel,
         &gpu_devices,
         threads,
         side_single_cpu,
@@ -310,7 +308,6 @@ fn bench_similarities(settings: &Settings) {
             group_name,
             &tape_bytes_view,
             &cpu_single,
-            &cpu_parallel,
             &gpu_devices,
             threads,
             side_single_cpu,
@@ -328,7 +325,6 @@ fn perform_uniform_benchmarks(
     tape_bytes_view: &BytesTapeView<u64>,
     chars_view: &CharsTapeView<u64>,
     cpu_single: &DeviceScope,
-    cpu_parallel: &DeviceScope,
     gpu_devices: &[GpuDevice<DeviceScope>],
     threads: Threads,
     side_single_cpu: usize,
@@ -336,12 +332,8 @@ fn perform_uniform_benchmarks(
 ) {
     let lev_single = LevenshteinDistances::new(cpu_single, 0, 1, 1, 1)
         .expect("Failed to create LevenshteinDistances single");
-    let lev_parallel = LevenshteinDistances::new(cpu_parallel, 0, 1, 1, 1)
-        .expect("Failed to create LevenshteinDistances parallel");
     let lev_utf8_single = LevenshteinDistancesUtf8::new(cpu_single, 0, 1, 1, 1)
         .expect("Failed to create LevenshteinDistancesUtf8 single");
-    let lev_utf8_parallel = LevenshteinDistancesUtf8::new(cpu_parallel, 0, 1, 1, 1)
-        .expect("Failed to create LevenshteinDistancesUtf8 parallel");
 
     // RapidFuzz baselines (no batching; scan one-by-one). One pair per call across the
     // query/candidate diagonal of the single-core cross-product. One pass scores every
@@ -432,6 +424,10 @@ fn perform_uniform_benchmarks(
     }
 
     {
+        let cpu_parallel = DeviceScope::cpu_cores(threads.0.get())
+            .expect("Failed to create multi-core device scope");
+        let lev_parallel = LevenshteinDistances::new(&cpu_parallel, 0, 1, 1, 1)
+            .expect("Failed to create LevenshteinDistances parallel");
         let work = crossproduct_work_bytes(tape_bytes_view, side_multi_cpu);
         let mut matrix = UnifiedMat::<usize>::try_allocate(side_multi_cpu, side_multi_cpu)
             .expect("Failed to allocate LevenshteinDistances matrix (parallel)");
@@ -444,7 +440,7 @@ fn perform_uniform_benchmarks(
             &mut matrix,
             |queries, candidates, matrix| {
                 lev_parallel
-                    .compute_into(cpu_parallel, queries, candidates, matrix)
+                    .compute_into(&cpu_parallel, queries, candidates, matrix)
                     .unwrap_or_else(|error| {
                         panic!(
                             "Failed to compute LevenshteinDistances on CPU (multi-threaded): {}",
@@ -481,6 +477,10 @@ fn perform_uniform_benchmarks(
     }
 
     {
+        let cpu_parallel = DeviceScope::cpu_cores(threads.0.get())
+            .expect("Failed to create multi-core device scope");
+        let lev_utf8_parallel = LevenshteinDistancesUtf8::new(&cpu_parallel, 0, 1, 1, 1)
+            .expect("Failed to create LevenshteinDistancesUtf8 parallel");
         let work = crossproduct_work_chars(chars_view, side_multi_cpu);
         let mut matrix = UnifiedMat::<usize>::try_allocate(side_multi_cpu, side_multi_cpu)
             .expect("Failed to allocate LevenshteinDistancesUtf8 matrix (parallel)");
@@ -493,7 +493,7 @@ fn perform_uniform_benchmarks(
             &mut matrix,
             |queries, candidates, matrix| {
                 lev_utf8_parallel
-                    .compute_into(cpu_parallel, queries, candidates, matrix)
+                    .compute_into(&cpu_parallel, queries, candidates, matrix)
                     .unwrap_or_else(|error| {
                         panic!(
                             "Failed to compute LevenshteinDistancesUtf8 on CPU (multi-threaded): {}",
@@ -593,7 +593,6 @@ fn perform_score_benchmarks(
     group_name: &str,
     tape_bytes_view: &BytesTapeView<u64>,
     cpu_single: &DeviceScope,
-    cpu_parallel: &DeviceScope,
     gpu_devices: &[GpuDevice<DeviceScope>],
     threads: Threads,
     side_single_cpu: usize,
@@ -613,14 +612,6 @@ fn perform_score_benchmarks(
         extend_cost,
     )
     .expect("Failed to create NW single");
-    let nw_parallel = NeedlemanWunschScores::new(
-        cpu_parallel,
-        &byte_to_class,
-        &class_costs,
-        open_cost,
-        extend_cost,
-    )
-    .expect("Failed to create NW parallel");
     let sw_single = SmithWatermanScores::new(
         cpu_single,
         &byte_to_class,
@@ -629,14 +620,6 @@ fn perform_score_benchmarks(
         extend_cost,
     )
     .expect("Failed to create SW single");
-    let sw_parallel = SmithWatermanScores::new(
-        cpu_parallel,
-        &byte_to_class,
-        &class_costs,
-        open_cost,
-        extend_cost,
-    )
-    .expect("Failed to create SW parallel");
 
     let max_len = max_token_len(tape_bytes_view, side_single_cpu, side_multi_cpu, side_gpu);
     let baseline_side = side_single_cpu;
@@ -725,6 +708,16 @@ fn perform_score_benchmarks(
     }
 
     {
+        let cpu_parallel = DeviceScope::cpu_cores(threads.0.get())
+            .expect("Failed to create multi-core device scope");
+        let nw_parallel = NeedlemanWunschScores::new(
+            &cpu_parallel,
+            &byte_to_class,
+            &class_costs,
+            open_cost,
+            extend_cost,
+        )
+        .expect("Failed to create NW parallel");
         let work = crossproduct_work_bytes(tape_bytes_view, side_multi_cpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_multi_cpu, side_multi_cpu)
             .expect("Failed to allocate NeedlemanWunschScores matrix (parallel)");
@@ -737,7 +730,7 @@ fn perform_score_benchmarks(
             &mut matrix,
             |queries, candidates, matrix| {
                 nw_parallel
-                    .compute_into(cpu_parallel, queries, candidates, matrix)
+                    .compute_into(&cpu_parallel, queries, candidates, matrix)
                     .unwrap_or_else(|error| {
                         panic!(
                             "Failed to compute NeedlemanWunschScores on CPU (multi-threaded): {}",
@@ -805,6 +798,16 @@ fn perform_score_benchmarks(
     }
 
     {
+        let cpu_parallel = DeviceScope::cpu_cores(threads.0.get())
+            .expect("Failed to create multi-core device scope");
+        let sw_parallel = SmithWatermanScores::new(
+            &cpu_parallel,
+            &byte_to_class,
+            &class_costs,
+            open_cost,
+            extend_cost,
+        )
+        .expect("Failed to create SW parallel");
         let work = crossproduct_work_bytes(tape_bytes_view, side_multi_cpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_multi_cpu, side_multi_cpu)
             .expect("Failed to allocate SmithWatermanScores matrix (parallel)");
@@ -817,7 +820,7 @@ fn perform_score_benchmarks(
             &mut matrix,
             |queries, candidates, matrix| {
                 sw_parallel
-                    .compute_into(cpu_parallel, queries, candidates, matrix)
+                    .compute_into(&cpu_parallel, queries, candidates, matrix)
                     .unwrap_or_else(|error| {
                         panic!(
                             "Failed to compute SmithWatermanScores on CPU (multi-threaded): {}",

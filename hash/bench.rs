@@ -27,9 +27,9 @@ use wyhash::wyhash;
 use xxhash_rust::xxh3::xxh3_64;
 
 use stringwars::{
-    finish, install_panic_hook, log_timing_overhead, measure, note_unavailable, print_machine,
-    resolve_dataset, Bytes, Collisions, MeasureSpec, Outcome, ResultExt, Settings, Status, Unit,
-    WorkUnits,
+    expect_ok, finish, install_panic_hook, log_timing_overhead, measure, note_unavailable,
+    print_machine, resolve_dataset, Bytes, Collisions, MeasureSpec, Outcome, ResultExt, Settings,
+    Status, Unit, WorkUnits,
 };
 
 /// Benchmarks one stateless hash that produces a `u64` result: runs `bench_each_token` for
@@ -334,9 +334,52 @@ fn bench_checksum(settings: &Settings, work: WorkUnits, slices: &[&[u8]], unique
         });
     }
 
+    // A batch retires when its longest member does, so the distance between dataset order and
+    // length order is what length skew costs.
+    bench_lane_batches(settings, "checksum/stringzilla::Sha256s", slices);
+    let mut sorted_by_length: Vec<&[u8]> = slices.to_vec();
+    sorted_by_length.sort_by_key(|token| token.len());
+    bench_lane_batches(
+        settings,
+        "checksum/stringzilla::Sha256s<sorted>",
+        &sorted_by_length,
+    );
+
     if !unique_tokens.is_empty() {
         println!();
     }
+}
+
+/// How many messages the multi-state SHA256 hasher advances together, one per lane.
+const SHA256_LANES: usize = 16;
+
+/// Times SHA256 over consecutive batches of `SHA256_LANES` tokens, one lane per token. Hashing one
+/// message is a serial dependency chain however wide the machine is; independent messages compress
+/// in parallel lanes instead. A trailing partial batch is left out of the pass and of its work.
+fn bench_lane_batches(settings: &Settings, name: &str, tokens: &[&[u8]]) {
+    let batched = &tokens[..tokens.len() - tokens.len() % SHA256_LANES];
+    if batched.is_empty() {
+        note_unavailable(name, "fewer tokens than lanes");
+        return;
+    }
+    let work = WorkUnits::new(
+        batched.len() as u64,
+        Bytes(batched.iter().map(|token| token.len() as u64).sum()),
+    );
+    let initial_hasher = sz::Sha256::new();
+    let mut lane_hashers = [initial_hasher; SHA256_LANES];
+    let mut digests = [[0u8; sz::SHA256_DIGEST_LENGTH]; SHA256_LANES];
+    measure(settings, name, MeasureSpec::new(Unit::Bytes, work), || {
+        for batch in batched.chunks_exact(SHA256_LANES) {
+            lane_hashers.fill(initial_hasher);
+            expect_ok(sz::sha256_multistate_update(
+                &mut lane_hashers,
+                black_box(batch),
+            ));
+            expect_ok(sz::sha256_multistate_digest(&lane_hashers, &mut digests));
+            black_box(&digests);
+        }
+    });
 }
 
 /// Benchmarks stateful hashes, streaming the whole dataset through one hasher per pass and

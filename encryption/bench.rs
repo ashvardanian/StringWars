@@ -1,6 +1,10 @@
 #![doc = r#"# StringWars: Encryption
 
-AEAD benchmarks: key generation, encryption and decryption across ring, OpenSSL and libsodium.
+AEAD benchmarks: key generation, encryption and decryption across ring, OpenSSL, libsodium
+and StringZilla.
+
+StringZilla also contributes an AES-256-CTR row. Counter mode is unauthenticated, so it is not
+comparable to the AEAD rows on security, only on what the cipher costs without a tag to accumulate.
 
 ## System Dependencies
 
@@ -19,6 +23,7 @@ use std::process::ExitCode;
 
 use openssl::symm::{Cipher, Crypter, Mode};
 use stringtape::BytesCowsAuto;
+use stringzilla::sz::{Aes256CtrKey, Aes256GcmKey, AES256_NONCE_LENGTH};
 
 use stringwars::{
     expect_ok, finish, install_panic_hook, log_timing_overhead, measure, print_machine,
@@ -175,6 +180,28 @@ fn bench_key_generation(settings: &Settings) {
         );
     }
 
+    // The GCM key is the round-key schedule plus the eight Galois hash subkey powers.
+    measure(
+        settings,
+        "keygen/stringzilla::aes256gcm",
+        MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(Bytes(32))),
+        || {
+            let key = Aes256GcmKey::new(&[0u8; 32]);
+            let _ = black_box(&key);
+        },
+    );
+
+    // Counter mode reads no hash subkey powers, so its key is the bare round-key schedule.
+    measure(
+        settings,
+        "keygen/stringzilla::aes256ctr",
+        MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(Bytes(32))),
+        || {
+            let key = Aes256CtrKey::new(&[0u8; 32]);
+            let _ = black_box(&key);
+        },
+    );
+
     {
         use sodiumoxide::crypto::aead::chacha20poly1305_ietf::{self, Key};
 
@@ -320,6 +347,41 @@ fn bench_encryption(settings: &Settings, tokens: &BytesCowsAuto) {
                         &mut ciphertext,
                         &mut tag,
                     ));
+                }
+            },
+        );
+    }
+
+    {
+        let key = Aes256GcmKey::new(&[0u8; 32]);
+        let mut sealed = vec![0u8; longest_token];
+        measure(
+            settings,
+            "encryption/stringzilla::aes256gcm",
+            MeasureSpec::new(Unit::Bytes, pass_work),
+            || {
+                for (index, token) in slices.iter().enumerate() {
+                    let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
+                    black_box(key.encrypt_into(&nonce, &[], token, &mut sealed[..token.len()]));
+                }
+            },
+        );
+    }
+
+    // Unauthenticated, so not comparable to the AEAD rows on security, only on what the cipher
+    // costs without a tag to accumulate.
+    {
+        let key = Aes256CtrKey::new(&[0u8; 32]);
+        let mut sealed = vec![0u8; longest_token];
+        measure(
+            settings,
+            "encryption/stringzilla::aes256ctr",
+            MeasureSpec::new(Unit::Bytes, pass_work),
+            || {
+                for (index, token) in slices.iter().enumerate() {
+                    let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
+                    key.xor_into(&nonce, 0, token, &mut sealed[..token.len()]);
+                    black_box(&sealed);
                 }
             },
         );
@@ -542,6 +604,58 @@ fn bench_decryption(settings: &Settings, tokens: &BytesCowsAuto) {
                         &mut plaintext,
                         tag,
                     ));
+                }
+            },
+        );
+    }
+
+    let key_stringzilla_gcm = Aes256GcmKey::new(&key_bytes);
+    let encrypted_tokens_stringzilla: Vec<(Vec<u8>, [u8; 16])> = tokens
+        .iter()
+        .enumerate()
+        .map(|(index, token)| {
+            let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
+            let mut ciphertext = vec![0u8; token.len()];
+            let tag = key_stringzilla_gcm.encrypt_into(&nonce, &[], token, &mut ciphertext);
+            (ciphertext, tag)
+        })
+        .collect();
+
+    {
+        let mut plaintext = vec![0u8; longest_token];
+        measure(
+            settings,
+            "decryption/stringzilla::aes256gcm",
+            MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
+            || {
+                for (index, (ciphertext, tag)) in encrypted_tokens_stringzilla.iter().enumerate() {
+                    let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
+                    expect_ok(key_stringzilla_gcm.decrypt_into(
+                        &nonce,
+                        &[],
+                        ciphertext,
+                        &mut plaintext[..ciphertext.len()],
+                        tag,
+                    ));
+                    black_box(&plaintext);
+                }
+            },
+        );
+    }
+
+    // Counter mode is its own inverse, so this is the encryption call again, unauthenticated.
+    {
+        let key = Aes256CtrKey::new(&key_bytes);
+        let mut plaintext = vec![0u8; longest_token];
+        measure(
+            settings,
+            "decryption/stringzilla::aes256ctr",
+            MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
+            || {
+                for (index, (ciphertext, _)) in encrypted_tokens_stringzilla.iter().enumerate() {
+                    let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
+                    key.xor_into(&nonce, 0, ciphertext, &mut plaintext[..ciphertext.len()]);
+                    black_box(&plaintext);
                 }
             },
         );

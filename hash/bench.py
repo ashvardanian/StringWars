@@ -15,16 +15,19 @@ import blake3
 import cityhash
 import google_crc32c
 import mmh3
+import numpy as np
 import stringzilla as sz
 import xxhash
 
 from stringwars import (
+    Bytes,
     MeasureSpec,
     Settings,
     finish,
     log_dataset,
     log_timing_overhead,
     measure,
+    note_unavailable,
     pass_over,
     print_machine,
     print_settings,
@@ -141,6 +144,39 @@ def run_checksum_benchmarks(
 
     # SHA256 via StringZilla
     bench_hash_function(settings, "checksum/stringzilla.Sha256", tokens, lambda x: sz.Sha256().update(x).digest(), work)
+
+    # A batch retires when its longest member does, so the distance between dataset order and
+    # length order is what length skew costs.
+    bench_lane_batches(settings, "checksum/stringzilla.Sha256s", tokens)
+    bench_lane_batches(settings, "checksum/stringzilla.Sha256s<sorted>", sorted(tokens, key=len))
+
+
+# How many messages the multi-state SHA256 hasher advances together, one per lane.
+SHA256_LANES = 16
+
+
+def bench_lane_batches(settings: Settings, name: str, tokens: list[bytes]) -> None:
+    """
+    Times SHA256 over consecutive batches of `SHA256_LANES` tokens, one lane per token. Hashing one
+    message is a serial dependency chain however wide the machine is; independent messages compress
+    in parallel lanes instead. A trailing partial batch is left out of the pass and of its work.
+    """
+    batches = [tokens[start : start + SHA256_LANES] for start in range(0, len(tokens) - SHA256_LANES + 1, SHA256_LANES)]
+    if not batches:
+        note_unavailable(name, "fewer tokens than lanes")
+        return
+    lane_hashers = sz.Sha256s(SHA256_LANES)
+    digests = np.empty((SHA256_LANES, sz.Sha256.digest_length), np.uint8)
+    work = MeasureSpec(
+        unit="bytes",
+        elements=len(batches) * SHA256_LANES,
+        total_bytes=Bytes(sum(len(token) for batch in batches for token in batch)),
+    )
+
+    def hash_batch(batch: list[bytes]) -> None:
+        lane_hashers.reset().update(batch).digest(out=digests)
+
+    measure(settings, name, work, pass_over(hash_batch, batches))
 
 
 def main() -> int:

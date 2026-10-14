@@ -116,42 +116,52 @@ This is especially important in distributed systems, where the data is too large
 ## Checksum and Cryptographic Hashing
 
 For reference, one may want to put those numbers next to check-sum calculation speeds on one end of complexity and cryptographic hashing speeds on the other end.
+SHA256 runs across four backends, including the multi-state `Sha256s` that advances sixteen messages at once, one per lane.
+A batch retires when its longest member does, so `Sha256s<sorted>` draws each batch from a length-ordered copy of the same tokens, and the distance between the two rows is what length skew costs.
 
 ### Intel Xeon4 Sapphire Rapids
 
-| Library                | Bits | Ports |   Short Words |     Long Lines |
-| ---------------------- | :--: | :---: | ------------: | -------------: |
-| Rust                   |      |       |               |                |
-| `stringzilla::bytesum` |  64  |   +   | __0.91 GB/s__ | __11.75 GB/s__ |
-| `blake3::hash`         | 256  |   +   |     0.10 GB/s |      1.65 GB/s |
-| `sha2::Sha256`         | 256  |   +   |             — |              — |
-| `ring::SHA256`         | 256  |   +   |             — |              — |
-| `stringzilla::Sha256`  | 256  |   +   |             — |              — |
-|                        |      |       |               |                |
-| Python                 |      |       |               |                |
-| `stringzilla.bytesum`  |  64  |   +   | __0.07 GB/s__ |  __7.80 GB/s__ |
-| `blake3.blake3`        | 256  |   +   |     0.02 GB/s |      1.56 GB/s |
-| `hashlib.sha256`       | 256  |   +   |             — |              — |
-| `stringzilla.Sha256`   | 256  |   +   |             — |              — |
+| Library                         | Bits | Ports |   Short Words |     Long Lines |
+| ------------------------------- | :--: | :---: | ------------: | -------------: |
+| Rust                            |      |       |               |                |
+| `stringzilla::bytesum`          |  64  |   +   | __0.95 GB/s__ | __11.14 GB/s__ |
+| `blake3::hash`                  | 256  |   +   |     0.10 GB/s |      1.93 GB/s |
+| `sha2::Sha256`                  | 256  |   +   |     0.10 GB/s |      1.45 GB/s |
+| `ring::SHA256`                  | 256  |   +   |     0.08 GB/s |      1.43 GB/s |
+| `stringzilla::Sha256`           | 256  |   +   |     0.07 GB/s |      1.30 GB/s |
+| `stringzilla::Sha256s`          | 256  |   +   |     0.17 GB/s |      0.77 GB/s |
+| `stringzilla::Sha256s<sorted>`  | 256  |   +   |     0.19 GB/s |      2.35 GB/s |
+|                                 |      |       |               |                |
+| Python                          |      |       |               |                |
+| `stringzilla.bytesum`           |  64  |   +   |     0.07 GB/s |  __7.06 GB/s__ |
+| `blake3.blake3`                 | 256  |   +   |     0.02 GB/s |      1.56 GB/s |
+| `hashlib.sha256`                | 256  |   +   |     0.02 GB/s |      1.31 GB/s |
+| `stringzilla.Sha256`            | 256  |   +   |     0.04 GB/s |      1.29 GB/s |
+| `stringzilla.Sha256s`           | 256  |   +   |     0.09 GB/s |      0.85 GB/s |
+| `stringzilla.Sha256s<sorted>`   | 256  |   +   | __0.10 GB/s__ |      2.41 GB/s |
 
-> Measured June 17, 2026.
+> Measured August 5, 2026, Python rows over the first 256 MB of the corpus.
 
 ### Apple M5 Pro
 
-| Library                | Bits | Ports |    Short Words |     Long Lines |
-| ---------------------- | :--: | :---: | -------------: | -------------: |
-| Rust                   |      |       |                |                |
-| `stringzilla::bytesum` |  64  |   +   | __0.997 GB/s__ | __25.98 GB/s__ |
-| `blake3::hash`         | 256  |   +   |      0.15 GB/s |      1.66 GB/s |
-| `sha2::Sha256`         | 256  |   +   |      0.35 GB/s |      3.07 GB/s |
-| `ring::SHA256`         | 256  |   +   |      0.21 GB/s |      3.06 GB/s |
-| `stringzilla::Sha256`  | 256  |   +   |      0.27 GB/s |      3.07 GB/s |
-|                        |      |       |                |                |
-| Python                 |      |       |                |                |
-| `stringzilla.bytesum`  |  64  |   +   |  __0.40 GB/s__ | __19.31 GB/s__ |
-| `blake3.blake3`        | 256  |   +   |      0.03 GB/s |      1.50 GB/s |
-| `hashlib.sha256`       | 256  |   +   |      0.05 GB/s |      2.70 GB/s |
-| `stringzilla.Sha256`   | 256  |   +   |      0.11 GB/s |      2.94 GB/s |
+| Library                         | Bits | Ports |    Short Words |     Long Lines |
+| ------------------------------- | :--: | :---: | -------------: | -------------: |
+| Rust                            |      |       |                |                |
+| `stringzilla::bytesum`          |  64  |   +   | __0.997 GB/s__ | __25.98 GB/s__ |
+| `blake3::hash`                  | 256  |   +   |      0.15 GB/s |      1.66 GB/s |
+| `sha2::Sha256`                  | 256  |   +   |      0.35 GB/s |      3.07 GB/s |
+| `ring::SHA256`                  | 256  |   +   |      0.21 GB/s |      3.06 GB/s |
+| `stringzilla::Sha256`           | 256  |   +   |      0.27 GB/s |      3.07 GB/s |
+| `stringzilla::Sha256s`          | 256  |   +   |              — |              — |
+| `stringzilla::Sha256s<sorted>`  | 256  |   +   |              — |              — |
+|                                 |      |       |                |                |
+| Python                          |      |       |                |                |
+| `stringzilla.bytesum`           |  64  |   +   |  __0.40 GB/s__ | __19.31 GB/s__ |
+| `blake3.blake3`                 | 256  |   +   |      0.03 GB/s |      1.50 GB/s |
+| `hashlib.sha256`                | 256  |   +   |      0.05 GB/s |      2.70 GB/s |
+| `stringzilla.Sha256`            | 256  |   +   |      0.11 GB/s |      2.94 GB/s |
+| `stringzilla.Sha256s`           | 256  |   +   |              — |              — |
+| `stringzilla.Sha256s<sorted>`   | 256  |   +   |              — |              — |
 
 > Measured July 29, 2026.
 

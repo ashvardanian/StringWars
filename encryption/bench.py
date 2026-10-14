@@ -1,4 +1,7 @@
-"""AEAD benchmarks in Python across cryptography, pycryptodome and libsodium. Mirrors `encryption/bench.rs`.
+"""AEAD benchmarks in Python: cryptography, pycryptodome, libsodium and StringZilla. Mirrors `encryption/bench.rs`.
+
+StringZilla also contributes an AES-256-CTR row. Counter mode is unauthenticated, so it is not
+comparable to the AEAD rows on security, only on what the cipher costs without a tag to accumulate.
 
 Run from the repository root, configured only through `STRINGWARS_*` variables:
 
@@ -11,6 +14,7 @@ from importlib.metadata import version as pkg_version
 from typing import Any
 
 import nacl.bindings as libsodium
+import stringzilla as sz
 from Crypto.Cipher import AES, ChaCha20_Poly1305
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 
@@ -99,19 +103,37 @@ def pynacl_chacha() -> Cipher:
     )
 
 
+def stringzilla_aesgcm() -> Cipher:
+    key = sz.Aes256GcmKey(KEY)
+    return ("stringzilla.Aes256GcmKey", lambda d, n: key.encrypt(d, n), lambda b, n: key.decrypt(b[0], n, b[1]))
+
+
+def stringzilla_aesctr() -> Cipher:
+    # Counter mode is its own inverse, so one call serves both directions.
+    key = sz.Aes256CtrKey(KEY)
+    return ("stringzilla.Aes256CtrKey", lambda d, n: key.xor(d, n), lambda b, n: key.xor(b, n))
+
+
 CIPHERS: list[Callable[[], Cipher]] = [
     cryptography_aesgcm,
     cryptography_chacha,
     pycryptodome_aesgcm,
     pycryptodome_chacha,
     pynacl_chacha,
+    stringzilla_aesgcm,
+    stringzilla_aesctr,
 ]
 
 
 def main() -> int:
     argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
-    print_machine({name: pkg_version(name) for name in ("cryptography", "pycryptodome", "pynacl")})
+    print_machine(
+        {
+            **{name: pkg_version(name) for name in ("cryptography", "pycryptodome", "pynacl")},
+            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+        }
+    )
     settings = read_settings("encryption")
     print_settings(settings)
     dataset = resolve_dataset(settings)

@@ -56,22 +56,26 @@ warmup = "1s"
 # collect `min_samples` inside `time_limit`. `batch_per_core` and `dims` are the
 # defaults of `STRINGWARS_BATCH_PER_CORE` and `STRINGWARS_DIMS` in the suites that read them.
 [suite]
-containers = { dataset = "xlsum.csv", tokens = "words" }
-find = { dataset = "xlsum.csv", tokens = "words" }
-hash = { dataset = "xlsum.csv", tokens = "words" }
-memory = { dataset = "xlsum.csv", tokens = "lines" }
-encryption = { dataset = "acgt_100.txt", tokens = "lines" }
+containers = { dataset = "data/xlsum/xlsum.csv", tokens = "words" }
+find = { dataset = "data/xlsum/xlsum.csv", tokens = "words" }
+hash = { dataset = "data/xlsum/xlsum.csv", tokens = "words" }
+memory = { dataset = "data/xlsum/xlsum.csv", tokens = "lines" }
+encryption = { dataset = "data/acgt/acgt_100.txt", tokens = "lines" }
 # A cross-product touches `2 * side` tokens - 32 at the default pairs per batch - so the
 # pool only has to be large enough to draw a batch from. Tokens stay in file order,
 # so a smaller pool hands the kernels byte-identical inputs while dropping a 256 MB
 # read, a CRC over 2.56 M tokens, and a 256 MB unified allocation. `bytes` here
 # bounds the pool; it is not the denominator of anything. 256 pairs per core is the
 # measured GPU saturation knee for short-word edit distance.
-similarities = { dataset = "acgt_100.txt", tokens = "words", bytes = "8MB", batch_per_core = 256 }
+similarities = { dataset = "data/acgt/acgt_100.txt", tokens = "words", bytes = "8MB", batch_per_core = 256 }
 
 # Sorting is O(N log N) and the slowest engine here runs ~110 M compares/s, so a
 # 256MB pass would be tens of seconds.
-sequence = { dataset = "xlsum.csv", tokens = "lines", bytes = "32MB" }
+sequence = { dataset = "data/xlsum/xlsum.csv", tokens = "lines", bytes = "32MB" }
+
+# Compute-bound: five dictionary slices times five verbs times every device each pay their own
+# passes, so the suite reads the 64MB slice it was written against rather than the global size.
+substrings = { dataset = "data/xlsum/xlsum.csv", tokens = "lines", bytes = "64MB" }
 
 # Whole-corpus passes over one `file`-mode token, so `bytes` is also the length of the
 # single string every engine is handed.
@@ -81,11 +85,11 @@ sequence = { dataset = "xlsum.csv", tokens = "lines", bytes = "32MB" }
 # above that ceiling cannot produce a number for it at all, and the too-slow refusal is no
 # help because it only fires *after* one pass has completed. 512KB keeps the whole field
 # collectable: pure ASCII yields 512 K characters and multi-byte scripts fewer still.
-normalization = { dataset = "leipzig1M_en.txt", tokens = "file", bytes = "512KB" }
-tokenization = { dataset = "leipzig1M_en.txt", tokens = "file", bytes = "16MB" }
+normalization = { dataset = "data/leipzig-1m/leipzig1M_en.txt", tokens = "file", bytes = "512KB" }
+tokenization = { dataset = "data/leipzig-1m/leipzig1M_en.txt", tokens = "file", bytes = "16MB" }
 
 # Sweeps DIMS 64/128/256/512, so a pass is paid four times over. `serial::MinHash`
 # runs at ~0.22 MB/s, which puts the collectability ceiling near 1 MB — three orders
 # below anything resident. This is the widest gap in the repo and the clearest case
 # of collectability overriding residency. 128 documents per core already saturates it.
-fingerprints = { dataset = "acgt_100.txt", tokens = "lines", bytes = "1MB", batch_per_core = 128, dims = "64,128,256,512" }
+fingerprints = { dataset = "data/acgt/acgt_100.txt", tokens = "lines", bytes = "1MB", batch_per_core = 128, dims = "64,128,256,512" }

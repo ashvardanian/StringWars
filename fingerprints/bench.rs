@@ -207,17 +207,13 @@ fn bench_fingerprints(settings: &Settings) {
 
         println!("# minhash-{dimensions}");
 
-        // StringZilla engines and device scopes (1cpu, Ncpu, GPU?)
+        // StringZilla engines and device scopes (1cpu, Ncpu, GPU?). The multi-core scope lives only
+        // around its own row: an idle ForkUnion pool spin-waits, so one alive during a
+        // single-threaded row would consume the very cores that row is measured on.
         let cpu_single = DeviceScope::cpu_cores(1).unwrap_or_else(|error| {
             panic!(
                 "Failed to create single-core CPU device scope for fingerprinting: {}",
                 error
-            )
-        });
-        let cpu_parallel = DeviceScope::cpu_cores(threads.0.get()).unwrap_or_else(|error| {
-            panic!(
-                "Failed to create {}-core CPU device scope for fingerprinting: {}",
-                threads, error
             )
         });
         let gpu_devices: Vec<GpuDevice<DeviceScope>> = gpu_batches
@@ -252,18 +248,6 @@ fn bench_fingerprints(settings: &Settings) {
                     error
                 )
             });
-        let sz_parallel = Fingerprints::builder()
-            .ascii()
-            .window_widths(&NGRAM_WIDTHS)
-            .dimensions(dimensions)
-            .build(&cpu_parallel)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "Failed to create {}-core StringZilla fingerprinting engine: {}",
-                    threads, error
-                )
-            });
-
         let tokens_count = total_documents;
 
         // StringZilla: 1x CPU. Result buffers sized to this variant's single-core batch.
@@ -296,6 +280,23 @@ fn bench_fingerprints(settings: &Settings) {
         );
 
         // StringZilla: Nx CPU. Result buffers sized to this variant's multi-core batch.
+        let cpu_parallel = DeviceScope::cpu_cores(threads.0.get()).unwrap_or_else(|error| {
+            panic!(
+                "Failed to create {}-core CPU device scope for fingerprinting: {}",
+                threads, error
+            )
+        });
+        let sz_parallel = Fingerprints::builder()
+            .ascii()
+            .window_widths(&NGRAM_WIDTHS)
+            .dimensions(dimensions)
+            .build(&cpu_parallel)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Failed to create {}-core StringZilla fingerprinting engine: {}",
+                    threads, error
+                )
+            });
         measure_fingerprints(
             settings,
             &format!("minhash-{dimensions}/stringzillas::Fingerprints<{threads}cpu>"),
@@ -333,6 +334,8 @@ fn bench_fingerprints(settings: &Settings) {
                 }
             },
         );
+        drop(sz_parallel);
+        drop(cpu_parallel);
 
         // StringZilla: one row per selected GPU. Result buffers sized to that device's batch.
         for device in &gpu_devices {

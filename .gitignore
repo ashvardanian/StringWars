@@ -18,3 +18,8 @@ __pycache__
 /unicode/
 /unicode_tests.txt
 .cargo/
+data/*
+!data/.gitkeep
+node_modules/
+# Markdown formatter only; nothing measured depends on its exact version
+package-lock.json

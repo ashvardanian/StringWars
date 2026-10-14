@@ -26,7 +26,7 @@ stringtape = "2.4.1"
 # Published crate by default. For local StringZilla R&D, override it with a working copy through a
 # gitignored `.cargo/config.toml` — no edits to this manifest, so nothing leaks into a commit:
 #
-#     paths = ["../StringZilla"]   # any semver-compatible local checkout (5.0.x satisfies ^5.0.0)
+#     paths = ["../StringZilla"]   # any semver-compatible local checkout (5.1.x satisfies ^5.1.0)
 #
 # Cargo's `paths` key replaces the registry source in place. If it ever reports the override
 # "altered the list of dependencies", add a `[patch.crates-io]` table to this manifest TEMPORARILY
@@ -35,7 +35,7 @@ stringtape = "2.4.1"
 # `default-features = false` keeps StringZilla's `dynamic-dispatch` feature OFF, so the SIMD backend
 # is resolved at compile time (static dispatch) rather than via a per-call indirection. This is the
 # fair default for these latency-sensitive benchmarks; do not add `stringzilla/dynamic-dispatch`.
-stringzilla = { version = "5.0.0", default-features = false }
+stringzilla = { version = "5.1.0", default-features = false }
 
 # Feature-based dependencies for benchmarks
 [features]
@@ -94,6 +94,11 @@ bench_similarities = [
   "bio",       # Needleman-Wunsch score
   "forkunion", # Parallelizing RapidFuzz calls
 ]
+bench_substrings = [
+  "aho-corasick", # Reference multi-pattern automaton, DFA and contiguous NFA
+  "daachorse",    # Double-array Aho-Corasick, the analog of our cold tier
+  "bm25",         # Index-then-query scorer, for the scoring regime we do not occupy
+]
 bench_tokenization = [
   "icu",                  # Unicode properties, TR29 word/grapheme/sentence + UAX#14 line segmentation
   "simdutf",              # SIMD UTF-8 validation and transcoding
@@ -118,10 +123,20 @@ features = ["runtime-dispatch-simd"]
 optional = true
 version = "4.0.1"
 
+[dependencies.bm25]
+# `default_tokenizer` is the point of the comparison: an inverted index needs tokens, and building
+# them is the cost this engine does not pay.
+optional = true
+version = "2.3.2"
+
 [dependencies.bstr]
 default-features = false
 optional = true
 version = "1.13.0"
+
+[dependencies.daachorse]
+optional = true
+version = "5.0.0"
 
 [dependencies.aho-corasick]
 optional = true
@@ -337,6 +352,12 @@ harness = false
 name = "bench_encryption"
 path = "encryption/bench.rs"
 required-features = ["bench_encryption"]
+
+[[bench]]
+harness = false
+name = "bench_substrings"
+path = "substrings/bench.rs"
+required-features = ["bench_substrings"]
 
 [profile.release]
 # Incremental release builds: after the first full optimize, editing a single bench.rs
