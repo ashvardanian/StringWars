@@ -1,14 +1,17 @@
 """String-similarity benchmarks in Python, reported in CUPS. Mirrors `similarities/bench.rs`.
 
+StringZilla v6 scores unit-cost Levenshtein only, through `LevenshteinEngine`, so the Needleman-Wunsch
+and Smith-Waterman groups keep their BioPython baselines and note the StringZilla rows as unavailable.
+
 Run from the repository root, configured only through `STRINGWARS_*` variables:
 
     STRINGWARS_DATASET=README.md uv run --group similarities similarities/bench.py
 """
 
 import argparse
+import functools
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from importlib.metadata import version as pkg_version
 from typing import Any, Literal
 
 import editdistance
@@ -18,7 +21,6 @@ import Levenshtein as python_levenshtein
 import numpy as np
 import polyleven
 import stringzilla as sz
-import stringzillas as szs
 from Bio import Align
 from nltk.metrics.distance import edit_distance as nltk_edit_distance
 from rapidfuzz.distance import Levenshtein as rapidfuzz_levenshtein
@@ -31,6 +33,7 @@ from stringwars import (
     batch_size,
     finish,
     gpu_batch_size,
+    gpu_managed_array,
     gpu_ordinals,
     gpu_require,
     log_dataset,
@@ -42,6 +45,7 @@ from stringwars import (
     print_settings,
     read_settings,
     resolve_dataset,
+    thread_pool,
 )
 
 # RAPIDS cuDF is outside the suite's dependency group, so its rows are optional.
@@ -59,8 +63,8 @@ AlignmentMode = Literal["global", "local"]
 def crossproduct_side(pairs_per_batch: int, token_count: int) -> int:
     """Square cross-product side for `pairs_per_batch` pairs and `token_count` available tokens.
 
-    A ``side x side`` cross-product holds about `pairs_per_batch` pairs, clamped so the query slice
-    ``[0, side)`` and candidate slice ``[side, 2*side)`` are disjoint, i.e. ``2 * side <= token_count``.
+    A ``side × side`` cross-product holds about `pairs_per_batch` pairs, clamped so the query slice
+    ``[0, side)`` and candidate slice ``[side, 2×side)`` are disjoint, i.e. ``2 * side <= token_count``.
     """
     target = max(1, round(pairs_per_batch**0.5))
     max_side = token_count // 2
@@ -74,7 +78,7 @@ def crossproduct_metrics(
     candidate_byte_lengths: np.ndarray,
     side: int,
 ) -> tuple[int, Bytes]:
-    """True aggregate cells and bytes spanned by a ``side x side`` cross-product.
+    """True aggregate cells and bytes spanned by a ``side × side`` cross-product.
 
     Cells = ``sum(query_lengths[:side]) * sum(candidate_lengths[:side])`` — the real number of
     matrix cells the dense cross-product fills. Bytes = the UTF-8 bytes fed to the kernel,
@@ -86,39 +90,6 @@ def crossproduct_metrics(
     total_cells = sum_query * sum_candidate
     total_bytes = Bytes(int(query_byte_lengths[:side].sum()) + int(candidate_byte_lengths[:side].sum()))
     return total_cells, total_bytes
-
-
-# Deliberately unequal lengths: that is the shape a binding without the cross-product call rejects.
-_PROBE_QUERIES = sz.Strs(["ab", "cde", "f"])
-_PROBE_CANDIDATES = sz.Strs(["gh", "ij"])
-
-
-def _crossproduct_supported(engine: Any) -> bool:
-    """Probe whether the installed binding exposes the queries x candidates cross-product call.
-
-    A supporting binding accepts two disjoint, differently-sized collections and returns a 2-D
-    matrix; a binding without the cross-product call raises on unequal lengths. The probe uses a
-    tiny mismatched pair so an unsupported binding degrades to a clear SKIP instead of a crash,
-    and so the check costs nothing next to the row it guards.
-    """
-    try:
-        probe = engine(_PROBE_QUERIES, _PROBE_CANDIDATES)
-    except Exception:
-        return False
-    return getattr(np.asarray(probe), "ndim", 0) == 2
-
-
-def measure_crossproduct(
-    settings: Settings,
-    name: str,
-    compute: Callable[[], None],
-    total_cells: int,
-    total_bytes: Bytes,
-    concurrency: Threads,
-) -> None:
-    """One pass is one full cross-product; the output buffer lives in `compute`'s closure."""
-    work = MeasureSpec(unit="cups", elements=total_cells, total_bytes=total_bytes, concurrency=concurrency)
-    measure(settings, name, work, compute)
 
 
 def measure_pairwise_baseline(
@@ -135,229 +106,123 @@ def measure_pairwise_baseline(
     measure(settings, name, work, pass_over(scalar_function, queries, candidates))
 
 
-def unary_class_costs(match_cost: int, mismatch_cost: int) -> tuple[np.ndarray, np.ndarray]:
-    """Build the 32-class substitution table for classic unary scoring (mirrors bench.rs).
-
-    Each byte folds into one of 32 classes via ``byte % 32``, keeping the table compact; the cost is
-    `match_cost` on the diagonal and `mismatch_cost` off it. Throughput (CUPS) is invariant to the
-    actual cost values, so this stays apples-to-apples with the Rust harness.
-    """
-    byte_to_class = np.arange(256, dtype=np.uint8) % 32
-    class_substitution_costs = np.full((32, 32), mismatch_cost, dtype=np.int8)
-    np.fill_diagonal(class_substitution_costs, match_cost)
-    return byte_to_class, class_substitution_costs
-
-
 @dataclass(frozen=True)
 class DeviceVariant:
-    """A named benchmark variant for one device configuration, with its cross-product side.
-
-    It holds the arguments of its scope rather than the scope: an idle ForkUnion pool spin-waits, so
-    a multi-core scope alive during a single-threaded row would consume the very cores that row is
-    measured on. Each row opens its own scope and drops it with the row.
-    """
+    """A named benchmark variant for one device configuration, with its cross-product side."""
 
     label: str
-    scope_arguments: dict[str, int]
     side: int
     concurrency: Threads = Threads(1)
     ordinal: int | None = None
 
 
 def build_device_variants(settings: Settings, token_count: int) -> list[DeviceVariant]:
-    """Single-core, all-cores, and (when present) single-GPU variants with per-variant sides.
+    """Single-core, all-cores, and each selected GPU, with per-variant sides.
 
     Each variant scales ``STRINGWARS_BATCH_PER_CORE`` by its own core count: a CPU core is one core, a
     GPU streaming multiprocessor is one core. The cross-product side is ``round(sqrt(pairs_per_batch))``
-    clamped to the available tokens. The GPU variant is included only when a GPU DeviceScope can be
-    created. Mirrors the Rust side derivation.
+    clamped to the available tokens. Mirrors the Rust side derivation.
     """
     cpu_cores = settings.threads
-    variants: list[DeviceVariant] = []
-
-    variants.append(
-        DeviceVariant(
-            "<1cpu>",
-            {"cpu_cores": 1},
-            crossproduct_side(batch_size(settings, 1), token_count),
-        ),
-    )
-    variants.append(
-        DeviceVariant(
-            f"<{cpu_cores}cpu>",
-            {"cpu_cores": cpu_cores},
-            crossproduct_side(batch_size(settings, cpu_cores), token_count),
-            cpu_cores,
-        ),
-    )
-
+    variants = [
+        DeviceVariant("1cpu", crossproduct_side(batch_size(settings, 1), token_count)),
+        DeviceVariant(f"{cpu_cores}cpu", crossproduct_side(batch_size(settings, cpu_cores), token_count), cpu_cores),
+    ]
     for ordinal in gpu_ordinals(settings):
         if not gpu_require(settings, ordinal):
             continue
         try:
-            szs.DeviceScope(gpu_device=ordinal)
-        except Exception as error:
+            sz.cuda_capabilities_enabled(ordinal)
+        except RuntimeError as error:
             if settings.devices is not None:
                 raise SystemExit(f"Requested CUDA device cuda:{ordinal} is unavailable: {error}") from error
             continue
         print(f"- GPU device: cuda:{ordinal}")
-        variants.append(
-            DeviceVariant(
-                f"<cuda:{ordinal}>",
-                {"gpu_device": ordinal},
-                crossproduct_side(gpu_batch_size(settings, ordinal), token_count),
-                ordinal=ordinal,
-            )
-        )
-
+        side = crossproduct_side(gpu_batch_size(settings, ordinal), token_count)
+        variants.append(DeviceVariant(f"cuda:{ordinal}", side, ordinal=ordinal))
     return variants
 
 
-def benchmark_stringzillas_distances(
+def benchmark_levenshtein(
     settings: Settings,
     tokens: Sequence[str],
     device_variants: list[DeviceVariant],
-    category: Category,
-    engine_name: str,
-    engine_class: Any,
-    result_dtype: Any,
+    symbol: str,
     byte_lengths: np.ndarray,
     metric_lengths: np.ndarray,
 ) -> None:
-    """Cross-product benchmark for a StringZilla edit-distance engine (Levenshtein / UTF-8).
+    """Cross-product rows of `LevenshteinEngine.distances` for one symbol, `bytes` or `runes`.
 
-    For each device variant the disjoint query slice ``[0, side)`` and candidate slice
-    ``[side, 2*side)`` are wrapped as ``sz.Strs`` once, a 2-D output matrix is preallocated, and the
-    engine is invoked as ``engine(queries, candidates, device, out=matrix)`` each iteration so the
-    matrix is reused.
+    Each variant prepares the `[0, side)` queries once and scores the `[side, 2×side)` candidates into
+    a preallocated `(side, side)` matrix. The multi-core row runs one engine per pool thread, each holding
+    its share of the queries; a GPU row checks its first round against a host engine before timing.
     """
     for variant in device_variants:
-        if variant.ordinal is not None and not gpu_require(settings, variant.ordinal):
+        name = f"uniform/stringzilla.LevenshteinEngine.distances<{symbol},{variant.label}>"
+        if not settings.selects(name):
             continue
-        full_name = f"{category}/{engine_name}{variant.label}"
-        if not settings.selects(full_name):
-            continue
-
         side = variant.side
-        queries = sz.Strs(tokens[0:side])
-        candidates = sz.Strs(tokens[side : 2 * side])
-        scope = szs.DeviceScope(**variant.scope_arguments)
-
-        try:
-            engine = engine_class(capabilities=scope)
-        except Exception as creation_error:
-            note_unavailable(full_name, str(creation_error))
-            continue
-
-        if not _crossproduct_supported(engine):
-            note_unavailable(full_name, "installed stringzillas lacks the queries x candidates cross-product API")
-            continue
-
-        total_cells, total_bytes = crossproduct_metrics(
-            metric_lengths,
-            metric_lengths[side:],
-            byte_lengths,
-            byte_lengths[side:],
-            side,
+        queries = tokens[0:side]
+        candidates = sz.Strings(tokens[side : 2 * side])
+        cells, total_bytes = crossproduct_metrics(
+            metric_lengths, metric_lengths[side:], byte_lengths, byte_lengths[side:], side
         )
-        matrix = np.zeros((side, side), dtype=result_dtype)
+        work = MeasureSpec(unit="cups", elements=cells, total_bytes=total_bytes, concurrency=variant.concurrency)
 
-        def compute(
-            engine: Any = engine,
-            queries: sz.Strs = queries,
-            candidates: sz.Strs = candidates,
-            scope: szs.DeviceScope = scope,
-            matrix: np.ndarray = matrix,
-        ) -> None:
-            engine(queries, candidates, scope, out=matrix)
-
-        # Mirror bench.rs: attempt the kernel once; a backend that declines (e.g. no working GPU
-        # path in the installed wheel for these inputs) surfaces as an exception we SKIP on rather
-        # than aborting the whole suite.
-        try:
-            compute()
-        except Exception as compute_error:
-            note_unavailable(full_name, str(compute_error))
+        if variant.ordinal is not None:
+            stream = sz.cuda_stream_init(variant.ordinal)
+            try:
+                benchmark_levenshtein_gpu(settings, name, variant.ordinal, stream, queries, candidates, symbol, work)
+            finally:
+                sz.cuda_stream_free(stream)
             continue
 
-        measure_crossproduct(settings, full_name, compute, total_cells, total_bytes, variant.concurrency)
+        threads = variant.concurrency
+        chunk = -(-side // threads)
+        tasks = []
+        for first in range(0, side, chunk):
+            share = queries[first : first + chunk]
+            engine = sz.LevenshteinEngine(sz.Strings(share), symbol=symbol)
+            distances = np.zeros((len(share), side), dtype=np.uintp)
+            tasks.append(functools.partial(engine.distances, candidates, distances))
+        if threads == 1:
+            measure(settings, name, work, tasks[0])
+            continue
+        configure = functools.partial(sz.cpu_configure_thread, sz.cpu_capabilities_enabled())
+        with thread_pool(threads, configure) as run_all:
+            measure(settings, name, work, functools.partial(run_all, tasks))
 
 
-def benchmark_stringzillas_scores(
+def benchmark_levenshtein_gpu(
     settings: Settings,
-    tokens: Sequence[str],
-    device_variants: list[DeviceVariant],
-    category: Category,
-    engine_name: str,
-    engine_class: Any,
-    byte_to_class: np.ndarray,
-    class_substitution_costs: np.ndarray,
-    gap_open: int,
-    gap_extend: int,
-    byte_lengths: np.ndarray,
+    name: str,
+    ordinal: int,
+    stream: int,
+    queries: Sequence[str],
+    candidates: sz.Strings,
+    symbol: str,
+    work: MeasureSpec,
 ) -> None:
-    """Cross-product benchmark for a StringZilla scoring engine (Needleman-Wunsch / Smith-Waterman).
+    """One GPU distances row, the candidates copied into the device's tape and the matrix in managed memory."""
+    capabilities = sz.cuda_capabilities_enabled(ordinal)
+    try:
+        engine = sz.LevenshteinEngine(sz.Strings(queries), symbol=symbol, capabilities=capabilities, stream=stream)
+    except Exception as error:  # a device that declines these inputs skips its own row
+        note_unavailable(name, str(error))
+        return
+    device_candidates = candidates.copy(capabilities, stream)
+    distances = gpu_managed_array((len(queries), len(candidates)), np.uintp)
 
-    Same structure as `benchmark_stringzillas_distances`, but the engine is built from the 32-class
-    unary cost model plus affine gap penalties, and the output matrix is int64 (signed scores). The
-    throughput denominator uses byte lengths (the binary cells), matching bench.rs.
-    """
-    for variant in device_variants:
-        if variant.ordinal is not None and not gpu_require(settings, variant.ordinal):
-            continue
-        full_name = f"{category}/{engine_name}{variant.label}"
-        if not settings.selects(full_name):
-            continue
+    def one_round() -> None:
+        engine.distances(device_candidates, distances, stream=stream)
+        sz.synchronize(capabilities, stream)
 
-        side = variant.side
-        queries = sz.Strs(tokens[0:side])
-        candidates = sz.Strs(tokens[side : 2 * side])
-        scope = szs.DeviceScope(**variant.scope_arguments)
-
-        try:
-            engine = engine_class(
-                byte_to_class,
-                class_substitution_costs,
-                open=gap_open,
-                extend=gap_extend,
-                capabilities=scope,
-            )
-        except Exception as creation_error:
-            note_unavailable(full_name, str(creation_error))
-            continue
-
-        if not _crossproduct_supported(engine):
-            note_unavailable(full_name, "installed stringzillas lacks the queries x candidates cross-product API")
-            continue
-
-        total_cells, total_bytes = crossproduct_metrics(
-            byte_lengths,
-            byte_lengths[side:],
-            byte_lengths,
-            byte_lengths[side:],
-            side,
-        )
-        matrix = np.zeros((side, side), dtype=np.int64)
-
-        def compute(
-            engine: Any = engine,
-            queries: sz.Strs = queries,
-            candidates: sz.Strs = candidates,
-            scope: szs.DeviceScope = scope,
-            matrix: np.ndarray = matrix,
-        ) -> None:
-            engine(queries, candidates, scope, out=matrix)
-
-        # Mirror bench.rs: attempt the kernel once; a backend that declines (e.g. no working GPU
-        # path in the installed wheel for these inputs) surfaces as an exception we SKIP on rather
-        # than aborting the whole suite.
-        try:
-            compute()
-        except Exception as compute_error:
-            note_unavailable(full_name, str(compute_error))
-            continue
-
-        measure_crossproduct(settings, full_name, compute, total_cells, total_bytes, variant.concurrency)
+    one_round()
+    expected = np.zeros((len(queries), len(candidates)), dtype=np.uintp)
+    sz.LevenshteinEngine(sz.Strings(queries), symbol=symbol).distances(candidates, expected)
+    if not np.array_equal(distances, expected):
+        raise SystemExit(f"{name} disagrees with the host engine on its first round")
+    measure(settings, name, work, one_round)
 
 
 def benchmark_edit_distance_baselines(
@@ -478,8 +343,8 @@ def benchmark_biopython_baseline(
 ) -> None:
     """BioPython PairwiseAligner baseline (global or local) over the cross-product diagonal.
 
-    Uses the same unary match=+2 / mismatch=-1 scoring as the StringZilla score engines so the CUPS
-    are comparable. `mode` selects global (Needleman-Wunsch) or local (Smith-Waterman) alignment.
+    Uses unary match=+2 / mismatch=-1 scoring, as `bench.rs` does for `bio`. `mode` selects global
+    (Needleman-Wunsch) or local (Smith-Waterman) alignment.
     """
     name = f"{category}/biopython.PairwiseAligner.{mode}"
     if not settings.selects(name):
@@ -510,39 +375,10 @@ def perform_uniform_benchmarks(
     byte_lengths: np.ndarray,
 ) -> None:
     """Uniform-cost group: classic Levenshtein (match=0, mismatch=1, open=1, extend=1)."""
-    baseline_side = device_variants[0].side
-
-    benchmark_edit_distance_baselines(
-        settings,
-        tokens,
-        baseline_side,
-        codepoint_lengths,
-        byte_lengths,
-    )
-
-    benchmark_stringzillas_distances(
-        settings,
-        tokens,
-        device_variants,
-        "uniform",
-        "stringzillas.LevenshteinDistances",
-        szs.LevenshteinDistances,
-        np.uint64,
-        byte_lengths,
-        byte_lengths,  # binary metric: cells = byte_length product
-    )
-
-    benchmark_stringzillas_distances(
-        settings,
-        tokens,
-        device_variants,
-        "uniform",
-        "stringzillas.LevenshteinDistancesUTF8",
-        szs.LevenshteinDistancesUTF8,
-        np.uint64,
-        byte_lengths,
-        codepoint_lengths,  # UTF-8 metric: cells = codepoint_length product
-    )
+    benchmark_edit_distance_baselines(settings, tokens, device_variants[0].side, codepoint_lengths, byte_lengths)
+    # The binary metric counts byte cells, the rune metric codepoint cells.
+    benchmark_levenshtein(settings, tokens, device_variants, "bytes", byte_lengths, byte_lengths)
+    benchmark_levenshtein(settings, tokens, device_variants, "runes", byte_lengths, codepoint_lengths)
 
 
 def perform_score_benchmarks(
@@ -555,66 +391,20 @@ def perform_score_benchmarks(
     gap_extend: int,
 ) -> None:
     """NW/SW score group (linear or affine) with unary match=+2 / mismatch=-1 scoring."""
-    byte_to_class, class_substitution_costs = unary_class_costs(2, -1)
-
-    benchmark_biopython_baseline(
-        settings,
-        tokens,
-        device_variants[0].side,
-        byte_lengths,
-        gap_open,
-        gap_extend,
-        group_name,
-        "global",
-    )
-    benchmark_stringzillas_scores(
-        settings,
-        tokens,
-        device_variants,
-        group_name,
-        "stringzillas.NeedlemanWunschScores",
-        szs.NeedlemanWunschScores,
-        byte_to_class,
-        class_substitution_costs,
-        gap_open,
-        gap_extend,
-        byte_lengths,
-    )
-
-    benchmark_biopython_baseline(
-        settings,
-        tokens,
-        device_variants[0].side,
-        byte_lengths,
-        gap_open,
-        gap_extend,
-        group_name,
-        "local",
-    )
-    benchmark_stringzillas_scores(
-        settings,
-        tokens,
-        device_variants,
-        group_name,
-        "stringzillas.SmithWatermanScores",
-        szs.SmithWatermanScores,
-        byte_to_class,
-        class_substitution_costs,
-        gap_open,
-        gap_extend,
-        byte_lengths,
-    )
+    for mode in ("global", "local"):
+        benchmark_biopython_baseline(
+            settings, tokens, device_variants[0].side, byte_lengths, gap_open, gap_extend, group_name, mode
+        )
+    for engine in ("NeedlemanWunschScores", "SmithWatermanScores"):
+        name = f"{group_name}/stringzillas.{engine}"
+        if settings.selects(name):
+            note_unavailable(name, "StringZilla v6 scores unit-cost Levenshtein only")
 
 
 def main() -> int:
     argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
-    print_machine(
-        {
-            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
-            "StringZillas": pkg_version("stringzillas-cpus"),
-        }
-    )
+    print_machine({"StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}"})
     settings = read_settings("similarities")
     print_settings(settings)
     dataset = resolve_dataset(settings)
@@ -635,43 +425,19 @@ def main() -> int:
 
     print("Benchmark configuration (all-pairs cross-product):")
     for variant in device_variants:
-        if variant.ordinal is not None and not gpu_require(settings, variant.ordinal):
-            continue
         side = variant.side
-        print(f"- {variant.label}: {side}x{side} cross-product ({side * side:,} pairs)")
+        print(f"- <{variant.label}>: {side}×{side} cross-product ({side * side:,} pairs)")
     print(f"- Tokens available: {token_count:,}")
     print()
 
     print("# uniform")
-    perform_uniform_benchmarks(
-        settings,
-        tokens,
-        device_variants,
-        codepoint_lengths,
-        byte_lengths,
-    )
+    perform_uniform_benchmarks(settings, tokens, device_variants, codepoint_lengths, byte_lengths)
 
     print("\n# linear")
-    perform_score_benchmarks(
-        settings,
-        tokens,
-        device_variants,
-        byte_lengths,
-        "linear",
-        gap_open=-2,
-        gap_extend=-2,
-    )
+    perform_score_benchmarks(settings, tokens, device_variants, byte_lengths, "linear", gap_open=-2, gap_extend=-2)
 
     print("\n# affine")
-    perform_score_benchmarks(
-        settings,
-        tokens,
-        device_variants,
-        byte_lengths,
-        "affine",
-        gap_open=-5,
-        gap_extend=-1,
-    )
+    perform_score_benchmarks(settings, tokens, device_variants, byte_lengths, "affine", gap_open=-5, gap_extend=-1)
 
     return finish()
 

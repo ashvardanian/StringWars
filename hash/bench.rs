@@ -317,7 +317,7 @@ fn bench_checksum(settings: &Settings, work: WorkUnits, slices: &[&[u8]], unique
 
     let outcome = bench_each_token(
         settings,
-        "checksum/stringzilla::Sha256",
+        "checksum/stringzilla::Sha256::hash",
         slices,
         work,
         |token| {
@@ -336,12 +336,12 @@ fn bench_checksum(settings: &Settings, work: WorkUnits, slices: &[&[u8]], unique
 
     // A batch retires when its longest member does, so the distance between dataset order and
     // length order is what length skew costs.
-    bench_lane_batches(settings, "checksum/stringzilla::Sha256s", slices);
+    bench_lane_batches(settings, "checksum/stringzilla::sha256_multistate_update", slices);
     let mut sorted_by_length: Vec<&[u8]> = slices.to_vec();
     sorted_by_length.sort_by_key(|token| token.len());
     bench_lane_batches(
         settings,
-        "checksum/stringzilla::Sha256s<sorted>",
+        "checksum/stringzilla::sha256_multistate_update<sorted>",
         &sorted_by_length,
     );
 

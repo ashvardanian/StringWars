@@ -1,23 +1,27 @@
 #![doc = r#"# StringWars: Memory
 
-Low-level memory benchmarks: lookup-table transforms, PRNG fills, memset, memcpy, memmove.
+Low-level memory benchmarks: lookup-table transforms, PRNG fills, memset, memcpy, memmove, and
+the column verbs that map or gather a whole column of tokens in one call.
 
 ```sh
 STRINGWARS_DATASET=README.md cargo bench --features bench_memory --bench bench_memory
 ```
 "#]
+use std::alloc::Global;
 use std::hint::black_box;
 use std::process::ExitCode;
 use std::ptr;
-use std::slice;
 
+use arrow::array::BinaryArray;
 use rand::{Rng, SeedableRng};
 use stringzilla::sz;
+use stringzilla::sz::{Capabilities, Stream, Strings, StringsView};
 use zeroize::Zeroize;
 
 use stringwars::{
-    finish, install_panic_hook, log_timing_overhead, measure, note_working_set, print_machine,
-    read_dataset, working_set_ranges, Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
+    expect_ok, finish, install_panic_hook, log_timing_overhead, measure, note_unavailable,
+    note_working_set, print_machine, read_dataset, working_set_ranges, Bytes, MeasureSpec,
+    ResultExt, Settings, Unit, WorkUnits,
 };
 
 /// Cycles `tokens` by a local cursor, calls `work` on the current mutable token, and
@@ -90,6 +94,23 @@ fn bench_lookup_table(settings: &Settings, tokens: &mut [&mut [u8]]) {
         }
         black_box(&token);
     });
+
+    // The column verb maps every token in one call, writing a new tape rather than in place.
+    let sources: Vec<&[u8]> = tokens.iter().map(|token| &**token).collect();
+    let pass = WorkUnits::new(
+        sources.len() as u64,
+        Bytes(sources.iter().map(|token| token.len() as u64).sum()),
+    );
+    let cpu = Stream::default(Capabilities::cpu_enabled());
+    measure(
+        settings,
+        "lookup-table/stringzilla::StringsView::lookup_in",
+        MeasureSpec::new(Unit::Bytes, pass),
+        || {
+            let column = StringsView::from_slices(&sources);
+            black_box(expect_ok(column.lookup_in(&lookup_invert_case, Global, &cpu)));
+        },
+    );
 }
 
 /// Benchmarks random-string generation, filling one token per call and cycling the dataset.
@@ -153,10 +174,9 @@ fn bench_generate_random(settings: &Settings, tokens: &mut [&mut [u8]]) {
 fn bench_memset(settings: &Settings, tokens: &mut [&mut [u8]]) {
     const FILL_VALUE: u8 = 0xAA;
 
-    measure_mut_token(settings, "memset/stringzilla::fill", tokens, |buffer| {
-        sz::fill(buffer, FILL_VALUE);
-        black_box(&buffer);
-    });
+    if settings.selects("memset/stringzilla::fill") {
+        note_unavailable("memset/stringzilla::fill", "StringZilla v6 has no memset");
+    }
 
     measure_mut_token(settings, "memset/std::ptr::write_bytes", tokens, |buffer| {
         unsafe {
@@ -197,17 +217,9 @@ fn bench_memcpy(settings: &Settings, tokens: &[&mut [u8]]) {
     }
     let pass = WorkUnits::new(tokens.len() as u64, Bytes(total_bytes as u64));
 
-    measure(
-        settings,
-        "memcpy/stringzilla::copy",
-        MeasureSpec::new(Unit::Bytes, pass),
-        || {
-            for (source, dest) in tokens.iter().zip(destinations.iter_mut()) {
-                sz::copy(dest, source);
-                black_box(&dest);
-            }
-        },
-    );
+    if settings.selects("memcpy/stringzilla::copy") {
+        note_unavailable("memcpy/stringzilla::copy", "StringZilla v6 has no memcpy");
+    }
 
     measure(
         settings,
@@ -234,6 +246,28 @@ fn bench_memcpy(settings: &Settings, tokens: &[&mut [u8]]) {
             }
         },
     );
+
+    // Gathering a whole column into one tape of bytes and offsets, the column-level copy.
+    let sources: Vec<&[u8]> = tokens.iter().map(|token| &**token).collect();
+    let cpu = Stream::default(Capabilities::cpu_enabled());
+    measure(
+        settings,
+        "memcpy/stringzilla::Strings::copy_in",
+        MeasureSpec::new(Unit::Bytes, pass),
+        || {
+            let column = StringsView::from_slices(&sources);
+            black_box(expect_ok(Strings::copy_in(column, Global, &cpu)));
+        },
+    );
+
+    measure(
+        settings,
+        "memcpy/arrow::BinaryArray::from_iter_values",
+        MeasureSpec::new(Unit::Bytes, pass),
+        || {
+            black_box(BinaryArray::from_iter_values(sources.iter().copied()));
+        },
+    );
 }
 
 /// Benchmarks memory-move operations, shifting one buffer per call and cycling the dataset.
@@ -256,22 +290,9 @@ fn bench_memmove(settings: &Settings, tokens: &mut [&mut [u8]]) {
         Bytes(movable.iter().map(|b| (b.len() - SHIFT) as u64).sum()),
     );
 
-    measure(
-        settings,
-        "memmove/stringzilla::move_",
-        MeasureSpec::new(Unit::Bytes, pass),
-        || {
-            for buffer in movable.iter_mut() {
-                let move_len = buffer.len() - SHIFT;
-                unsafe {
-                    let source = slice::from_raw_parts(buffer.as_ptr(), move_len);
-                    let dest = slice::from_raw_parts_mut(buffer.as_mut_ptr().add(SHIFT), move_len);
-                    sz::move_(dest, &source);
-                }
-                black_box(&buffer);
-            }
-        },
-    );
+    if settings.selects("memmove/stringzilla::move_") {
+        note_unavailable("memmove/stringzilla::move_", "StringZilla v6 has no memmove");
+    }
 
     measure(
         settings,

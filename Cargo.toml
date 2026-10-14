@@ -9,6 +9,8 @@ license = "Apache-2.0"
 name = "stringwars"
 readme = "README.md"
 repository = "https://github.com/ashvardanian/StringWars"
+# The standard `Allocator` API that places GPU batches in unified memory is stable since 1.100.
+rust-version = "1.100"
 version = "1.8.3"
 
 # The harness is a real library target rather than a `#[path]` include, so it
@@ -23,19 +25,8 @@ doc = false
 [dependencies]
 stringtape = "2.4.1"
 
-# Published crate by default. For local StringZilla R&D, override it with a working copy through a
-# gitignored `.cargo/config.toml` — no edits to this manifest, so nothing leaks into a commit:
-#
-#     paths = ["../StringZilla"]   # any semver-compatible local checkout (5.1.x satisfies ^5.1.0)
-#
-# Cargo's `paths` key replaces the registry source in place. If it ever reports the override
-# "altered the list of dependencies", add a `[patch.crates-io]` table to this manifest TEMPORARILY
-# and revert before committing — the manifest, unlike `.cargo/config.toml`, can't be gitignored.
-#
-# `default-features = false` keeps StringZilla's `dynamic-dispatch` feature OFF, so the SIMD backend
-# is resolved at compile time (static dispatch) rather than via a per-call indirection. This is the
-# fair default for these latency-sensitive benchmarks; do not add `stringzilla/dynamic-dispatch`.
-stringzilla = { version = "5.1.0", default-features = false }
+# A local checkout overrides it through a `[patch]` table in the gitignored `.cargo/config.toml`.
+stringzilla = { version = "6.0.0-rc.1", default-features = false }
 
 # Feature-based dependencies for benchmarks
 [features]
@@ -58,6 +49,7 @@ bench_find = [
 ]
 bench_fingerprints = [
   "probabilistic-collections", # MinHash
+  "forkunion",                 # One window-overlap engine per pool thread
 ]
 bench_hash = [
   "bit-set",      # for collision counting
@@ -77,6 +69,7 @@ bench_memory = [
   "getrandom",    # Randomize Buffer via OS
   "rand_chacha",  # Randomize Buffer
   "rand_xoshiro", # Randomize Buffer
+  "arrow",        # Gathering a column into one tape
 ]
 bench_normalization = [
   "icu",                   # Case mapping + NFC/NFD/NFKC/NFKD normalizers
@@ -85,6 +78,12 @@ bench_normalization = [
   "pcre2",                 # Full Unicode case folding in regex (unlike `regex` crate)
   "memchr",                # Fast SIMD substring search (for ICU fold + search baseline)
 ]
+bench_regex = [
+  "aho-corasick", # Literal vocabularies only
+  "fancy-regex",  # Lookarounds over the `regex` crate's engine
+  "pcre2",        # Lookarounds in a backtracking JIT
+  "forkunion",    # One regex engine per pool thread
+]
 bench_sequence = [
   "arrow",  # Sorting
   "polars", # DataFrame library with sorting (single-threaded in the bench)
@@ -92,12 +91,23 @@ bench_sequence = [
 bench_similarities = [
   "rapidfuzz", # Levenshtein distance
   "bio",       # Needleman-Wunsch score
-  "forkunion", # Parallelizing RapidFuzz calls
+  "forkunion", # One edit-distance engine per pool thread
+]
+bench_subdocuments = [
+  "serde_json",      # The DOM the JSONPath crates query
+  "serde_json_path", # RFC 9535 JSONPath over `serde_json`
+  "jsonpath-rust",   # JSONPath over `serde_json`
+  "sonic-rs",        # SIMD JSON with pointer lookups
+  "simd-json",       # simdjson's port, for pointer lookups
+  "sxd-document",    # The XML DOM `sxd-xpath` queries
+  "sxd-xpath",       # XPath 1.0
+  "forkunion",       # One path engine per pool thread
 ]
 bench_substrings = [
   "aho-corasick", # Reference multi-pattern automaton, DFA and contiguous NFA
   "daachorse",    # Double-array Aho-Corasick, the analog of our cold tier
   "bm25",         # Index-then-query scorer, for the scoring regime we do not occupy
+  "forkunion",    # One multi-pattern engine per pool thread
 ]
 bench_tokenization = [
   "icu",                  # Unicode properties, TR29 word/grapheme/sentence + UAX#14 line segmentation
@@ -106,7 +116,7 @@ bench_tokenization = [
   "unicode-linebreak",    # UAX#14 line-break opportunity segmentation
 ]
 cuda = ["stringzilla/cuda"]
-default = ["stringzilla/cpus"]
+default = ["stringzilla/std"]
 
 # TODO: String properties:
 # - `unicode-width`
@@ -182,7 +192,39 @@ version = "0.5.0"
 
 [dependencies.forkunion]
 optional = true
-version = "3.0"
+version = "4.0.0-rc.1"
+
+[dependencies.fancy-regex]
+optional = true
+version = "0.19.2"
+
+[dependencies.serde_json]
+optional = true
+version = "1.0.154"
+
+[dependencies.serde_json_path]
+optional = true
+version = "0.7.2"
+
+[dependencies.jsonpath-rust]
+optional = true
+version = "1.0.12"
+
+[dependencies.sonic-rs]
+optional = true
+version = "0.5.10"
+
+[dependencies.simd-json]
+optional = true
+version = "0.18.1"
+
+[dependencies.sxd-document]
+optional = true
+version = "0.3.2"
+
+[dependencies.sxd-xpath]
+optional = true
+version = "0.4.2"
 
 [dependencies.blake3]
 optional = true
@@ -358,6 +400,18 @@ harness = false
 name = "bench_substrings"
 path = "substrings/bench.rs"
 required-features = ["bench_substrings"]
+
+[[bench]]
+harness = false
+name = "bench_regex"
+path = "regex/bench.rs"
+required-features = ["bench_regex"]
+
+[[bench]]
+harness = false
+name = "bench_subdocuments"
+path = "subdocuments/bench.rs"
+required-features = ["bench_subdocuments"]
 
 [profile.release]
 # Incremental release builds: after the first full optimize, editing a single bench.rs

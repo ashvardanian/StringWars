@@ -13,6 +13,7 @@ from typing import Any
 import Crypto as pycryptodome
 import cv2
 import numpy as np
+import pyarrow
 import stringzilla as sz
 from Crypto.Cipher import AES as PyCryptoDomeAES
 
@@ -153,10 +154,11 @@ def main() -> int:
 
     print_machine(
         {
-            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+            "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
             "NumPy": np.__version__,
             "PyCryptoDome": pycryptodome.__version__,
             "OpenCV": f"{cv2.__version__}, pinned to 1 thread",
+            "PyArrow": pyarrow.__version__,
         }
     )
     settings = read_settings("memory")
@@ -205,6 +207,17 @@ def main() -> int:
 
     # StringZilla in-place (need memoryviews for each token)
     bench_translate(settings, "lookup-table/stringzilla.translate<inplace>", tokens_mv, reverse, sz_translate_inplace)
+
+    # The column verb maps every token in one call, into a new tape
+    column = sz.Strings(tokens_b)
+    column_work = MeasureSpec(unit="bytes", elements=dataset.token_count, total_bytes=dataset.token_bytes)
+    measure(settings, "lookup-table/stringzilla.Strings.translate", column_work, lambda: column.translate(reverse))
+
+    # Gathering a whole column into one tape of bytes and offsets, the column-level copy
+    print()
+    print("Column Copies")
+    measure(settings, "memcpy/stringzilla.Strings", column_work, lambda: sz.Strings(tokens_b))
+    measure(settings, "memcpy/pyarrow.array", column_work, lambda: pyarrow.array(tokens_b, type=pyarrow.binary()))
 
     # Random byte generation
     print()

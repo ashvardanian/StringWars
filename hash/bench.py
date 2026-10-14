@@ -184,7 +184,7 @@ def main() -> int:
 
     print_machine(
         {
-            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+            "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
             "xxHash": xxhash.VERSION,
             "Blake3": blake3.__version__,
             "google-crc32c": pkg_version("google-crc32c"),

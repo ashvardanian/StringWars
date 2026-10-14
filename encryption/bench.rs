@@ -183,7 +183,7 @@ fn bench_key_generation(settings: &Settings) {
     // The GCM key is the round-key schedule plus the eight Galois hash subkey powers.
     measure(
         settings,
-        "keygen/stringzilla::aes256gcm",
+        "keygen/stringzilla::Aes256GcmKey::new",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(Bytes(32))),
         || {
             let key = Aes256GcmKey::new(&[0u8; 32]);
@@ -194,7 +194,7 @@ fn bench_key_generation(settings: &Settings) {
     // Counter mode reads no hash subkey powers, so its key is the bare round-key schedule.
     measure(
         settings,
-        "keygen/stringzilla::aes256ctr",
+        "keygen/stringzilla::Aes256CtrKey::new",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(Bytes(32))),
         || {
             let key = Aes256CtrKey::new(&[0u8; 32]);
@@ -357,12 +357,13 @@ fn bench_encryption(settings: &Settings, tokens: &BytesCowsAuto) {
         let mut sealed = vec![0u8; longest_token];
         measure(
             settings,
-            "encryption/stringzilla::aes256gcm",
+            "encryption/stringzilla::Aes256GcmKey::encrypt_into",
             MeasureSpec::new(Unit::Bytes, pass_work),
             || {
                 for (index, token) in slices.iter().enumerate() {
                     let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
-                    black_box(key.encrypt_into(&nonce, &[], token, &mut sealed[..token.len()]));
+                    let sealed = &mut sealed[..token.len()];
+                    black_box(expect_ok(key.encrypt_into(&nonce, &[], token, sealed)));
                 }
             },
         );
@@ -375,12 +376,12 @@ fn bench_encryption(settings: &Settings, tokens: &BytesCowsAuto) {
         let mut sealed = vec![0u8; longest_token];
         measure(
             settings,
-            "encryption/stringzilla::aes256ctr",
+            "encryption/stringzilla::Aes256CtrKey::xor_into",
             MeasureSpec::new(Unit::Bytes, pass_work),
             || {
                 for (index, token) in slices.iter().enumerate() {
                     let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
-                    key.xor_into(&nonce, 0, token, &mut sealed[..token.len()]);
+                    expect_ok(key.xor_into(&nonce, 0, token, &mut sealed[..token.len()]));
                     black_box(&sealed);
                 }
             },
@@ -616,7 +617,7 @@ fn bench_decryption(settings: &Settings, tokens: &BytesCowsAuto) {
         .map(|(index, token)| {
             let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
             let mut ciphertext = vec![0u8; token.len()];
-            let tag = key_stringzilla_gcm.encrypt_into(&nonce, &[], token, &mut ciphertext);
+            let tag = expect_ok(key_stringzilla_gcm.encrypt_into(&nonce, &[], token, &mut ciphertext));
             (ciphertext, tag)
         })
         .collect();
@@ -625,7 +626,7 @@ fn bench_decryption(settings: &Settings, tokens: &BytesCowsAuto) {
         let mut plaintext = vec![0u8; longest_token];
         measure(
             settings,
-            "decryption/stringzilla::aes256gcm",
+            "decryption/stringzilla::Aes256GcmKey::decrypt_into",
             MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
             || {
                 for (index, (ciphertext, tag)) in encrypted_tokens_stringzilla.iter().enumerate() {
@@ -649,12 +650,13 @@ fn bench_decryption(settings: &Settings, tokens: &BytesCowsAuto) {
         let mut plaintext = vec![0u8; longest_token];
         measure(
             settings,
-            "decryption/stringzilla::aes256ctr",
+            "decryption/stringzilla::Aes256CtrKey::xor_into",
             MeasureSpec::new(Unit::Bytes, decrypt_pass_work),
             || {
                 for (index, (ciphertext, _)) in encrypted_tokens_stringzilla.iter().enumerate() {
                     let nonce: [u8; AES256_NONCE_LENGTH] = nonce_bytes(index as u64);
-                    key.xor_into(&nonce, 0, ciphertext, &mut plaintext[..ciphertext.len()]);
+                    let plaintext = &mut plaintext[..ciphertext.len()];
+                    expect_ok(key.xor_into(&nonce, 0, ciphertext, plaintext));
                     black_box(&plaintext);
                 }
             },

@@ -9,8 +9,8 @@ cudf-cu12==26.*; platform_system == "Linux" and (platform_machine == "x86_64" or
 # https://github.com/rapidsai/cuml
 cuml-cu12==26.*; platform_system == "Linux" and (platform_machine == "x86_64" or platform_machine == "aarch64") and python_version >= "3.10" and python_version < "3.14"
 
-# StringZillas GPU build — v5 wheels are not yet on PyPI; build from the neighboring source:
+# StringZilla's GPU engines live in the one `stringzilla` package, built with its CUDA backends:
 #
-#     uv pip install ../StringZilla/python/stringzillas-cuda
+#     uv pip install ../StringZilla -C cmake.define.STRINGZILLA_BUILD_CUDA=ON
 #
 # https://github.com/ashvardanian/stringzilla

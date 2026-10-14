@@ -421,7 +421,7 @@ fn bench_utf8_length(
 
     measure(
         settings,
-        "utf8-length/stringzilla::utf8_chars.len",
+        "utf8-length/stringzilla::sz_utf8_runes.len",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
             let haystack_bytes = black_box(haystack);
@@ -479,7 +479,7 @@ fn bench_utf8_iterate(
 
     measure(
         settings,
-        "utf8-iterate/stringzilla::utf8_chars.iter",
+        "utf8-iterate/stringzilla::sz_utf8_runes.iter",
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
             let haystack_bytes = black_box(haystack);

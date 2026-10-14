@@ -1,4 +1,7 @@
-"""MinHash fingerprinting benchmarks in Python across CPU and GPU. Mirrors `fingerprints/bench.rs`.
+"""MinHash fingerprinting and exact window-overlap benchmarks in Python. Mirrors `fingerprints/bench.rs`.
+
+StringZilla v6 has no MinHash engine, so its MinHash rows are noted as unavailable, and its
+`OverlapEngine` scores the exact n-gram overlap that MinHash estimates.
 
 Run from the repository root, configured only through `STRINGWARS_*` variables:
 
@@ -6,23 +9,26 @@ Run from the repository root, configured only through `STRINGWARS_*` variables:
 """
 
 import argparse
+import functools
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from importlib.metadata import version as pkg_version
 from typing import Any
 
 import numpy as np
 import stringzilla as sz
-import stringzillas as szs
 from datasketch import MinHash
 
 from stringwars import (
     Bytes,
+    Dataset,
     MeasureSpec,
     Settings,
     Threads,
     batch_size,
     finish,
     gpu_batch_size,
+    gpu_managed_array,
     gpu_ordinals,
     gpu_require,
     log_dataset,
@@ -33,6 +39,7 @@ from stringwars import (
     print_settings,
     read_settings,
     resolve_dataset,
+    thread_pool,
 )
 
 # RAPIDS cuDF is outside the suite's dependency group, so its rows are optional.
@@ -45,7 +52,6 @@ except ImportError:
 
 # Fixed n-gram widths for multi-scale fingerprinting (matching Rust benchmark)
 NGRAM_WIDTHS = [5, 9, 17, 33]
-NGRAM_WIDTHS_ARRAY = np.array(NGRAM_WIDTHS, dtype=np.uint64)
 
 
 def bench_fingerprint(
@@ -73,55 +79,83 @@ def bench_fingerprint(
     measure(settings, name, work, one_pass)
 
 
-def benchmark_stringzillas(
-    settings: Settings, documents: list[str], document_byte_lengths: np.ndarray, dimensions: int
-) -> None:
-    """StringZilla Fingerprints on 1 core, all cores, and the GPU (if present).
+def benchmark_overlap(settings: Settings, dataset: Dataset) -> None:
+    """Scores the first `batch_per_core` documents as queries against every document as a candidate, at
+    every n-gram width, the exact overlap a MinHash sketch estimates. One pass streams every candidate
+    past every query, so the byte rate is candidate bytes per query batch. Mirrors `bench.rs`."""
+    documents = dataset.text_tokens()
+    queries = sz.Strings(documents[: min(batch_size(settings, 1), len(documents))])
+    candidates = sz.Strings(documents)
+    widths = len(NGRAM_WIDTHS)
+    work = MeasureSpec(unit="bytes", elements=len(queries) * len(documents), total_bytes=dataset.token_bytes)
+    call = "overlap/stringzilla.OverlapEngine.scores"
+    print(f"\n# overlap - {len(queries)} queries, {len(documents)} candidates")
 
-    Each variant opens its own scope and drops it on return: an idle ForkUnion pool spin-waits, so a
-    multi-core scope alive during the single-core variant would consume the very cores it is measured on.
-    """
-    cpu_cores = settings.threads
-    gpu_ordinals_available: list[int] = []
+    name = f"{call}<1cpu>"
+    if settings.selects(name):
+        engine = sz.OverlapEngine(queries, NGRAM_WIDTHS)
+        scores = np.zeros((len(queries), len(documents), widths), dtype=np.float32)
+        measure(settings, name, work, lambda: engine.scores(candidates, scores))
+
+    # One engine per pool thread, each holding every query against its share of the candidates.
+    threads = settings.threads
+    name = f"{call}<{threads}cpu>"
+    if settings.selects(name):
+        chunk = -(-len(documents) // threads)
+        tasks = []
+        for first in range(0, len(documents), chunk):
+            share = sz.Strings(documents[first : first + chunk])
+            engine = sz.OverlapEngine(queries, NGRAM_WIDTHS)
+            scores = np.zeros((len(queries), len(share), widths), dtype=np.float32)
+            tasks.append(functools.partial(engine.scores, share, scores))
+        configure = functools.partial(sz.cpu_configure_thread, sz.cpu_capabilities_enabled())
+        with thread_pool(threads, configure) as run_all:
+            measure(settings, name, replace(work, concurrency=threads), functools.partial(run_all, tasks))
+
+    # One engine per GPU, its first round checked against the host engine.
     for ordinal in gpu_ordinals(settings):
-        if not gpu_require(settings, ordinal):
+        name = f"{call}<cuda:{ordinal}>"
+        if not settings.selects(name) or not gpu_require(settings, ordinal):
             continue
+        stream = sz.cuda_stream_init(ordinal)
         try:
-            szs.DeviceScope(gpu_device=ordinal)
-            gpu_ordinals_available.append(ordinal)
-        except Exception as error:  # any failure here means there is no usable GPU
-            if settings.devices is not None:
-                raise SystemExit(f"Requested CUDA device cuda:{ordinal} is unavailable: {error}") from error
+            benchmark_overlap_gpu(settings, name, ordinal, stream, queries, candidates, work)
+        finally:
+            sz.cuda_stream_free(stream)
 
-    moved = sz.Strs(documents)
 
-    def run_variant(name: str, scope_arguments: dict[str, int], documents_per_batch: int, concurrency: Threads) -> None:
-        scope = szs.DeviceScope(**scope_arguments)
-        engine = szs.Fingerprints(ndim=dimensions, window_widths=NGRAM_WIDTHS_ARRAY, capabilities=scope)
-
-        def kernel(strs_slice: sz.Strs) -> None:
-            engine(strs_slice, device=scope)  # returns (hashes, counts); discarded for throughput
-
-        bench_fingerprint(
-            settings, name, moved, kernel, document_byte_lengths, dimensions, documents_per_batch, concurrency
+def benchmark_overlap_gpu(
+    settings: Settings,
+    name: str,
+    ordinal: int,
+    stream: int,
+    queries: sz.Strings,
+    candidates: sz.Strings,
+    work: MeasureSpec,
+) -> None:
+    """One GPU overlap row, the candidates copied into the device's tape and the scores in managed memory."""
+    capabilities = sz.cuda_capabilities_enabled(ordinal)
+    try:
+        engine = sz.OverlapEngine(
+            queries, NGRAM_WIDTHS, candidates_budget=len(candidates), capabilities=capabilities, stream=stream
         )
+    except Exception as error:  # a device that declines these widths skips its own row
+        note_unavailable(name, str(error))
+        return
+    device_candidates = candidates.copy(capabilities, stream)
+    shape = (len(queries), len(candidates), len(NGRAM_WIDTHS))
+    scores = gpu_managed_array(shape, np.float32)
 
-    # Row names carry no batch size, matching what bench.rs prints, so a filter selects the
-    # same rows in both harnesses.
-    single_cpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<1cpu>"
-    all_cpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<{cpu_cores}cpu>"
+    def one_round() -> None:
+        engine.scores(device_candidates, scores, stream=stream)
+        sz.synchronize(capabilities, stream)
 
-    if settings.selects(single_cpu_name):
-        run_variant(single_cpu_name, {}, batch_size(settings, 1), Threads(1))
-    if settings.selects(all_cpu_name):
-        run_variant(all_cpu_name, {"cpu_cores": cpu_cores}, batch_size(settings, cpu_cores), cpu_cores)
-    for ordinal in gpu_ordinals_available:
-        gpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<cuda:{ordinal}>"
-        if not settings.selects(gpu_name):
-            continue
-        if not gpu_require(settings, ordinal):
-            continue
-        run_variant(gpu_name, {"gpu_device": ordinal}, gpu_batch_size(settings, ordinal), Threads(1))
+    one_round()
+    expected = np.zeros(shape, dtype=np.float32)
+    sz.OverlapEngine(queries, NGRAM_WIDTHS).scores(candidates, expected)
+    if not np.allclose(scores, expected, atol=1e-4):
+        raise SystemExit(f"{name} disagrees with the host engine on its first round")
+    measure(settings, name, work, one_round)
 
 
 def benchmark_datasketch(
@@ -197,7 +231,7 @@ def main() -> int:
     argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
     libraries = {
-        "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+        "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
         "DataSketch": pkg_version("datasketch"),
     }
     if CUDF_AVAILABLE:
@@ -216,13 +250,17 @@ def main() -> int:
     # languages emit rows at the same scales.
     for dimensions in settings.dims:
         print(f"\n# minhash-{dimensions}")
-        benchmark_stringzillas(settings, texts, document_byte_lengths, dimensions)
+        stringzilla_name = f"minhash-{dimensions}/stringzillas.Fingerprints"
+        if settings.selects(stringzilla_name):
+            note_unavailable(stringzilla_name, "StringZilla v6 has no MinHash engine")
         benchmark_datasketch(settings, dataset.tokens, document_byte_lengths, dimensions)
         if not CUDF_AVAILABLE:
             for ordinal in gpu_ordinals(settings):
                 note_unavailable(f"minhash-{dimensions}/cudf.minhash<cuda:{ordinal}>", "cudf not installed")
         else:
             benchmark_cudf(settings, texts, document_byte_lengths, dimensions)
+
+    benchmark_overlap(settings, dataset)
     return finish()
 
 

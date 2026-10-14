@@ -35,6 +35,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use stringtape::BytesCowsAuto;
+use stringzilla::sz::{Capabilities, Stream};
 
 /// Reads `name`, or `None` when it is unset or empty.
 pub fn env_text(name: &str) -> Option<String> {
@@ -277,7 +278,7 @@ pub fn install_panic_hook() {
     }));
 }
 
-/// Prints the version line, then the dispatch mode and capabilities as "- Dynamic dispatch:" and "- This machine:".
+/// Prints the version line, then the CPU capabilities every call dispatches on as "- This machine:".
 pub fn print_machine() {
     let version = stringzilla::sz::version();
     println!(
@@ -285,12 +286,8 @@ pub fn print_machine() {
         version.major, version.minor, version.patch
     );
     println!(
-        "- Dynamic dispatch: {}",
-        stringzilla::sz::dynamic_dispatch()
-    );
-    println!(
         "- This machine: {}",
-        stringzilla::sz::capabilities().as_str()
+        stringzilla::sz::Capabilities::cpu_enabled()
     );
 }
 
@@ -521,7 +518,14 @@ pub enum Collisions {
 }
 
 /// Suites that put rows on a GPU, and so accept `STRINGWARS_DEVICES`.
-pub const GPU_SUITES: [&str; 4] = ["similarities", "fingerprints", "sequence", "substrings"];
+pub const GPU_SUITES: [&str; 6] = [
+    "similarities",
+    "fingerprints",
+    "sequence",
+    "substrings",
+    "regex",
+    "subdocuments",
+];
 
 /// Every setting of one suite, read once at the top of `main` and passed down. Defaults come
 /// from `stringwars.toml`, the suite's `[suite]` entry first and `[limits]` second, so neither
@@ -1718,6 +1722,77 @@ pub fn gpu_require(settings: &Settings, ordinal: i32) -> bool {
         "Requested CUDA device cuda:{ordinal} is unavailable"
     );
     false
+}
+
+/// A StringZilla stream on device `ordinal`, after `gpu_require` made it current. Refuses the run
+/// when the ordinal was named in `STRINGWARS_DEVICES` and is unusable, and is `None` when it was
+/// only probed.
+pub fn gpu_stream(settings: &Settings, ordinal: i32) -> Option<Stream> {
+    if !gpu_require(settings, ordinal) {
+        return None;
+    }
+    let device = ordinal as usize;
+    match Capabilities::cuda_enabled(device).and_then(|capabilities| Stream::new(capabilities, device)) {
+        Ok(stream) => Some(stream),
+        Err(error) => {
+            assert!(
+                settings.devices.is_none(),
+                "Requested CUDA device cuda:{ordinal} is unavailable: {error}"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(feature = "forkunion")]
+thread_local! {
+    /// The state one pool thread builds for the row it runs, never touched from another thread.
+    static THREAD_STATE: std::cell::RefCell<Option<Box<dyn std::any::Any>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Times `pass` on a ForkUnion pool of `threads`, each thread calling `configure_thread` and then
+/// building its own `State` with `build(thread)` before the clock starts, so engines that may not
+/// leave the thread that made them run one per thread. The pool lives only as long as this row:
+/// an idle ForkUnion pool spin-waits, so one alive during a single-threaded row would consume the
+/// very cores that row is measured on.
+#[cfg(feature = "forkunion")]
+pub fn measure_per_thread<State: 'static>(
+    settings: &Settings,
+    name: &str,
+    spec: MeasureSpec,
+    build: impl Fn(usize) -> State + Sync,
+    pass: impl Fn(&mut State, usize) + Sync,
+) -> Outcome {
+    if !settings.selects(name) {
+        return Outcome {
+            name: name.to_string(),
+            median_rate: 0.0,
+            spread: f64::NAN,
+            samples: 0,
+            passes_per_sample: 0,
+            status: Status::Filtered,
+        };
+    }
+    let topology = forkunion::Topology::new().expect("Failed to probe the CPU topology");
+    let mut pool = forkunion::ThreadPool::spawn(&topology, spec.concurrency.0.get())
+        .expect("Failed to spawn the thread pool");
+    let capabilities = Capabilities::cpu_enabled();
+    pool.broadcast(|thread, _| {
+        expect_ok(capabilities.configure_thread());
+        let state: Box<dyn std::any::Any> = Box::new(build(thread));
+        THREAD_STATE.with_borrow_mut(|slot| *slot = Some(state));
+    });
+    let outcome = measure(settings, name, spec, || {
+        pool.broadcast(|thread, _| {
+            THREAD_STATE.with_borrow_mut(|slot| {
+                let state = slot.as_mut().and_then(|state| state.downcast_mut::<State>());
+                pass(state.expect("this thread built no state for the row"), thread);
+            })
+        })
+    });
+    pool.broadcast(|_, _| THREAD_STATE.with_borrow_mut(|slot| *slot = None));
+    outcome
 }
 
 /// Batch for one device, scaling `STRINGWARS_BATCH_PER_CORE` by that device's own multiprocessor

@@ -264,7 +264,7 @@ def main() -> int:
 
     print_machine(
         {
-            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+            "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
             "regex": pkg_version("regex"),
             "PyICU": f"{pkg_version('PyICU')} with ICU {icu.ICU_VERSION}",
             "pyunormalize": f"{pkg_version('pyunormalize')} with Unicode {pyunormalize.UCD_VERSION}",

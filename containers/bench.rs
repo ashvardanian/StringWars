@@ -19,8 +19,8 @@ use xorf::{BinaryFuse8, Filter};
 use xxhash_rust::xxh3::{xxh3_128_with_seed, xxh3_64};
 
 use stringwars::{
-    finish, install_panic_hook, log_timing_overhead, measure, print_machine, resolve_dataset,
-    Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
+    expect_ok, finish, install_panic_hook, log_timing_overhead, measure, print_machine,
+    resolve_dataset, Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
 };
 
 /// Sixteen fixed odd seeds, enough for the widest 1024-bit digest, shared across every multi-hash
@@ -137,11 +137,15 @@ fn bench_multihash(settings: &Settings, digest_bits: usize, slices: &[&[u8]]) {
 
     measure_multihash(
         settings,
-        &format!("multihash-{digest_bits}/stringzilla::hash_multiseed"),
+        &format!("multihash-{digest_bits}/stringzilla::hash_multiseed_into"),
         digest_bits,
         slices,
         |token| {
-            sz::hash_multiseed_into(token, &SEEDS[..sz_hashes], &mut hashes[..sz_hashes]);
+            expect_ok(sz::hash_multiseed_into(
+                token,
+                &SEEDS[..sz_hashes],
+                &mut hashes[..sz_hashes],
+            ));
             black_box(&hashes[..sz_hashes]);
         },
     );
@@ -334,7 +338,7 @@ fn bench_filters(settings: &Settings, unique: &[&[u8]]) {
 fn verify_multiseed_matches_naive() {
     let probe: &[u8] = b"multiseed-correctness-probe";
     let mut amortized = [0u64; 8];
-    sz::hash_multiseed_into(probe, &SEEDS[..8], &mut amortized);
+    sz::hash_multiseed_into(probe, &SEEDS[..8], &mut amortized).unwrap_nice();
     for index in 0..8 {
         assert_eq!(
             amortized[index],

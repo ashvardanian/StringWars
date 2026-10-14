@@ -1,38 +1,44 @@
 #![doc = r#"# StringWars: Fingerprints
 
-MinHash fingerprinting benchmarks across CPU cores and the GPU.
+MinHash fingerprinting benchmarks, and the exact window overlap MinHash estimates.
 
 - `STRINGWARS_DIMS` sets the sketch widths, one count or a comma list like `64,128`; the
   width moves throughput by ~8x, so it is recorded with every published number.
-- `STRINGWARS_THREADS` overrides the multi-core scope width.
+- `STRINGWARS_BATCH_PER_CORE` sets how many documents the overlap rows take as queries.
+- `STRINGWARS_THREADS` sets how many overlap engines the multi-core row runs, one per pool thread.
+- `STRINGWARS_DEVICES` names the GPUs that carry rows, in a `cuda` build.
+
+StringZilla v6 has no MinHash engine, so the MinHash groups note its row as unavailable and
+`OverlapEngine` answers the question MinHash approximates: how many of one text's n-grams the
+other spells.
 
 ```sh
 STRINGWARS_DATASET=README.md cargo bench --features bench_fingerprints --bench bench_fingerprints
 ```
 "#]
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+#![allow(clippy::needless_range_loop)]
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::process::ExitCode;
 
-use stringtape::{BytesTape, BytesTapeView};
-
 use probabilistic_collections::similarity::{ByteGrams, MinHash};
-use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
+use stringzilla::sz::{
+    Capabilities, OverlapEngine, Stream, Strings, StringsView, UnifiedAllocator,
+};
 
 use stringwars::{
-    batch_size, finish, gpu_batch_size, gpu_ordinals, gpu_require, install_panic_hook,
-    log_timing_overhead, measure, print_machine, resolve_dataset, Bytes, GpuDevice, MeasureSpec,
-    ResultExt, Settings, Threads, Unit, WorkUnits,
+    batch_size, expect_ok, finish, gpu_ordinals, gpu_stream, install_panic_hook,
+    log_timing_overhead, measure, measure_per_thread, note_unavailable, print_machine,
+    resolve_dataset, Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
 };
 
 // Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
 
 /// Calculate bit entropy (how well distributed the bits are) over a flattened
-/// `documents x dimensions` sketch matrix, normalized to [0, 1].
+/// `documents × dimensions` sketch matrix, normalized to [0, 1].
 fn bit_entropy<T>(hash_values: &[T]) -> f64
 where
     T: Copy + Into<u64>,
@@ -78,110 +84,10 @@ where
     1.0 - (unique_hash_values.len() as f64 / hash_values.len() as f64)
 }
 
-/// Times `Fingerprints::compute_into` over the whole corpus, `batch_size` documents per call,
-/// on `concurrency` threads. Allocates `UnifiedVec<u32>` buffers for min-hashes and min-counts
-/// (each of length `batch_size * dimensions`). During the first pass only, `quality_callback`
-/// is called with `(actual_batch_size, min_hashes_slice)` after each batch, so the caller can
-/// populate quality-analysis matrices without duplicating the buffer allocation.
-fn measure_fingerprints(
-    settings: &Settings,
-    name: &str,
-    bytes_view: &BytesTapeView<u64>,
-    batch_size: usize,
-    dimensions: usize,
-    tokens_count: usize,
-    total_bytes: Bytes,
-    concurrency: Threads,
-    mut compute: impl FnMut(BytesTapeView<'_, u64>, usize, &mut [u32], &mut [u32]),
-    quality_callback: impl FnMut(usize, &[u32]),
-) {
-    let mut min_hashes = UnifiedVec::<u32>::with_capacity_in(batch_size * dimensions, UnifiedAlloc);
-    min_hashes.resize(batch_size * dimensions, 0);
-    let mut min_counts = UnifiedVec::<u32>::with_capacity_in(batch_size * dimensions, UnifiedAlloc);
-    min_counts.resize(batch_size * dimensions, 0);
-    // Quality is a property of the sketch, not of throughput; sample it on the first
-    // pass only. Under a whole-corpus pass the callback would otherwise fire once per
-    // batch rather than once per pass, which is ~1000x more often.
-    let mut quality_callback = Some(quality_callback);
-    measure(
-        settings,
-        name,
-        MeasureSpec::new(
-            Unit::Hashes,
-            // One pass sketches the whole corpus, so the work is the corpus - not a
-            // nominal batch priced at the mean token length.
-            WorkUnits::new(dimensions as u64 * total_bytes.0, total_bytes),
-        )
-        .with_concurrency(concurrency),
-        || {
-            let mut low = 0usize;
-            while low < tokens_count {
-                let high = (low + batch_size).min(tokens_count);
-                let span = high - low;
-                let batch = bytes_view
-                    .subview(low, high)
-                    .expect("Failed to create BytesTape subview");
-                compute(
-                    batch,
-                    dimensions,
-                    &mut min_hashes[..span * dimensions],
-                    &mut min_counts[..span * dimensions],
-                );
-                if let Some(callback) = quality_callback.as_mut() {
-                    callback(span, &min_hashes[..span * dimensions]);
-                }
-                std::hint::black_box(&min_hashes[..span * dimensions]);
-                low = high;
-            }
-            quality_callback = None;
-        },
-    );
-}
-
-fn bench_fingerprints(settings: &Settings) {
-    // Load dataset using unified loader
-    let tape_bytes = resolve_dataset(settings).unwrap_nice();
-    log_timing_overhead(settings);
-    let tape = tape_bytes
-        .as_chars()
-        .expect("Dataset must be valid UTF-8 for fingerprinting");
-
-    // Core-aware batch sizing: each variant scales `STRINGWARS_BATCH_PER_CORE` by its own core count.
-    // A CPU core is one core; a GPU streaming multiprocessor (SM) is one core.
-    let threads = settings.threads;
-    let batch_single_cpu = batch_size(settings, 1);
-    let batch_multi_cpu = batch_size(settings, threads.0.get());
-    let mut gpu_batches: Vec<(i32, usize)> = Vec::new();
-    for ordinal in gpu_ordinals(settings) {
-        if gpu_require(settings, ordinal) {
-            gpu_batches.push((ordinal, gpu_batch_size(settings, ordinal)));
-        }
-    }
-
-    let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
-    units_tape
-        .extend(tape.iter().map(|token| token.as_bytes()))
-        .unwrap_or_else(|error| panic!("Failed to extend BytesTape for fingerprinting: {}", error));
-
-    let bytes_view = units_tape.view();
-
-    // Calculate average bytes per token for throughput reporting
-    let total_documents = units_tape.len();
-    let total_bytes = Bytes(tape.iter().map(|token| token.len() as u64).sum());
-
+fn bench_minhash(settings: &Settings, documents: &[&[u8]], total_bytes: Bytes) {
+    let total_documents = documents.len();
     for &dimensions in &settings.dims {
         println!("\nBenchmark configuration:");
-        println!(
-            "- Single-core batch size (for StringZilla): {}",
-            batch_single_cpu
-        );
-        println!(
-            "- {}-core batch size (for StringZilla): {}",
-            threads, batch_multi_cpu
-        );
-        for (ordinal, batch_gpu) in &gpu_batches {
-            println!("- cuda:{ordinal} batch size (for StringZilla): {batch_gpu}");
-        }
         println!("- Fingerprint dimensions: {}", dimensions);
         println!("- N-gram widths: {:?} bytes", NGRAM_WIDTHS);
         println!(
@@ -190,236 +96,55 @@ fn bench_fingerprints(settings: &Settings) {
             dimensions
         );
 
-        // Hash operations per processed token: NDIM hash functions over the token's n-grams,
-        // approximated as NDIM times the average token length. The harness reports hashes/s as
-        // the primary metric and bytes/s as the secondary one, with no global ratio plumbing.
-
         // Quality-analysis matrices, flattened to one contiguous `N_docs * N_dims` buffer each:
         // a Vec-of-Vec rebuilt per NDIM scale cost ~120k allocations against a 1 MB working set.
         let mut serial_matrix = vec![0u64; total_documents * dimensions];
         let mut pc_matrix = vec![0u64; total_documents * dimensions];
-        let mut sz_matrix = vec![0u32; total_documents * dimensions];
-
-        // Track which documents have been processed for each implementation
         let mut serial_document_index = 0usize;
         let mut pc_document_index = 0usize;
-        let mut sz_document_index = 0usize;
 
         println!("# minhash-{dimensions}");
 
-        // StringZilla engines and device scopes (1cpu, Ncpu, GPU?). The multi-core scope lives only
-        // around its own row: an idle ForkUnion pool spin-waits, so one alive during a
-        // single-threaded row would consume the very cores that row is measured on.
-        let cpu_single = DeviceScope::cpu_cores(1).unwrap_or_else(|error| {
-            panic!(
-                "Failed to create single-core CPU device scope for fingerprinting: {}",
-                error
-            )
-        });
-        let gpu_devices: Vec<GpuDevice<DeviceScope>> = gpu_batches
-            .iter()
-            .filter_map(|&(ordinal, batch)| {
-                gpu_require(settings, ordinal);
-                match DeviceScope::gpu_device(ordinal as usize) {
-                    Ok(scope) => Some(GpuDevice {
-                        ordinal,
-                        scope,
-                        batch,
-                    }),
-                    Err(error) => {
-                        assert!(
-                            settings.devices.is_none(),
-                            "Requested CUDA device cuda:{ordinal} is unavailable: {error}"
-                        );
-                        None
-                    }
-                }
-            })
-            .collect();
-
-        let sz_single = Fingerprints::builder()
-            .ascii()
-            .window_widths(&NGRAM_WIDTHS)
-            .dimensions(dimensions)
-            .build(&cpu_single)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "Failed to create single-core StringZilla fingerprinting engine: {}",
-                    error
-                )
-            });
-        let tokens_count = total_documents;
-
-        // StringZilla: 1x CPU. Result buffers sized to this variant's single-core batch.
-        measure_fingerprints(
-            settings,
-            &format!("minhash-{dimensions}/stringzillas::Fingerprints<1cpu>"),
-            &bytes_view,
-            batch_single_cpu,
-            dimensions,
-            tokens_count,
-            total_bytes,
-            Threads::ONE,
-            |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
-                sz_single
-                    .compute_into(
-                        &cpu_single,
-                        AnyBytesTape::View64(batch_bytes_view),
-                        dimensions,
-                        min_hashes_slice,
-                        min_counts_slice,
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute StringZilla fingerprints on single CPU core: {}",
-                            error
-                        )
-                    });
-            },
-            |_actual, _min_hashes_slice| {},
-        );
-
-        // StringZilla: Nx CPU. Result buffers sized to this variant's multi-core batch.
-        let cpu_parallel = DeviceScope::cpu_cores(threads.0.get()).unwrap_or_else(|error| {
-            panic!(
-                "Failed to create {}-core CPU device scope for fingerprinting: {}",
-                threads, error
-            )
-        });
-        let sz_parallel = Fingerprints::builder()
-            .ascii()
-            .window_widths(&NGRAM_WIDTHS)
-            .dimensions(dimensions)
-            .build(&cpu_parallel)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "Failed to create {}-core StringZilla fingerprinting engine: {}",
-                    threads, error
-                )
-            });
-        measure_fingerprints(
-            settings,
-            &format!("minhash-{dimensions}/stringzillas::Fingerprints<{threads}cpu>"),
-            &bytes_view,
-            batch_multi_cpu,
-            dimensions,
-            tokens_count,
-            total_bytes,
-            threads,
-            |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
-                sz_parallel
-                    .compute_into(
-                        &cpu_parallel,
-                        AnyBytesTape::View64(batch_bytes_view),
-                        dimensions,
-                        min_hashes_slice,
-                        min_counts_slice,
-                    )
-                    .unwrap_or_else(|error| {
-                        panic!(
-                            "Failed to compute StringZilla fingerprints on {} CPU cores: {}",
-                            threads, error
-                        )
-                    });
-            },
-            |actual, min_hashes_slice| {
-                for document_index in 0..actual {
-                    if sz_document_index >= total_documents {
-                        break;
-                    }
-                    let source = &min_hashes_slice[document_index * dimensions..][..dimensions];
-                    sz_matrix[sz_document_index * dimensions..][..dimensions]
-                        .copy_from_slice(source);
-                    sz_document_index += 1;
-                }
-            },
-        );
-        drop(sz_parallel);
-        drop(cpu_parallel);
-
-        // StringZilla: one row per selected GPU. Result buffers sized to that device's batch.
-        for device in &gpu_devices {
-            let (ordinal, gpu, batch_gpu) = (device.ordinal, &device.scope, device.batch);
-            assert!(
-                gpu_require(settings, ordinal),
-                "CUDA device cuda:{ordinal} is unavailable"
-            );
-            let Some(engine) = Fingerprints::builder()
-                .ascii()
-                .window_widths(&NGRAM_WIDTHS)
-                .dimensions(dimensions)
-                .build(gpu)
-                .ok()
-            else {
-                continue;
-            };
-            measure_fingerprints(
-                settings,
-                &format!("minhash-{dimensions}/stringzillas::Fingerprints<cuda:{ordinal}>"),
-                &bytes_view,
-                batch_gpu,
-                dimensions,
-                tokens_count,
-                total_bytes,
-                Threads::ONE,
-                |batch_bytes_view, dimensions, min_hashes_slice, min_counts_slice| {
-                    engine
-                        .compute_into(
-                            gpu,
-                            AnyBytesTape::View64(batch_bytes_view),
-                            dimensions,
-                            min_hashes_slice,
-                            min_counts_slice,
-                        )
-                        .unwrap_or_else(|error| {
-                            panic!("Failed to compute StringZilla fingerprints on cuda:{ordinal}: {error}")
-                        });
-                },
-                |_actual, _min_hashes_slice| {},
-            );
+        let stringzilla_name = format!("minhash-{dimensions}/stringzillas::Fingerprints");
+        if settings.selects(&stringzilla_name) {
+            note_unavailable(&stringzilla_name, "StringZilla v6 has no MinHash engine");
         }
 
         let hashes_per_width = dimensions / NGRAM_WIDTHS.len();
         // One MinHash per n-gram width, on the stack (no heap Vec).
         let minhashers: [MinHash<ByteGrams, _>; NGRAM_WIDTHS.len()] =
             core::array::from_fn(|_| MinHash::new(hashes_per_width));
+        let work = || {
+            MeasureSpec::new(
+                Unit::Hashes,
+                WorkUnits::new(dimensions as u64 * total_bytes.0, total_bytes),
+            )
+        };
 
-        // pc::MinHash baseline (single-threaded scalar; uses the single-core batch).
+        // pc::MinHash baseline (single-threaded scalar).
         {
             // Reused across documents and passes, like the serial baseline below.
             let mut combined_signature = Vec::with_capacity(dimensions);
             measure(
                 settings,
                 &format!("minhash-{dimensions}/pc::MinHash<ByteGrams>"),
-                MeasureSpec::new(
-                    Unit::Hashes,
-                    WorkUnits::new(dimensions as u64 * total_bytes.0, total_bytes),
-                ),
+                work(),
                 || {
-                    let batch_bytes_view = bytes_view
-                        .subview(0, tokens_count)
-                        .expect("Failed to create BytesTape subview");
-
-                    for line_index in 0..batch_bytes_view.len() {
-                        let line_bytes: &[u8] = &batch_bytes_view[line_index];
-                        if !line_bytes.is_empty() {
-                            combined_signature.clear();
-
-                            for (width_index, &width) in NGRAM_WIDTHS.iter().enumerate() {
-                                let iter = ByteGrams::new(line_bytes, width);
-                                let partial_sig = minhashers[width_index].get_min_hashes(iter);
-                                combined_signature.extend(partial_sig);
-                            }
-
-                            if pc_document_index < total_documents
-                                && combined_signature.len() == dimensions
-                            {
-                                pc_matrix[pc_document_index * dimensions..][..dimensions]
-                                    .copy_from_slice(&combined_signature);
-                                pc_document_index += 1;
-                            }
-                            std::hint::black_box(&combined_signature);
+                    for line_bytes in documents.iter().filter(|line| !line.is_empty()) {
+                        combined_signature.clear();
+                        for (width_index, &width) in NGRAM_WIDTHS.iter().enumerate() {
+                            let iter = ByteGrams::new(line_bytes, width);
+                            let partial_sig = minhashers[width_index].get_min_hashes(iter);
+                            combined_signature.extend(partial_sig);
                         }
+                        if pc_document_index < total_documents
+                            && combined_signature.len() == dimensions
+                        {
+                            pc_matrix[pc_document_index * dimensions..][..dimensions]
+                                .copy_from_slice(&combined_signature);
+                            pc_document_index += 1;
+                        }
+                        std::hint::black_box(&combined_signature);
                     }
                 },
             );
@@ -427,67 +152,44 @@ fn bench_fingerprints(settings: &Settings) {
 
         // Serial MinHash baseline with independent universal hash functions per dimension.
         {
-            // Pre-construct hash parameters for independent universal hash functions
             // Each hash function uses: hash_i(x) = (a_i * hash(x) + b_i) mod mersenne_prime
-            const MERSENNE_PRIME: u64 = (1u64 << 61) - 1; // Large prime for universal hashing
-
+            const MERSENNE_PRIME: u64 = (1u64 << 61) - 1;
             let hash_params: Vec<(u64, u64)> = (0..dimensions)
-                .map(|dimension_index| {
-                    let multiplier = 2 * dimension_index as u64 + 1; // Odd for universal hashing
-                    let offset = dimension_index as u64;
-                    (multiplier, offset)
-                })
+                .map(|dimension_index| (2 * dimension_index as u64 + 1, dimension_index as u64))
                 .collect();
 
-            // Reused across documents and passes: allocating per document put a
-            // malloc in the timed loop that the StringZilla rows never pay.
+            // Reused across documents and passes, so no allocation lands in the timed loop.
             let mut min_hashes = vec![u64::MAX; dimensions];
             measure(
                 settings,
                 &format!("minhash-{dimensions}/serial::MinHash<ByteGrams>"),
-                MeasureSpec::new(
-                    Unit::Hashes,
-                    WorkUnits::new(dimensions as u64 * total_bytes.0, total_bytes),
-                ),
+                work(),
                 || {
-                    let batch_bytes_view = bytes_view
-                        .subview(0, tokens_count)
-                        .expect("Failed to create BytesTape subview");
-
-                    for line_index in 0..batch_bytes_view.len() {
-                        let line_bytes: &[u8] = &batch_bytes_view[line_index];
-                        if !line_bytes.is_empty() {
-                            min_hashes.fill(u64::MAX);
-
-                            // Process all n-gram widths
-                            for &width in &NGRAM_WIDTHS {
-                                if line_bytes.len() >= width {
-                                    for window in line_bytes.windows(width) {
-                                        let mut hasher = DefaultHasher::new();
-                                        window.hash(&mut hasher);
-                                        let base_hash = hasher.finish();
-
-                                        for (hash_index, &(multiplier, offset)) in
-                                            hash_params.iter().enumerate()
-                                        {
-                                            let independent_hash = (multiplier
-                                                .wrapping_mul(base_hash)
-                                                .wrapping_add(offset))
-                                                % MERSENNE_PRIME;
-                                            min_hashes[hash_index] =
-                                                min_hashes[hash_index].min(independent_hash);
-                                        }
-                                    }
+                    for line_bytes in documents.iter().filter(|line| !line.is_empty()) {
+                        min_hashes.fill(u64::MAX);
+                        for &width in &NGRAM_WIDTHS {
+                            for window in line_bytes.windows(width) {
+                                let mut hasher = DefaultHasher::new();
+                                window.hash(&mut hasher);
+                                let base_hash = hasher.finish();
+                                for (hash_index, &(multiplier, offset)) in
+                                    hash_params.iter().enumerate()
+                                {
+                                    let independent_hash = (multiplier
+                                        .wrapping_mul(base_hash)
+                                        .wrapping_add(offset))
+                                        % MERSENNE_PRIME;
+                                    min_hashes[hash_index] =
+                                        min_hashes[hash_index].min(independent_hash);
                                 }
                             }
-
-                            if serial_document_index < total_documents {
-                                serial_matrix[serial_document_index * dimensions..][..dimensions]
-                                    .copy_from_slice(&min_hashes);
-                                serial_document_index += 1;
-                            }
-                            std::hint::black_box(&min_hashes);
                         }
+                        if serial_document_index < total_documents {
+                            serial_matrix[serial_document_index * dimensions..][..dimensions]
+                                .copy_from_slice(&min_hashes);
+                            serial_document_index += 1;
+                        }
+                        std::hint::black_box(&min_hashes);
                     }
                 },
             );
@@ -495,8 +197,8 @@ fn bench_fingerprints(settings: &Settings) {
 
         println!("\nHash Quality Analysis");
         println!(
-            "Documents processed: PC={}, Serial={}, StringZilla={}",
-            pc_document_index, serial_document_index, sz_document_index
+            "Documents processed: PC={}, Serial={}",
+            pc_document_index, serial_document_index
         );
 
         if pc_document_index > 0 {
@@ -515,13 +217,144 @@ fn bench_fingerprints(settings: &Settings) {
                 collision_rate(serial_slice) * 100.0
             );
         }
+    }
+}
 
-        if sz_document_index > 0 {
-            let sz_slice = &sz_matrix[..sz_document_index * dimensions];
-            println!("\nszs::Fingerprints:");
-            println!("  Bit Entropy:  {:.4}", bit_entropy(sz_slice));
-            println!("  Collision:    {:.4}%", collision_rate(sz_slice) * 100.0);
+/// The candidates one of `threads` engines scores, contiguous so its block of scores is too.
+fn share(count: usize, thread: usize, threads: usize) -> std::ops::Range<usize> {
+    let chunk = count.div_ceil(threads);
+    let first = (thread * chunk).min(count);
+    first..(first + chunk).min(count)
+}
+
+/// Scores the first `batch_per_core` documents as queries against every document as a candidate,
+/// at every n-gram width, the exact overlap a MinHash sketch estimates. One pass streams every
+/// candidate past every query, so the byte rate is candidate bytes per query batch.
+fn bench_overlap(settings: &Settings, documents: &[&[u8]], total_bytes: Bytes) {
+    let queries = &documents[..batch_size(settings, 1).min(documents.len())];
+    let widths = NGRAM_WIDTHS.len();
+    let work = WorkUnits::new((queries.len() * documents.len()) as u64, total_bytes);
+    let call = "overlap/stringzilla::OverlapEngine::scores";
+    println!("\n# overlap - {} queries, {} candidates", queries.len(), documents.len());
+
+    // One engine, every candidate, on this core.
+    let cpu = Stream::default(Capabilities::cpu_enabled());
+    let name = format!("{call}<1cpu>");
+    let candidate_stride = widths;
+    let query_stride = documents.len() * widths;
+    if settings.selects(&name) {
+        let mut engine = expect_ok(OverlapEngine::new(queries, &NGRAM_WIDTHS, 0, &cpu));
+        let mut scores = vec![0f32; queries.len() * query_stride];
+        measure(settings, &name, MeasureSpec::new(Unit::Bytes, work), || {
+            let candidates = StringsView::from_slices(documents);
+            expect_ok(cpu.scope(|scope| {
+                engine.scores(scope, candidates, &mut scores, query_stride, candidate_stride)
+            }));
+        });
+    }
+
+    // One engine per pool thread, each holding every query against its share of the candidates.
+    let threads = settings.threads;
+    let count = threads.0.get();
+    measure_per_thread(
+        settings,
+        &format!("{call}<{threads}cpu>"),
+        MeasureSpec::new(Unit::Bytes, work).with_concurrency(threads),
+        |thread| {
+            let candidates = share(documents.len(), thread, count);
+            let stream = Stream::default(Capabilities::cpu_enabled());
+            let engine = expect_ok(OverlapEngine::new(queries, &NGRAM_WIDTHS, 0, &stream));
+            let scores = vec![0f32; queries.len() * candidates.len() * widths];
+            (stream, engine, scores, candidates)
+        },
+        |(stream, engine, scores, candidates), _| {
+            let query_stride = candidates.len() * widths;
+            let view = StringsView::from_slices(&documents[candidates.clone()]);
+            expect_ok(stream.scope(|scope| {
+                engine.scores(scope, view, scores, query_stride.max(widths), widths)
+            }));
+        },
+    );
+
+    // One engine per GPU, its first round checked against the host engine.
+    for ordinal in gpu_ordinals(settings) {
+        let name = format!("{call}<cuda:{ordinal}>");
+        if !settings.selects(&name) {
+            continue;
         }
+        let Some(stream) = gpu_stream(settings, ordinal) else {
+            continue;
+        };
+        let mut engine =
+            match OverlapEngine::new(queries, &NGRAM_WIDTHS, documents.len(), &stream) {
+                Ok(engine) => engine,
+                Err(error) => {
+                    note_unavailable(&name, &error.to_string());
+                    continue;
+                }
+            };
+        let unified = UnifiedAllocator::new(&stream);
+        let candidates = expect_ok(Strings::copy_in(
+            StringsView::from_slices(documents),
+            unified,
+            &cpu,
+        ));
+        let mut scores = Vec::new_in(unified);
+        scores.resize(queries.len() * query_stride, 0f32);
+        expect_ok(stream.scope(|scope| {
+            engine.scores(scope, candidates.view(), &mut scores, query_stride, candidate_stride)
+        }));
+        let mut host = expect_ok(OverlapEngine::new(queries, &NGRAM_WIDTHS, 0, &cpu));
+        let mut expected = vec![0f32; queries.len() * query_stride];
+        let host_candidates = StringsView::from_slices(documents);
+        expect_ok(cpu.scope(|scope| {
+            host.scores(scope, host_candidates, &mut expected, query_stride, candidate_stride)
+        }));
+        assert!(
+            scores.iter().zip(expected.iter()).all(|(device, host)| (device - host).abs() <= 1e-4),
+            "{name} disagrees with the host engine on its first round"
+        );
+        measure(settings, &name, MeasureSpec::new(Unit::Bytes, work), || {
+            let view = candidates.view();
+            expect_ok(stream.scope(|scope| {
+                engine.scores(scope, view, &mut scores, query_stride, candidate_stride)
+            }));
+        });
+    }
+
+    // The same shares computed exactly with one set of distinct windows per query and width, the
+    // way an index-free deduplication pass would.
+    let name = "overlap/serial::window_overlap<1cpu>";
+    if settings.selects(name) {
+        let query_windows: Vec<Vec<HashSet<&[u8]>>> = queries
+            .iter()
+            .map(|query| {
+                NGRAM_WIDTHS
+                    .iter()
+                    .map(|&width| query.windows(width).collect())
+                    .collect()
+            })
+            .collect();
+        let mut scores = vec![0f32; queries.len() * query_stride];
+        measure(settings, name, MeasureSpec::new(Unit::Bytes, work), || {
+            for (query_index, windows_by_width) in query_windows.iter().enumerate() {
+                for (candidate_index, candidate) in documents.iter().enumerate() {
+                    for (width_index, &width) in NGRAM_WIDTHS.iter().enumerate() {
+                        let distinct = &windows_by_width[width_index];
+                        let windows = candidate.len().saturating_sub(width - 1);
+                        let hits = candidate
+                            .windows(width)
+                            .filter(|window| distinct.contains(window))
+                            .count();
+                        let total = distinct.len().max(windows).max(1);
+                        scores[query_index * query_stride
+                            + candidate_index * candidate_stride
+                            + width_index] = hits as f32 / total as f32;
+                    }
+                }
+            }
+            std::hint::black_box(&scores);
+        });
     }
 }
 
@@ -531,9 +364,16 @@ fn main() -> ExitCode {
     let settings = Settings::read("fingerprints");
     settings.print();
     println!("Text Fingerprinting Benchmarks");
-    println!("- szs::Fingerprints: CPU/GPU fingerprints with multi-width byte n-grams");
     println!("- pc::MinHash<ByteGrams>: MinHash with ByteGrams iterator");
-    bench_fingerprints(&settings);
+    println!("- stringzilla::OverlapEngine: exact n-gram overlap, the quantity MinHash estimates");
+
+    let tape = resolve_dataset(&settings).unwrap_nice();
+    log_timing_overhead(&settings);
+    let documents: Vec<&[u8]> = tape.iter().collect();
+    let total_bytes = Bytes(documents.iter().map(|token| token.len() as u64).sum());
+
+    bench_minhash(&settings, &documents, total_bytes);
+    bench_overlap(&settings, &documents, total_bytes);
 
     finish()
 }

@@ -19,6 +19,8 @@ Variable                     Default                      Meaning
 `STRINGWARS_RESULTS_DIR`     none                         Directory for per-row NDJSON records
 """
 
+import concurrent.futures
+import contextlib
 import functools
 import json
 import math
@@ -31,7 +33,7 @@ import time
 import tomllib
 import zlib
 from collections import Counter, deque
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal, NewType
@@ -201,7 +203,7 @@ def print_machine(libraries: Mapping[str, str]) -> None:
 FALLBACK_GPU_MULTIPROCESSORS = 64
 
 # Suites that put rows on a GPU, and so accept `STRINGWARS_DEVICES`.
-GPU_SUITES = ("similarities", "fingerprints", "sequence", "substrings")
+GPU_SUITES = ("similarities", "fingerprints", "sequence", "substrings", "regex", "subdocuments")
 
 
 def batch_size(settings: "Settings", cores: int) -> int:
@@ -303,6 +305,50 @@ def gpu_multiprocessor_count(device_index: int = 0) -> int | None:
         if status == 0 and count.value > 0:
             return count.value
     return None
+
+
+def gpu_managed_array(shape: tuple[int, ...], dtype: Any) -> Any:
+    """A NumPy array over CUDA managed memory, which both the host and the GPU engines address, freed
+    with the array. A GPU engine's outputs must sit there: a host NumPy buffer is out of its reach."""
+    import ctypes
+    import ctypes.util
+    import weakref
+
+    import numpy as np
+
+    size = max(1, math.prod(shape) * np.dtype(dtype).itemsize)
+    for candidate in ["libcudart.so", "libcudart.so.12", ctypes.util.find_library("cudart")]:
+        if not candidate:
+            continue
+        try:
+            library = ctypes.CDLL(candidate)
+        except OSError:
+            continue
+        pointer = ctypes.c_void_p()
+        attach_global = 1  # `cudaMemAttachGlobal`
+        if library.cudaMallocManaged(ctypes.byref(pointer), ctypes.c_size_t(size), attach_global) != 0:
+            raise MemoryError(f"cudaMallocManaged refused {size} bytes")
+        memory = (ctypes.c_byte * size).from_address(pointer.value)
+        array = np.frombuffer(memory, dtype=dtype, count=math.prod(shape)).reshape(shape)
+        weakref.finalize(array, library.cudaFree, pointer)
+        return array
+    raise MemoryError("no CUDA runtime to allocate managed memory from")
+
+
+Tasks = list[Callable[[], object]]
+
+
+@contextlib.contextmanager
+def thread_pool(threads: Threads, initializer: Callable[[], object]) -> Iterator[Callable[[Tasks], None]]:
+    """A pool of `threads` workers for one row, each running `initializer` before its first task, yielding
+    a call that runs one task per worker and waits for all of them. The pool lives only as long as the
+    row, so no idle worker shares the machine with the single-threaded rows."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=threads, initializer=initializer) as executor:
+
+        def run(tasks: Tasks) -> None:
+            deque(executor.map(lambda task: task(), tasks), maxlen=0)
+
+        yield run
 
 
 # endregion: Machine

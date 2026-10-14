@@ -1,14 +1,14 @@
 """Multi-pattern search benchmarks in Python: one dictionary walked over every document. Mirrors `substrings/bench.rs`.
 
-- stringzillas.Substrings: count, find, replace and BM25 over one compiled automaton
+- stringzilla.SubstringsEngine: counts, find, replace and bm25_scores over one compiled automaton
 - ahocorasick_rs: the `aho-corasick` crate bound to Python
 - pyahocorasick: a C automaton with an overlapping walk
 - re: an alternation of escaped literals, the baseline most people actually write
 - bm25s, rank_bm25 and sklearn.TfidfVectorizer: index-then-query scorers, for the scoring group only
 
-Every rival is single-threaded and CPU-only, so the head-to-head row is `<1cpu>`, and the rivals run right
-after it, before any thread pool exists. Scoring is scan versus index: a build tokenizes the corpus and never
-sees the dictionary, so only the first slice measures it, while a query is the slice itself.
+Every rival is single-threaded and CPU-only, so the head-to-head row is `<1cpu>`. Scoring is scan versus
+index: a build tokenizes the corpus and never sees the dictionary, so only the first slice measures it,
+while a query is the slice itself.
 
 Run from the repository root, configured only through `STRINGWARS_*` variables:
 
@@ -30,7 +30,6 @@ import bm25s
 import numpy as np
 import rank_bm25
 import stringzilla as sz
-import stringzillas as szs
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from stringwars import (
@@ -40,6 +39,7 @@ from stringwars import (
     Threads,
     Tokenization,
     finish,
+    gpu_managed_array,
     gpu_ordinals,
     gpu_require,
     log_dataset,
@@ -51,6 +51,7 @@ from stringwars import (
     print_settings,
     read_settings,
     resolve_dataset,
+    thread_pool,
     tokenize_dataset,
 )
 
@@ -112,35 +113,26 @@ def needle_slice_of(vocabulary: list[bytes], slice_name: str) -> list[bytes]:
 
 @dataclass(frozen=True)
 class Device:
-    """Where one row runs: its label, the arguments of its scope and the capabilities the engine may use.
-
-    It holds the arguments rather than the scope: an idle ForkUnion pool spin-waits, so a multi-core scope
-    alive during a single-threaded row would consume the very cores that row is measured on.
-    """
+    """Where one row runs, in the order the rows run. Mirrors `bench.rs`."""
 
     label: str
-    scope_arguments: dict[str, int]
-    capabilities: tuple[str, ...]
-    concurrency: Threads = Threads(1)
+    concurrency: Threads = ONE_THREAD
     ordinal: int | None = None
 
 
 def selected_devices(settings: Settings) -> list[Device]:
-    """The single core, every core, then each GPU the run selects. Mirrors `bench.rs`."""
-    devices = [
-        Device("1cpu", {"cpu_cores": 1}, ("serial",)),
-        Device(f"{settings.threads}cpu", {"cpu_cores": settings.threads}, ("serial", "parallel"), settings.threads),
-    ]
+    """The single core, every core, then each GPU the run selects."""
+    devices = [Device("1cpu"), Device(f"{settings.threads}cpu", settings.threads)]
     for ordinal in gpu_ordinals(settings):
         if not gpu_require(settings, ordinal):
             continue
         try:
-            szs.DeviceScope(gpu_device=ordinal)
-        except Exception as error:
+            sz.cuda_capabilities_enabled(ordinal)
+        except RuntimeError as error:
             if settings.devices is not None:
                 raise SystemExit(f"Requested CUDA device cuda:{ordinal} is unavailable: {error}") from error
             continue
-        devices.append(Device(f"cuda:{ordinal}", {"gpu_device": ordinal}, ("cuda",), ordinal=ordinal))
+        devices.append(Device(f"cuda:{ordinal}", ordinal=ordinal))
     return devices
 
 
@@ -149,7 +141,7 @@ class Corpus:
     """Every engine walks the same documents, so one pass over all of them is every row's work."""
 
     documents: list[str]
-    tape: sz.Strs
+    tape: sz.Strings
     dataset: Dataset
 
     def spec(self, concurrency: Threads = ONE_THREAD) -> MeasureSpec:
@@ -160,33 +152,171 @@ class Corpus:
             concurrency=concurrency,
         )
 
+    def share(self, thread: int, threads: int) -> slice:
+        """The documents one of `threads` engines walks, contiguous so its outputs are too."""
+        chunk = -(-len(self.documents) // threads)
+        first = min(thread * chunk, len(self.documents))
+        return slice(first, min(first + chunk, len(self.documents)))
 
-def for_each_device(settings: Settings, devices: list[Device], body: Callable[[Device, Any], None]) -> None:
-    """Calls `body(device, scope)` once per device, with a scope opened for that call alone."""
+
+@dataclass(frozen=True)
+class Verb:
+    """One verb a compiled dictionary answers: its group, its call, and the overlap policy its engine is
+    built with, since covers and rewrites need a leftmost one."""
+
+    group: str
+    call: str
+    policy: str
+
+
+COUNT = Verb("count", "counts", "overlapping")
+COVER = Verb("cover", "counts", "leftmost-longest")
+FIND = Verb("find", "find", "overlapping")
+REPLACE = Verb("replace", "replace", "leftmost-longest")
+SCORE = Verb("bm25", "bm25_scores", "overlapping")
+
+
+class Round:
+    """One round of a verb over fixed haystacks and the outputs it writes, sized by an empty round that
+    reports what the filled one needs. `allocate` places every buffer where the engine's device reaches."""
+
+    def __init__(
+        self,
+        verb: Verb,
+        engine: Any,
+        haystacks: sz.Strings,
+        replacements: sz.Strings,
+        mean_length: float,
+        allocate: Callable[[tuple[int, ...], Any], np.ndarray],
+        capabilities: Any = None,
+        stream: int | None = None,
+    ) -> None:
+        self.verb, self.engine, self.haystacks, self.replacements = verb, engine, haystacks, replacements
+        self.mean_length, self.capabilities, self.stream = mean_length, capabilities, stream
+        self.placement = {} if stream is None else {"stream": stream}
+        count = len(haystacks)
+        self.counts = allocate((count,), np.uintp)
+        self.offsets = allocate((count + 1,), np.uintp)
+        self.scores = allocate((count,), np.float32)
+        self.weights = allocate((len(replacements),), np.float32)
+        self.weights[:] = 1.0
+        self.matches = self.target = None
+        if verb is FIND:
+            engine.find(haystacks, None, self.offsets, **self.placement)
+            self.join()
+            self.matches = allocate((max(1, engine.report["matches_emitted"]), 4), np.uintp)
+        if verb is REPLACE:
+            engine.replace(haystacks, replacements, None, self.offsets, **self.placement)
+            self.join()
+            self.target = allocate((max(1, engine.report["target_length"]),), np.uint8)
+
+    def join(self) -> None:
+        if self.stream is not None:
+            sz.synchronize(self.capabilities, self.stream)
+
+    def __call__(self) -> None:
+        if self.verb.call == "counts":
+            self.engine.counts(self.haystacks, self.counts, **self.placement)
+        elif self.verb is FIND:
+            self.engine.find(self.haystacks, self.matches, self.offsets, **self.placement)
+        elif self.verb is REPLACE:
+            self.engine.replace(self.haystacks, self.replacements, self.target, self.offsets, **self.placement)
+        else:
+            self.engine.bm25_scores(
+                self.haystacks, self.weights, self.scores, average_document_length=self.mean_length, **self.placement
+            )
+        self.join()
+
+    def agrees(self, host: "Round") -> bool:
+        """Whether a device round wrote what the host engine did, scores to a float tolerance."""
+        if self.verb.call == "counts":
+            return np.array_equal(self.counts, host.counts)
+        if self.verb is FIND:
+            return np.array_equal(self.offsets, host.offsets)
+        if self.verb is REPLACE:
+            return np.array_equal(self.offsets, host.offsets) and np.array_equal(self.target, host.target)
+        return np.allclose(self.scores, host.scores, rtol=1e-3, atol=1e-3)
+
+
+def compile_engine(needles: list[str], verb: Verb, **placement: Any) -> Any:
+    """Compiles `needles` for `verb`; a device tier also sizes one round for `haystacks_budget` documents."""
+    return sz.SubstringsEngine(sz.Strings(needles), "cased", verb.policy, **placement)
+
+
+def sweep(settings: Settings, corpus: Corpus, needles: list[str], slice_name: str, devices: list[Device], verb: Verb):
+    """Times `verb` on every device: one host engine, one engine per pool thread over a contiguous share of
+    the documents, and one engine per GPU whose first round is checked against the host."""
+    replacements = sz.Strings(needles)
+    mean_length = corpus.dataset.token_bytes / max(1, corpus.dataset.token_count)
     for device in devices:
-        if device.ordinal is not None and not gpu_require(settings, device.ordinal):
+        name = f"{verb.group}-{slice_name}/stringzilla.SubstringsEngine.{verb.call}<{device.label}>"
+        if not settings.selects(name):
             continue
-        body(device, szs.DeviceScope(**device.scope_arguments))
+        if device.ordinal is not None:
+            stream = sz.cuda_stream_init(device.ordinal)
+            try:
+                sweep_gpu(settings, corpus, needles, name, device.ordinal, stream, verb)
+            finally:
+                sz.cuda_stream_free(stream)
+            continue
+        threads = device.concurrency
+        try:
+            engines = [compile_engine(needles, verb) for _ in range(threads)]
+        except Exception as error:  # an engine that declines this dictionary skips its own row
+            note_unavailable(name, str(error))
+            continue
+        if threads == 1:
+            measure(
+                settings, name, corpus.spec(), Round(verb, engines[0], corpus.tape, replacements, mean_length, np.zeros)
+            )
+            continue
+        rounds = [
+            Round(
+                verb,
+                engine,
+                sz.Strings(corpus.documents[corpus.share(thread, threads)]),
+                replacements,
+                mean_length,
+                np.zeros,
+            )
+            for thread, engine in enumerate(engines)
+        ]
+        configure = functools.partial(sz.cpu_configure_thread, sz.cpu_capabilities_enabled())
+        with thread_pool(threads, configure) as run_all:
+            measure(settings, name, corpus.spec(threads), functools.partial(run_all, rounds))
 
 
-def measure_engine(
-    settings: Settings,
-    corpus: Corpus,
-    needles: list[str],
-    name: str,
-    device: Device,
-    scope: Any,
-    walk: Callable[[Any], object],
+def sweep_gpu(
+    settings: Settings, corpus: Corpus, needles: list[str], name: str, ordinal: int, stream: int, verb: Verb
 ) -> None:
-    """Compiles `needles` on `scope` and times `walk` over it, or notes the row when the engine declines."""
-    if not settings.selects(name):
-        return
+    """One GPU row, every buffer in managed memory and every input copied into the device's own tape."""
+    capabilities = sz.cuda_capabilities_enabled(ordinal)
+    replacements = sz.Strings(needles)
+    mean_length = corpus.dataset.token_bytes / max(1, corpus.dataset.token_count)
     try:
-        engine = szs.Substrings(sz.Strs(needles), device=scope, capabilities=device.capabilities)
-    except Exception as error:
+        engine = compile_engine(
+            needles, verb, haystacks_budget=len(corpus.documents), capabilities=capabilities, stream=stream
+        )
+    except Exception as error:  # a device tier that declines this dictionary skips its own row
         note_unavailable(name, str(error))
         return
-    measure(settings, name, corpus.spec(device.concurrency), lambda: walk(engine))
+    haystacks = corpus.tape.copy(capabilities, stream)
+    device_round = Round(
+        verb,
+        engine,
+        haystacks,
+        replacements.copy(capabilities, stream),
+        mean_length,
+        gpu_managed_array,
+        capabilities,
+        stream,
+    )
+    device_round()
+    host = Round(verb, compile_engine(needles, verb), corpus.tape, replacements, mean_length, np.zeros)
+    host()
+    if not device_round.agrees(host):
+        raise SystemExit(f"{name} disagrees with the host engine on its first round")
+    measure(settings, name, corpus.spec(), device_round)
 
 
 def measure_rival(
@@ -199,155 +329,73 @@ def measure_rival(
 
 def bench_counting(settings: Settings, corpus: Corpus, needles: list[str], slice_name: str, devices: list[Device]):
     """Counts every overlapping match of every needle, the cheapest walk each engine offers."""
+    sweep(settings, corpus, needles, slice_name, devices, COUNT)
 
-    def one_device(device: Device, scope: Any) -> None:
-        name = f"count-{slice_name}/stringzillas.Substrings<{device.label}>"
-        measure_engine(
-            settings,
-            corpus,
-            needles,
-            name,
-            device,
-            scope,
-            lambda e: e.count(corpus.tape, device=scope, policy="overlapping"),
-        )
-        if device.label != "1cpu":
-            return
+    measure_rival(
+        settings,
+        corpus,
+        f"count-{slice_name}/ahocorasick_rs.find_matches_as_indexes",
+        lambda: ahocorasick_rs.AhoCorasick(needles, matchkind=ahocorasick_rs.MatchKind.Standard),
+        lambda automaton: pass_over(
+            functools.partial(automaton.find_matches_as_indexes, overlapping=True), corpus.documents
+        ),
+    )
 
-        measure_rival(
-            settings,
-            corpus,
-            f"count-{slice_name}/ahocorasick_rs.find_matches_as_indexes",
-            lambda: ahocorasick_rs.AhoCorasick(needles, matchkind=ahocorasick_rs.MatchKind.Standard),
-            lambda automaton: pass_over(
-                functools.partial(automaton.find_matches_as_indexes, overlapping=True), corpus.documents
-            ),
-        )
+    def build_pyahocorasick() -> Any:
+        automaton = pyahocorasick.Automaton()
+        for index, needle in enumerate(needles):
+            automaton.add_word(needle, index)
+        automaton.make_automaton()
+        return automaton
 
-        def build_pyahocorasick() -> Any:
-            automaton = pyahocorasick.Automaton()
-            for index, needle in enumerate(needles):
-                automaton.add_word(needle, index)
-            automaton.make_automaton()
-            return automaton
-
-        measure_rival(
-            settings,
-            corpus,
-            f"count-{slice_name}/pyahocorasick.Automaton.iter",
-            build_pyahocorasick,
-            lambda automaton: pass_over(lambda document: deque(automaton.iter(document), maxlen=0), corpus.documents),
-        )
-
-    for_each_device(settings, devices, one_device)
+    measure_rival(
+        settings,
+        corpus,
+        f"count-{slice_name}/pyahocorasick.Automaton.iter",
+        build_pyahocorasick,
+        lambda automaton: pass_over(lambda document: deque(automaton.iter(document), maxlen=0), corpus.documents),
+    )
 
 
 def bench_cover(settings: Settings, corpus: Corpus, needles: list[str], slice_name: str, devices: list[Device]):
     """Counts a leftmost cover, the walk a rewrite needs and the one every engine spells differently."""
+    sweep(settings, corpus, needles, slice_name, devices, COVER)
 
-    def one_device(device: Device, scope: Any) -> None:
-        name = f"cover-{slice_name}/stringzillas.Substrings<{device.label}>"
-        measure_engine(
-            settings,
-            corpus,
-            needles,
-            name,
-            device,
-            scope,
-            lambda e: e.count(corpus.tape, device=scope, policy="leftmost-longest"),
-        )
-        if device.label != "1cpu":
-            return
+    measure_rival(
+        settings,
+        corpus,
+        f"cover-{slice_name}/ahocorasick_rs.find_matches_as_indexes<LeftmostLongest>",
+        lambda: ahocorasick_rs.AhoCorasick(needles, matchkind=ahocorasick_rs.MatchKind.LeftmostLongest),
+        lambda automaton: pass_over(automaton.find_matches_as_indexes, corpus.documents),
+    )
 
-        measure_rival(
-            settings,
-            corpus,
-            f"cover-{slice_name}/ahocorasick_rs.find_matches_as_indexes<LeftmostLongest>",
-            lambda: ahocorasick_rs.AhoCorasick(needles, matchkind=ahocorasick_rs.MatchKind.LeftmostLongest),
-            lambda automaton: pass_over(automaton.find_matches_as_indexes, corpus.documents),
-        )
-
-        # An alternation of escaped literals resolves leftmost-first, so it sits beside the covers. `re`
-        # scans it branch by branch with no literal prefilter, so one pass runs for minutes at a few
-        # thousand needles; only the narrowest dictionary measures it.
-        if slice_name != VOCABULARY_SLICES[0]:
-            return
-        measure_rival(
-            settings,
-            corpus,
-            f"cover-{slice_name}/re.finditer",
-            lambda: re.compile("|".join(re.escape(needle) for needle in needles)),
-            lambda pattern: pass_over(lambda document: deque(pattern.finditer(document), maxlen=0), corpus.documents),
-        )
-
-    for_each_device(settings, devices, one_device)
+    # An alternation of escaped literals resolves leftmost-first, so it sits beside the covers. `re` scans
+    # it branch by branch with no literal prefilter, so one pass runs for minutes at a few thousand
+    # needles; only the narrowest dictionary measures it.
+    if slice_name != VOCABULARY_SLICES[0]:
+        return
+    measure_rival(
+        settings,
+        corpus,
+        f"cover-{slice_name}/re.finditer",
+        lambda: re.compile("|".join(re.escape(needle) for needle in needles)),
+        lambda pattern: pass_over(lambda document: deque(pattern.finditer(document), maxlen=0), corpus.documents),
+    )
 
 
 def bench_locating(settings: Settings, corpus: Corpus, needles: list[str], slice_name: str, devices: list[Device]):
     """Materializes every match rather than tallying it, which is where the output bandwidth shows."""
+    sweep(settings, corpus, needles, slice_name, devices, FIND)
 
-    def one_device(device: Device, scope: Any) -> None:
-        name = f"find-{slice_name}/stringzillas.Substrings<{device.label}>"
-        measure_engine(
-            settings,
-            corpus,
-            needles,
-            name,
-            device,
-            scope,
-            lambda e: e.find(corpus.tape, device=scope, policy="overlapping"),
-        )
-        if device.label != "1cpu":
-            return
-
-        measure_rival(
-            settings,
-            corpus,
-            f"find-{slice_name}/ahocorasick_rs.find_matches_as_indexes",
-            lambda: ahocorasick_rs.AhoCorasick(needles, matchkind=ahocorasick_rs.MatchKind.Standard),
-            lambda automaton: pass_over(
-                functools.partial(automaton.find_matches_as_indexes, overlapping=True), corpus.documents
-            ),
-        )
-
-    for_each_device(settings, devices, one_device)
-
-
-def bench_rewriting(settings: Settings, corpus: Corpus, needles: list[str], slice_name: str, devices: list[Device]):
-    """Substitutes every match under a cover, the one verb whose output is another corpus.
-
-    Replacing every needle with itself keeps the output the size of the input, so the row measures the
-    rewrite rather than an expansion factor.
-    """
-    replacements = sz.Strs(needles)
-
-    def one_device(device: Device, scope: Any) -> None:
-        name = f"replace-{slice_name}/stringzillas.Substrings<{device.label}>"
-        measure_engine(
-            settings, corpus, needles, name, device, scope, lambda e: e.replace(corpus.tape, replacements, device=scope)
-        )
-
-    for_each_device(settings, devices, one_device)
-
-
-def bench_scoring(settings: Settings, corpus: Corpus, needles: list[str], slice_name: str, devices: list[Device]):
-    """Scores every document against the dictionary, which is the query."""
-    weights = np.ones(len(needles), dtype=np.float32)
-    mean_document_length = corpus.dataset.token_bytes / max(1, corpus.dataset.token_count)
-
-    def one_device(device: Device, scope: Any) -> None:
-        name = f"bm25-{slice_name}/stringzillas.Substrings<{device.label}>"
-        measure_engine(
-            settings,
-            corpus,
-            needles,
-            name,
-            device,
-            scope,
-            lambda e: e.score_bm25(corpus.tape, weights, mean_document_length, device=scope),
-        )
-
-    for_each_device(settings, devices, one_device)
+    measure_rival(
+        settings,
+        corpus,
+        f"find-{slice_name}/ahocorasick_rs.find_matches_as_indexes",
+        lambda: ahocorasick_rs.AhoCorasick(needles, matchkind=ahocorasick_rs.MatchKind.Standard),
+        lambda automaton: pass_over(
+            functools.partial(automaton.find_matches_as_indexes, overlapping=True), corpus.documents
+        ),
+    )
 
 
 def bench_scoring_index(settings: Settings, corpus: Corpus, needles: list[str], slice_name: str) -> None:
@@ -431,8 +479,7 @@ def main() -> int:
     argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
     libraries = {
-        "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
-        "StringZillas": pkg_version("stringzillas-cpus"),
+        "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
         **{
             name: pkg_version(name)
             for name in ("pyahocorasick", "ahocorasick-rs", "bm25s", "rank-bm25", "scikit-learn")
@@ -449,7 +496,7 @@ def main() -> int:
     if not vocabulary:
         raise SystemExit("The working set yielded no vocabulary; is the dataset path right?")
     documents = dataset.text_tokens()
-    corpus = Corpus(documents=documents, tape=sz.Strs(documents), dataset=dataset)
+    corpus = Corpus(documents=documents, tape=sz.Strings(documents), dataset=dataset)
     devices = selected_devices(settings)
 
     print("Benchmark configuration:")
@@ -466,8 +513,8 @@ def main() -> int:
         bench_counting(settings, corpus, needles, slice_name, devices)
         bench_cover(settings, corpus, needles, slice_name, devices)
         bench_locating(settings, corpus, needles, slice_name, devices)
-        bench_rewriting(settings, corpus, needles, slice_name, devices)
-        bench_scoring(settings, corpus, needles, slice_name, devices)
+        sweep(settings, corpus, needles, slice_name, devices, REPLACE)
+        sweep(settings, corpus, needles, slice_name, devices, SCORE)
         bench_scoring_index(settings, corpus, needles, slice_name)
 
     return finish()

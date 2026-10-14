@@ -40,7 +40,7 @@ BYTESET_PATTERNS = tuple(re.compile("[" + re.escape(byteset) + "]") for byteset 
 def bench_op(
     settings: Settings,
     name: str,
-    haystack: str | sz.Str,
+    haystack: str | sz.String,
     haystack_bytes: Bytes,
     patterns: Sequence[Any],
     operation: Callable[..., int],
@@ -54,7 +54,7 @@ def bench_op(
 
     `haystack_bytes` is passed rather than measured: `len()` on a `str` counts
     codepoints, which published the four stdlib rows at 61% of their true rate on a
-    Cyrillic corpus while the `sz.Str` rows, whose `len()` is bytes, were correct.
+    Cyrillic corpus while the `sz.String` rows, whose `len()` is bytes, were correct.
     """
     work = MeasureSpec(
         unit="bytes",
@@ -64,8 +64,8 @@ def bench_op(
     measure(settings, name, work, pass_over(partial(operation, haystack), patterns))
 
 
-def count_find(haystack: str | sz.Str, pattern: str) -> int:
-    # Non-overlapping, as `find/bench.rs` counts. `sz.Str` indexes bytes and `str`
+def count_find(haystack: str | sz.String, pattern: str) -> int:
+    # Non-overlapping, as `find/bench.rs` counts. `sz.String` indexes bytes and `str`
     # codepoints, so the stride is the needle measured in the haystack's own unit.
     stride = len(pattern) if isinstance(haystack, str) else len(pattern.encode())
     count, start = 0, 0
@@ -78,7 +78,7 @@ def count_find(haystack: str | sz.Str, pattern: str) -> int:
     return count
 
 
-def count_rfind(haystack: str | sz.Str, pattern: str) -> int:
+def count_rfind(haystack: str | sz.String, pattern: str) -> int:
     count, start = 0, len(haystack) - 1
     while True:
         index = haystack.rfind(pattern, 0, start + 1)
@@ -105,7 +105,7 @@ def build_automaton(needle: str) -> ahoc.Automaton:
     return automaton
 
 
-def count_byteset(haystack: sz.Str, characters: str) -> int:
+def count_byteset(haystack: sz.String, characters: str) -> int:
     count, start = 0, 0
     while True:
         index = haystack.find_first_of(characters, start)
@@ -121,7 +121,7 @@ def main() -> int:
 
     print_machine(
         {
-            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+            "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
             "PyAhoCorasick": pkg_version("pyahocorasick"),
         }
     )
@@ -133,7 +133,7 @@ def main() -> int:
     # The haystack is the concatenation of the resolved tokens, so the byte count the
     # rate is divided by is exactly `dataset.token_bytes`.
     pythonic_str = "".join(tokens)
-    stringzilla_str = sz.Str(pythonic_str)
+    stringzilla_str = sz.String(pythonic_str)
     # A fixed, evenly spaced needle sample, matching `find/bench.rs`, so every row
     # scans identical work rather than however far the deadline reached.
     stride = max(len(tokens) // NEEDLES_PER_PASS, 1)
@@ -145,16 +145,18 @@ def main() -> int:
 
     print("\nSubstring Search Benchmarks")
     bench_op(settings, "substring-forward/str.find", pythonic_str, haystack_bytes, sample, count_find)
-    bench_op(settings, "substring-forward/stringzilla.Str.find", stringzilla_str, haystack_bytes, sample, count_find)
+    bench_op(settings, "substring-forward/stringzilla.String.find", stringzilla_str, haystack_bytes, sample, count_find)
     bench_op(settings, "substring-backward/str.rfind", pythonic_str, haystack_bytes, sample, count_rfind)
-    bench_op(settings, "substring-backward/stringzilla.Str.rfind", stringzilla_str, haystack_bytes, sample, count_rfind)
+    bench_op(
+        settings, "substring-backward/stringzilla.String.rfind", stringzilla_str, haystack_bytes, sample, count_rfind
+    )
     bench_op(settings, "substring-forward/pyahocorasick.iter", pythonic_str, haystack_bytes, automatons, count_aho)
 
     print("\nCharacter Set Search")
     bench_op(settings, "byteset-forward/re.finditer", pythonic_str, haystack_bytes, BYTESET_PATTERNS, count_regex)
     bench_op(
         settings,
-        "byteset-forward/stringzilla.Str.find_first_of",
+        "byteset-forward/stringzilla.String.find_first_of",
         stringzilla_str,
         haystack_bytes,
         BYTESETS,

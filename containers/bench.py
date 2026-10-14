@@ -205,7 +205,9 @@ def run_filters(settings: Settings, unique: list[bytes]) -> None:
 def main() -> int:
     argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
-    print_machine({"StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}", "xxHash": xxhash.VERSION})
+    print_machine(
+        {"StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}", "xxHash": xxhash.VERSION}
+    )
     settings = read_settings("containers")
     print_settings(settings)
     dataset = resolve_dataset(settings)

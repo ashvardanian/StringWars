@@ -77,6 +77,14 @@ sequence = { dataset = "data/xlsum/xlsum.csv", tokens = "lines", bytes = "32MB" 
 # passes, so the suite reads the 64MB slice it was written against rather than the global size.
 substrings = { dataset = "data/xlsum/xlsum.csv", tokens = "lines", bytes = "64MB" }
 
+# Compute-bound for the same reason: three vocabularies × four verbs × every device.
+regex = { dataset = "data/xlsum/xlsum.csv", tokens = "lines", bytes = "64MB" }
+
+# One GH Archive hour, a JSON event per line. The XML paths run over a Stack Exchange `Posts.xml`
+# instead, whose `<row>` lines are documents of their own: point STRINGWARS_DATASET at
+# `data/stackexchange-bioinformatics/Posts.xml`. The extension picks the format.
+subdocuments = { dataset = "data/gharchive/2024-01-01-15.json", tokens = "lines", bytes = "64MB" }
+
 # Whole-corpus passes over one `file`-mode token, so `bytes` is also the length of the
 # single string every engine is handed.
 #

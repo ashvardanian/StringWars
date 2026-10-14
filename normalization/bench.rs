@@ -18,14 +18,14 @@ use icu::normalizer::{ComposingNormalizerBorrowed, DecomposingNormalizerBorrowed
 use memchr::memmem;
 use pcre2::bytes::RegexBuilder;
 use stringzilla::sz;
-use stringzilla::sz::Utf8NormalForm;
+use stringzilla::sz::NormalForm;
 use unicase::UniCase;
 use unicode_normalization::UnicodeNormalization;
 
 use stringwars::{
-    finish, install_panic_hook, log_timing_overhead, measure, note_unavailable, print_machine,
-    resolve_dataset, stream_key, token_ranges, Bytes, MeasureSpec, ResultExt, Settings, SplitMix64,
-    Tokenization, Unit, WorkUnits,
+    expect_ok, finish, install_panic_hook, log_timing_overhead, measure, note_unavailable,
+    print_machine, resolve_dataset, stream_key, token_ranges, Bytes, MeasureSpec, ResultExt,
+    Settings, SplitMix64, Tokenization, Unit, WorkUnits,
 };
 
 /// Adds the PCRE2 version and JIT availability to the machine block.
@@ -53,7 +53,7 @@ fn bench_case_fold(settings: &Settings, haystack: &[u8]) {
         MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
         || {
             let input = black_box(haystack);
-            let len = sz::utf8_uncased_fold(input, &mut fold_buffer);
+            let len = expect_ok(sz::utf8_uncased_fold(input, &mut fold_buffer));
             black_box(len);
         },
     );
@@ -90,12 +90,13 @@ fn bench_normalize(settings: &Settings, haystack: &[u8]) {
 
     // Benchmark for StringZilla normalization across all four forms. The form is a
     // runtime enum value, so a single loop covers every form without duplication.
-    let mut normalization_buffer = vec![0u8; haystack.len() * 3];
+    // `utf8_norm` refuses a target below the worst-case 18× expansion.
+    let mut normalization_buffer = vec![0u8; haystack.len() * 18];
     let stringzilla_forms = [
-        ("NFC", Utf8NormalForm::Nfc),
-        ("NFD", Utf8NormalForm::Nfd),
-        ("NFKC", Utf8NormalForm::Nfkc),
-        ("NFKD", Utf8NormalForm::Nfkd),
+        ("NFC", NormalForm::Nfc),
+        ("NFD", NormalForm::Nfd),
+        ("NFKC", NormalForm::Nfkc),
+        ("NFKD", NormalForm::Nfkd),
     ];
     for (form_name, form) in stringzilla_forms {
         let identifier = format!(
@@ -107,7 +108,11 @@ fn bench_normalize(settings: &Settings, haystack: &[u8]) {
             &identifier,
             MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
             || {
-                let length = sz::utf8_norm(black_box(haystack), form, &mut normalization_buffer);
+                let length = expect_ok(sz::utf8_norm(
+                    black_box(haystack),
+                    form,
+                    &mut normalization_buffer,
+                ));
                 black_box(length);
             },
         );

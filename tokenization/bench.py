@@ -74,7 +74,7 @@ def make_count_boundaries_icu(break_iterator: icu.BreakIterator) -> Callable[[st
 
     Every boundary counts, words and punctuation and whitespace alike, mirroring the Rust
     segmenter baselines. Nothing is materialized: slicing out each segment would copy, where
-    `sz.Str` only views and every Rust row counts a lazy iterator.
+    `sz.String` only views and every Rust row counts a lazy iterator.
     """
 
     def count(text: str) -> int:
@@ -100,7 +100,7 @@ def count_words_uniseg(text: str) -> int:
 
 def count_graphemes_stringzilla(text: str) -> int:
     """Count grapheme clusters lazily via StringZilla's utf8_graphemes (no list built)."""
-    return sum(1 for _ in sz.utf8_graphemes(text, skip_empty=True))
+    return sum(1 for _ in sz.utf8_graphemes(text))
 
 
 _GRAPHEME_PATTERN = regex.compile(r"\X")
@@ -123,7 +123,7 @@ def count_graphemes_uniseg(text: str) -> int:
 
 def count_sentences_stringzilla(text: str) -> int:
     """Count sentences lazily via StringZilla's utf8_sentences (no list built)."""
-    return sum(1 for _ in sz.utf8_sentences(text, skip_empty=True))
+    return sum(1 for _ in sz.utf8_sentences(text))
 
 
 def count_sentences_uniseg(text: str) -> int:
@@ -133,7 +133,7 @@ def count_sentences_uniseg(text: str) -> int:
 
 def count_lines_stringzilla(text: str) -> int:
     """Count UAX#14 line-break opportunities lazily via StringZilla's utf8_linebreaks."""
-    return sum(1 for _ in sz.utf8_linebreaks(text, skip_empty=True))
+    return sum(1 for _ in sz.utf8_linebreaks(text))
 
 
 def count_lines_uniseg(text: str) -> int:
@@ -181,7 +181,7 @@ def main() -> int:
 
     print_machine(
         {
-            "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+            "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
             "regex": pkg_version("regex"),
             "PyICU": f"{pkg_version('PyICU')} with ICU {icu.ICU_VERSION}",
             "uniseg": pkg_version("uniseg"),

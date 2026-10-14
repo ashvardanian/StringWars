@@ -67,7 +67,7 @@ def main() -> int:
     argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter).parse_args()
 
     libraries = {
-        "StringZilla": f"{sz.__version__} with {sz.__capabilities_str__}",
+        "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
         "Pandas": pd.__version__,
         "PyArrow": pa.__version__,
         "Polars": f"{pl.__version__} on {pl.thread_pool_size()} threads",
@@ -98,7 +98,7 @@ def main() -> int:
     # Case-insensitive list.sort driven by StringZilla's own pairwise Unicode case-folding
     # comparator, `sz.utf8_uncased_order`, adapted to a sort key via `functools.cmp_to_key`.
     # CPython's sort takes only a key (no `cmp=`), so the comparator is wrapped per element;
-    # holding the folding identical to `stringzilla.Strs.sorted(uncased=True)` isolates the sort
+    # holding the folding identical to `stringzilla.Strings.sorted(uncased=True)` isolates the sort
     # algorithm itself (CPython's Timsort vs StringZilla's radix sort).
     uncased_key = functools.cmp_to_key(sz.utf8_uncased_order)
 
@@ -109,11 +109,10 @@ def main() -> int:
     bench_sort_operation(
         settings, "argsort/list.sort<uncased>", lambda: list(tokens), std_sort_uncased, token_count, token_bytes
     )
-    # StringZilla — rebuild the Strs view each pass so every pass sorts identical data.
     bench_sort_operation(
         settings,
-        "argsort/stringzilla.Strs.sorted",
-        lambda: sz.Strs(tokens),
+        "argsort/stringzilla.Strings.sorted",
+        lambda: sz.Strings(tokens),
         lambda strs: strs.sorted(),
         token_count,
         token_bytes,
@@ -122,8 +121,8 @@ def main() -> int:
     # StringZilla case-insensitive sort: orders by Unicode case-folding natively.
     bench_sort_operation(
         settings,
-        "argsort/stringzilla.Strs.sorted<uncased>",
-        lambda: sz.Strs(tokens),
+        "argsort/stringzilla.Strings.sorted<uncased>",
+        lambda: sz.Strings(tokens),
         lambda strs: strs.sorted(uncased=True),
         token_count,
         token_bytes,
@@ -135,8 +134,8 @@ def main() -> int:
     argsort_out = np.empty(token_count, dtype=np.uintp)
     bench_sort_operation(
         settings,
-        "argsort/stringzilla.Strs.argsort",
-        lambda: sz.Strs(tokens),
+        "argsort/stringzilla.Strings.argsort",
+        lambda: sz.Strings(tokens),
         lambda strs: strs.argsort(out=argsort_out),
         token_count,
         token_bytes,
@@ -146,8 +145,8 @@ def main() -> int:
     argsort_out_uncased = np.empty(token_count, dtype=np.uintp)
     bench_sort_operation(
         settings,
-        "argsort/stringzilla.Strs.argsort<uncased>",
-        lambda: sz.Strs(tokens),
+        "argsort/stringzilla.Strings.argsort<uncased>",
+        lambda: sz.Strings(tokens),
         lambda strs: strs.argsort(uncased=True, out=argsort_out_uncased),
         token_count,
         token_bytes,
