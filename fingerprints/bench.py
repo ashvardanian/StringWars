@@ -16,14 +16,15 @@ import stringzillas as szs
 from datasketch import MinHash
 
 from stringwars import (
-    FALLBACK_GPU_MULTIPROCESSORS,
     Bytes,
     MeasureSpec,
     Settings,
     Threads,
     batch_size,
     finish,
-    gpu_multiprocessor_count,
+    gpu_batch_size,
+    gpu_ordinals,
+    gpu_require,
     log_dataset,
     log_timing_overhead,
     measure,
@@ -79,10 +80,15 @@ def benchmark_stringzillas(
     cpu_cores = settings.threads
     default_scope = szs.DeviceScope()
     cpu_scope = szs.DeviceScope(cpu_cores=cpu_cores)
-    try:
-        gpu_scope = szs.DeviceScope(gpu_device=0)
-    except Exception:  # any failure here means there is no usable GPU
-        gpu_scope = None
+    gpu_scopes: list[tuple[int, szs.DeviceScope]] = []
+    for ordinal in gpu_ordinals(settings):
+        if not gpu_require(settings, ordinal):
+            continue
+        try:
+            gpu_scopes.append((ordinal, szs.DeviceScope(gpu_device=ordinal)))
+        except Exception as error:  # any failure here means there is no usable GPU
+            if settings.devices is not None:
+                raise SystemExit(f"Requested CUDA device cuda:{ordinal} is unavailable: {error}") from error
 
     moved = sz.Strs(documents)
 
@@ -100,15 +106,18 @@ def benchmark_stringzillas(
     # same rows in both harnesses.
     single_cpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<1cpu>"
     all_cpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<{cpu_cores}cpu>"
-    gpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<1gpu>"
 
     if settings.selects(single_cpu_name):
         run_variant(single_cpu_name, default_scope, batch_size(settings, 1), Threads(1))
     if settings.selects(all_cpu_name):
         run_variant(all_cpu_name, cpu_scope, batch_size(settings, cpu_cores), cpu_cores)
-    if gpu_scope is not None and settings.selects(gpu_name):
-        gpu_cores = gpu_multiprocessor_count(0) or FALLBACK_GPU_MULTIPROCESSORS
-        run_variant(gpu_name, gpu_scope, batch_size(settings, gpu_cores), Threads(1))
+    for ordinal, gpu_scope in gpu_scopes:
+        gpu_name = f"minhash-{dimensions}/stringzillas.Fingerprints<cuda:{ordinal}>"
+        if not settings.selects(gpu_name):
+            continue
+        if not gpu_require(settings, ordinal):
+            continue
+        run_variant(gpu_name, gpu_scope, gpu_batch_size(settings, ordinal), Threads(1))
 
 
 def benchmark_datasketch(
@@ -139,38 +148,45 @@ def benchmark_cudf(
     settings: Settings, documents: list[str], document_byte_lengths: np.ndarray, dimensions: int
 ) -> None:
     """cuDF MinHash on the GPU: the CUDA first-party comparison (optional, best-effort)."""
-    name = f"minhash-{dimensions}/cudf.minhash<1gpu>"
-    if not settings.selects(name):
+    ordinals = gpu_ordinals(settings)
+    names = [f"minhash-{dimensions}/cudf.minhash<cuda:{ordinal}>" for ordinal in ordinals]
+    if not any(settings.selects(name) for name in names):
         return
     try:
         import cupy as cp
     except ImportError:
-        note_unavailable(name, "cupy not installed")
+        for name in names:
+            note_unavailable(name, "cupy not installed")
         return
 
     per_width = max(1, dimensions // len(NGRAM_WIDTHS))
-    parameters_a = cp.arange(1, per_width + 1, dtype=cp.uint32)
-    parameters_b = cp.arange(1, per_width + 1, dtype=cp.uint32)
-    series = cudf.Series(documents)
 
     def kernel(series_slice: Any) -> None:
         for width in NGRAM_WIDTHS:
             series_slice.str.minhash(seed=0, a=parameters_a, b=parameters_b, width=width)
 
-    gpu_cores = gpu_multiprocessor_count(0) or FALLBACK_GPU_MULTIPROCESSORS
-    try:
-        bench_fingerprint(
-            settings,
-            name,
-            series,
-            kernel,
-            document_byte_lengths,
-            dimensions,
-            batch_size(settings, gpu_cores),
-            Threads(1),
-        )
-    except Exception as error:  # cuDF raises its own types for an unusable device or kernel
-        note_unavailable(name, f"{type(error).__name__}: {error}")
+    for ordinal, name in zip(ordinals, names, strict=True):
+        if not settings.selects(name):
+            continue
+        if not gpu_require(settings, ordinal):
+            continue
+        # Built after the device is current, so both the parameters and the series live on it.
+        parameters_a = cp.arange(1, per_width + 1, dtype=cp.uint32)
+        parameters_b = cp.arange(1, per_width + 1, dtype=cp.uint32)
+        series = cudf.Series(documents)
+        try:
+            bench_fingerprint(
+                settings,
+                name,
+                series,
+                kernel,
+                document_byte_lengths,
+                dimensions,
+                gpu_batch_size(settings, ordinal),
+                Threads(1),
+            )
+        except Exception as error:  # cuDF raises its own types for an unusable device or kernel
+            note_unavailable(name, f"{type(error).__name__}: {error}")
 
 
 def main() -> int:
@@ -199,7 +215,8 @@ def main() -> int:
         benchmark_stringzillas(settings, texts, document_byte_lengths, dimensions)
         benchmark_datasketch(settings, dataset.tokens, document_byte_lengths, dimensions)
         if not CUDF_AVAILABLE:
-            note_unavailable(f"minhash-{dimensions}/cudf.minhash<1gpu>", "cudf not installed")
+            for ordinal in gpu_ordinals(settings):
+                note_unavailable(f"minhash-{dimensions}/cudf.minhash<cuda:{ordinal}>", "cudf not installed")
         else:
             benchmark_cudf(settings, texts, document_byte_lengths, dimensions)
     return finish()

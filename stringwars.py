@@ -200,6 +200,9 @@ def print_machine(libraries: Mapping[str, str]) -> None:
 # Multiprocessors assumed when sizing a GPU batch without a GPU to ask.
 FALLBACK_GPU_MULTIPROCESSORS = 64
 
+# Suites that put rows on a GPU, and so accept `STRINGWARS_DEVICES`.
+GPU_SUITES = ("similarities", "fingerprints", "sequence")
+
 
 def batch_size(settings: "Settings", cores: int) -> int:
     """Batch size for a backend with `cores` parallel cores: `STRINGWARS_BATCH_PER_CORE`, or the
@@ -210,6 +213,66 @@ def batch_size(settings: "Settings", cores: int) -> int:
     if settings.batch_per_core is None:
         raise ValueError(f"suite {settings.suite!r} has no `batch_per_core` in stringwars.toml")
     return settings.batch_per_core * max(1, cores)
+
+
+def gpu_select_device(device_index: int) -> bool:
+    """Points the CUDA runtime at `device_index`, so later allocations and third-party GPU libraries
+    land on the device whose ordinal a row is named after. CuPy keeps its own current device, and
+    cuDF allocates through it, so it is asked first and the runtime is only driven directly when
+    CuPy is absent. Returns False when CUDA is unavailable or the ordinal does not exist."""
+    try:
+        import cupy
+
+        cupy.cuda.Device(device_index).use()
+        return True
+    except Exception:  # no CuPy, or no such device
+        pass
+
+    import ctypes
+    import ctypes.util
+
+    for candidate in ["libcudart.so", "libcudart.so.12", ctypes.util.find_library("cudart")]:
+        if not candidate:
+            continue
+        try:
+            library = ctypes.CDLL(candidate)
+        except OSError:
+            continue
+        return library.cudaSetDevice(ctypes.c_int(device_index)) == 0
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class GpuDevice:
+    """One GPU a suite puts rows on, and the batch sized for that device. `scope` is the engine's own
+    device handle, so this stays free of any engine dependency."""
+
+    ordinal: int
+    scope: object
+    batch: int
+
+
+def gpu_ordinals(settings: "Settings") -> list[int]:
+    """Ordinals that should carry rows: the `STRINGWARS_DEVICES` request when there is one, and device
+    zero otherwise. A probed device that turns out to be missing is skipped; a requested one is not."""
+    return list(settings.devices) if settings.devices is not None else [0]
+
+
+def gpu_require(settings: "Settings", ordinal: int) -> bool:
+    """Makes `ordinal` the device later allocations land on. Refuses the whole run when the ordinal was
+    named in `STRINGWARS_DEVICES` and is unusable, and reports False when it was only probed, so a box
+    without a GPU still runs its CPU rows."""
+    if gpu_select_device(ordinal):
+        return True
+    if settings.devices is not None:
+        raise SystemExit(f"Requested CUDA device cuda:{ordinal} is unavailable")
+    return False
+
+
+def gpu_batch_size(settings: "Settings", ordinal: int) -> int:
+    """Batch for one device, scaling `STRINGWARS_BATCH_PER_CORE` by that device's own multiprocessor
+    count rather than by whatever device zero reports."""
+    return batch_size(settings, gpu_multiprocessor_count(ordinal) or FALLBACK_GPU_MULTIPROCESSORS)
 
 
 def gpu_multiprocessor_count(device_index: int = 0) -> int | None:
@@ -284,6 +347,7 @@ class Settings:
     `collisions`."""
 
     suite: str
+    devices: list[int] | None
     seed: Seed
     filter: str
     filter_pattern: re.Pattern[str] | None
@@ -315,7 +379,19 @@ class Settings:
 
 
 def read_settings(suite: str) -> Settings:
-    """Reads every `STRINGWARS_*` variable `suite` uses, exiting with status 1 on the first that does not parse."""
+    """Read the settings used by one suite."""
+    devices = None
+    if selection := env_text("STRINGWARS_DEVICES"):
+        devices = []
+        for item in selection.split(","):
+            match = re.fullmatch(r"cuda:([0-9]+)", item)
+            if match is None or int(match[1]) > 2147483647:
+                raise SystemExit("STRINGWARS_DEVICES requires CUDA selectors such as cuda:0,cuda:1")
+            # A repeated ordinal would name two rows identically, so the first wins.
+            if int(match[1]) not in devices:
+                devices.append(int(match[1]))
+        if suite not in GPU_SUITES:
+            raise SystemExit(f"STRINGWARS_DEVICES is unsupported by the {suite} suite")
     entry = {**manifest()["limits"], **manifest()["suite"][suite]}
     filter = env_text("STRINGWARS_FILTER") or ""
     try:
@@ -324,6 +400,7 @@ def read_settings(suite: str) -> Settings:
         filter_pattern = None
     return Settings(
         suite=suite,
+        devices=devices,
         seed=env_seed("STRINGWARS_SEED", manifest_parsed(entry, "seed", parse_seed, "a 32-bit integer")),
         filter=filter,
         filter_pattern=filter_pattern,
@@ -363,7 +440,9 @@ def read_settings(suite: str) -> Settings:
 
 
 def print_settings(settings: Settings) -> None:
-    """Prints every setting as "- Name: value", in the grammar it is read in."""
+    """Print every setting in the grammar used to read it."""
+    if settings.devices is not None:
+        print("- Devices: " + ",".join(f"cuda:{ordinal}" for ordinal in settings.devices))
     print(f"- Seed: {settings.seed}")
     print(f"- Filter: {settings.filter or 'none'}")
     print(f"- Warm-up: {spell_duration(settings.warmup)}")

@@ -27,9 +27,9 @@ use stringzilla::szs::{
 };
 
 use stringwars::{
-    batch_size, finish, gpu_multiprocessor_count, install_panic_hook, log_timing_overhead, measure,
-    note_unavailable, print_machine, resolve_dataset, Bytes, MeasureSpec, ResultExt, Settings,
-    Threads, Unit, WorkUnits, FALLBACK_GPU_MULTIPROCESSORS,
+    batch_size, finish, gpu_batch_size, gpu_ordinals, gpu_require, install_panic_hook,
+    log_timing_overhead, measure, note_unavailable, print_machine, resolve_dataset, Bytes,
+    GpuDevice, MeasureSpec, ResultExt, Settings, Threads, Unit, WorkUnits,
 };
 
 /// Builds a substitution table for classic unary scoring: `match_cost` on the diagonal,
@@ -222,10 +222,6 @@ fn bench_similarities(settings: &Settings) {
     let threads = settings.threads;
     let batch_single_cpu = batch_size(settings, 1);
     let batch_multi_cpu = batch_size(settings, threads.0.get());
-    let batch_gpu = batch_size(
-        settings,
-        gpu_multiprocessor_count(0).unwrap_or(FALLBACK_GPU_MULTIPROCESSORS),
-    );
 
     let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
     units_tape
@@ -243,7 +239,6 @@ fn bench_similarities(settings: &Settings) {
     let token_count = units_tape.len();
     let side_single_cpu = crossproduct_side(batch_single_cpu, token_count);
     let side_multi_cpu = crossproduct_side(batch_multi_cpu, token_count);
-    let side_gpu = crossproduct_side(batch_gpu, token_count);
 
     // Log benchmark-specific configuration
     println!("Benchmark configuration:");
@@ -255,10 +250,6 @@ fn bench_similarities(settings: &Settings) {
         "- {}-core batch: {} ({}x{} cross-product)",
         threads, batch_multi_cpu, side_multi_cpu, side_multi_cpu
     );
-    println!(
-        "- GPU batch: {} ({}x{} cross-product)",
-        batch_gpu, side_gpu, side_gpu
-    );
     println!("- Tokens available: {}", token_count);
     println!();
 
@@ -267,7 +258,34 @@ fn bench_similarities(settings: &Settings) {
     let cpu_single = DeviceScope::cpu_cores(1).expect("Failed to create single-core device scope");
     let cpu_parallel =
         DeviceScope::cpu_cores(threads.0.get()).expect("Failed to create multi-core device scope");
-    let maybe_gpu = DeviceScope::gpu_device(0).ok();
+    let mut gpu_devices: Vec<GpuDevice<DeviceScope>> = Vec::new();
+    for ordinal in gpu_ordinals(settings) {
+        if !gpu_require(settings, ordinal) {
+            continue;
+        }
+        let scope = match DeviceScope::gpu_device(ordinal as usize) {
+            Ok(scope) => scope,
+            Err(error) => {
+                assert!(
+                    settings.devices.is_none(),
+                    "Requested CUDA device cuda:{ordinal} is unavailable: {error}"
+                );
+                continue;
+            }
+        };
+        let side = crossproduct_side(gpu_batch_size(settings, ordinal), token_count);
+        println!("- GPU device: cuda:{ordinal} with a {side}x{side} cross-product");
+        gpu_devices.push(GpuDevice {
+            ordinal,
+            scope,
+            batch: side,
+        });
+    }
+    let side_gpu = gpu_devices
+        .iter()
+        .map(|device| device.batch)
+        .max()
+        .unwrap_or(0);
 
     // Uniform cost benchmarks (classic Levenshtein: match=0, mismatch=1, open=1, extend=1)
     println!("# uniform");
@@ -277,11 +295,10 @@ fn bench_similarities(settings: &Settings) {
         &chars_view,
         &cpu_single,
         &cpu_parallel,
-        maybe_gpu.as_ref(),
+        &gpu_devices,
         threads,
         side_single_cpu,
         side_multi_cpu,
-        side_gpu,
     );
 
     // NW/SW with linear (open=-2, extend=-2) then affine (open=-5, extend=-1) gap costs,
@@ -294,7 +311,7 @@ fn bench_similarities(settings: &Settings) {
             &tape_bytes_view,
             &cpu_single,
             &cpu_parallel,
-            maybe_gpu.as_ref(),
+            &gpu_devices,
             threads,
             side_single_cpu,
             side_multi_cpu,
@@ -312,11 +329,10 @@ fn perform_uniform_benchmarks(
     chars_view: &CharsTapeView<u64>,
     cpu_single: &DeviceScope,
     cpu_parallel: &DeviceScope,
-    maybe_gpu: Option<&DeviceScope>,
+    gpu_devices: &[GpuDevice<DeviceScope>],
     threads: Threads,
     side_single_cpu: usize,
     side_multi_cpu: usize,
-    side_gpu: usize,
 ) {
     let lev_single = LevenshteinDistances::new(cpu_single, 0, 1, 1, 1)
         .expect("Failed to create LevenshteinDistances single");
@@ -326,11 +342,6 @@ fn perform_uniform_benchmarks(
         .expect("Failed to create LevenshteinDistancesUtf8 single");
     let lev_utf8_parallel = LevenshteinDistancesUtf8::new(cpu_parallel, 0, 1, 1, 1)
         .expect("Failed to create LevenshteinDistancesUtf8 parallel");
-    let maybe_lev_gpu = maybe_gpu.and_then(|gpu| LevenshteinDistances::new(gpu, 0, 1, 1, 1).ok());
-    // GPU UTF-8 Levenshtein: the engine may decline inputs beyond its supported length, returning an error we skip
-    // on rather than aborting the suite.
-    let maybe_lev_utf8_gpu =
-        maybe_gpu.and_then(|gpu| LevenshteinDistancesUtf8::new(gpu, 0, 1, 1, 1).ok());
 
     // RapidFuzz baselines (no batching; scan one-by-one). One pair per call across the
     // query/candidate diagonal of the single-core cross-product. One pass scores every
@@ -493,13 +504,21 @@ fn perform_uniform_benchmarks(
         );
     }
 
-    if let (Some(gpu), Some(engine)) = (maybe_gpu, maybe_lev_gpu.as_ref()) {
+    for device in gpu_devices {
+        let (ordinal, gpu, side_gpu) = (device.ordinal, &device.scope, device.batch);
+        assert!(
+            gpu_require(settings, ordinal),
+            "CUDA device cuda:{ordinal} is unavailable"
+        );
+        let Ok(engine) = LevenshteinDistances::new(gpu, 0, 1, 1, 1) else {
+            continue;
+        };
         let work = crossproduct_work_bytes(tape_bytes_view, side_gpu);
         let mut matrix = UnifiedMat::<usize>::try_allocate(side_gpu, side_gpu)
             .expect("Failed to allocate LevenshteinDistances matrix (GPU)");
         measure_crossproduct_bytes_usize(
             settings,
-            "uniform/stringzillas::LevenshteinDistances<1gpu>",
+            &format!("uniform/stringzillas::LevenshteinDistances<cuda:{ordinal}>"),
             tape_bytes_view,
             side_gpu,
             MeasureSpec::new(Unit::Cups, work),
@@ -515,14 +534,22 @@ fn perform_uniform_benchmarks(
     }
 
     // GPU UTF-8 Levenshtein: the engine may decline inputs beyond its supported length, returning an error we skip on.
-    if let (Some(gpu), Some(engine)) = (maybe_gpu, maybe_lev_utf8_gpu.as_ref()) {
+    for device in gpu_devices {
+        let (ordinal, gpu, side_gpu) = (device.ordinal, &device.scope, device.batch);
+        assert!(
+            gpu_require(settings, ordinal),
+            "CUDA device cuda:{ordinal} is unavailable"
+        );
+        let Ok(engine) = LevenshteinDistancesUtf8::new(gpu, 0, 1, 1, 1) else {
+            continue;
+        };
         let work = crossproduct_work_chars(chars_view, side_gpu);
         let queries = chars_query_vec(chars_view, side_gpu);
         let candidates = chars_candidate_vec(chars_view, side_gpu);
         match engine.compute(gpu, &queries, &candidates) {
             Ok(mut matrix) => measure_crossproduct_chars_usize(
                 settings,
-                "uniform/stringzillas::LevenshteinDistancesUtf8<1gpu>",
+                &format!("uniform/stringzillas::LevenshteinDistancesUtf8<cuda:{ordinal}>"),
                 chars_view,
                 side_gpu,
                 MeasureSpec::new(Unit::Cups, work),
@@ -536,7 +563,7 @@ fn perform_uniform_benchmarks(
                 },
             ),
             Err(error) => note_unavailable(
-                "uniform/stringzillas::LevenshteinDistancesUtf8<1gpu>",
+                &format!("uniform/stringzillas::LevenshteinDistancesUtf8<cuda:{ordinal}>"),
                 &error.to_string(),
             ),
         }
@@ -567,7 +594,7 @@ fn perform_score_benchmarks(
     tape_bytes_view: &BytesTapeView<u64>,
     cpu_single: &DeviceScope,
     cpu_parallel: &DeviceScope,
-    maybe_gpu: Option<&DeviceScope>,
+    gpu_devices: &[GpuDevice<DeviceScope>],
     threads: Threads,
     side_single_cpu: usize,
     side_multi_cpu: usize,
@@ -610,12 +637,6 @@ fn perform_score_benchmarks(
         extend_cost,
     )
     .expect("Failed to create SW parallel");
-    let maybe_nw_gpu = maybe_gpu.and_then(|gpu| {
-        NeedlemanWunschScores::new(gpu, &byte_to_class, &class_costs, open_cost, extend_cost).ok()
-    });
-    let maybe_sw_gpu = maybe_gpu.and_then(|gpu| {
-        SmithWatermanScores::new(gpu, &byte_to_class, &class_costs, open_cost, extend_cost).ok()
-    });
 
     let max_len = max_token_len(tape_bytes_view, side_single_cpu, side_multi_cpu, side_gpu);
     let baseline_side = side_single_cpu;
@@ -727,13 +748,23 @@ fn perform_score_benchmarks(
         );
     }
 
-    if let (Some(gpu), Some(engine)) = (maybe_gpu, maybe_nw_gpu.as_ref()) {
+    for device in gpu_devices {
+        let (ordinal, gpu, side_gpu) = (device.ordinal, &device.scope, device.batch);
+        assert!(
+            gpu_require(settings, ordinal),
+            "CUDA device cuda:{ordinal} is unavailable"
+        );
+        let Ok(engine) =
+            NeedlemanWunschScores::new(gpu, &byte_to_class, &class_costs, open_cost, extend_cost)
+        else {
+            continue;
+        };
         let work = crossproduct_work_bytes(tape_bytes_view, side_gpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_gpu, side_gpu)
             .expect("Failed to allocate NeedlemanWunschScores matrix (GPU)");
         measure_crossproduct_bytes_isize(
             settings,
-            &format!("{group_name}/stringzillas::NeedlemanWunschScores<1gpu>"),
+            &format!("{group_name}/stringzillas::NeedlemanWunschScores<cuda:{ordinal}>"),
             tape_bytes_view,
             side_gpu,
             MeasureSpec::new(Unit::Cups, work),
@@ -797,13 +828,23 @@ fn perform_score_benchmarks(
         );
     }
 
-    if let (Some(gpu), Some(engine)) = (maybe_gpu, maybe_sw_gpu.as_ref()) {
+    for device in gpu_devices {
+        let (ordinal, gpu, side_gpu) = (device.ordinal, &device.scope, device.batch);
+        assert!(
+            gpu_require(settings, ordinal),
+            "CUDA device cuda:{ordinal} is unavailable"
+        );
+        let Ok(engine) =
+            SmithWatermanScores::new(gpu, &byte_to_class, &class_costs, open_cost, extend_cost)
+        else {
+            continue;
+        };
         let work = crossproduct_work_bytes(tape_bytes_view, side_gpu);
         let mut matrix = UnifiedMat::<isize>::try_allocate(side_gpu, side_gpu)
             .expect("Failed to allocate SmithWatermanScores matrix (GPU)");
         measure_crossproduct_bytes_isize(
             settings,
-            &format!("{group_name}/stringzillas::SmithWatermanScores<1gpu>"),
+            &format!("{group_name}/stringzillas::SmithWatermanScores<cuda:{ordinal}>"),
             tape_bytes_view,
             side_gpu,
             MeasureSpec::new(Unit::Cups, work),

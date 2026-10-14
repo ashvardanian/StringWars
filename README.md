@@ -316,6 +316,7 @@ An empty variable means the same as an unset one, and a value that does not pars
 | `STRINGWARS_TIME_LIMIT`     | `10s`              | Measurement cap per benchmark, like `10s` or `500ms`                         |
 | `STRINGWARS_BYTES`          | per suite, `256MB` | Bytes read from the dataset, like `256MB`, rounded down to a power of two    |
 | `STRINGWARS_BATCH_PER_CORE` | per suite          | Items per core, or per GPU streaming multiprocessor, in batched suites       |
+| `STRINGWARS_DEVICES`        | `cuda:0`           | CUDA devices in GPU suites, like `cuda:0,cuda:1`, one row per device         |
 | `STRINGWARS_THREADS`        | all cores          | Cores for multi-core rows, `0` for all of them                               |
 | `STRINGWARS_DIMS`           | per suite          | MinHash widths in `fingerprints`, one like `128` or a list like `64,128,256` |
 | `STRINGWARS_DATASET`        | per suite          | Path to the textual dataset file                                             |
@@ -329,6 +330,8 @@ An empty variable means the same as an unset one, and a value that does not pars
 
 "Per suite" defaults are in `stringwars.toml`.
 Sizes are whole bytes or `KB`, `MB`, `GB` and `TB` in any case, and booleans are `0`, `1`, `true` or `false`.
+`STRINGWARS_DEVICES` is read by the suites that put rows on a GPU, which are `similarities`, `fingerprints` and `sequence`, and any other suite refuses it rather than ignoring it.
+Each selected device gets its own row, named after its ordinal as in `<cuda:1>`, and a device named in the variable that cannot be opened stops the run.
 
 Here is an example of a common benchmark run on a Unix-like system:
 

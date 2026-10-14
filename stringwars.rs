@@ -520,12 +520,16 @@ pub enum Collisions {
     Report,
 }
 
+/// Suites that put rows on a GPU, and so accept `STRINGWARS_DEVICES`.
+pub const GPU_SUITES: [&str; 3] = ["similarities", "fingerprints", "sequence"];
+
 /// Every setting of one suite, read once at the top of `main` and passed down. Defaults come
 /// from `stringwars.toml`, the suite's `[suite]` entry first and `[limits]` second, so neither
 /// harness carries its own. Mirrors the Python `Settings` field for field, plus `counters`
 /// and `collisions`.
 pub struct Settings {
     pub suite: String,
+    pub devices: Option<Vec<i32>>,
     pub seed: Seed,
     pub filter: String,
     pub filter_pattern: Option<regex::Regex>,
@@ -551,6 +555,30 @@ impl Settings {
     /// Reads every `STRINGWARS_*` variable `suite` uses, exiting with status 1 on the first that
     /// does not parse. A malformed `stringwars.toml` is a bug in the repository, so it panics.
     pub fn read(suite: &str) -> Self {
+        let devices = env_text("STRINGWARS_DEVICES").map(|selection| {
+            let mut ordinals: Vec<i32> = Vec::new();
+            for item in selection.split(',') {
+                let parsed = item
+                    .strip_prefix("cuda:")
+                    .filter(|text| {
+                        !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+                    })
+                    .and_then(|text| text.parse::<i32>().ok());
+                let ordinal = parsed.unwrap_or_else(|| {
+                    eprintln!("STRINGWARS_DEVICES requires CUDA selectors such as cuda:0,cuda:1");
+                    std::process::exit(1);
+                });
+                // A repeated ordinal would name two rows identically, so the first wins.
+                if !ordinals.contains(&ordinal) {
+                    ordinals.push(ordinal);
+                }
+            }
+            ordinals
+        });
+        if devices.is_some() && (!GPU_SUITES.contains(&suite) || !cfg!(feature = "cuda")) {
+            eprintln!("STRINGWARS_DEVICES is unsupported by this {suite} executable");
+            std::process::exit(1);
+        }
         let manifest = manifest();
         let entry = manifest.get("suite").and_then(|suites| suites.get(suite));
         let value = |key: &str| {
@@ -572,6 +600,7 @@ impl Settings {
         let filter = env_text("STRINGWARS_FILTER").unwrap_or_default();
         Settings {
             suite: suite.to_string(),
+            devices,
             seed: env_seed(
                 "STRINGWARS_SEED",
                 count("seed")
@@ -659,6 +688,16 @@ impl Settings {
 
     /// Prints every setting as "- Name: value", in the grammar it is read in.
     pub fn print(&self) {
+        if let Some(devices) = &self.devices {
+            println!(
+                "- Devices: {}",
+                devices
+                    .iter()
+                    .map(|ordinal| format!("cuda:{ordinal}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+        }
         println!("- Seed: {}", self.seed);
         println!(
             "- Filter: {}",
@@ -1631,6 +1670,64 @@ pub fn batch_size(settings: &Settings, cores: usize) -> usize {
         .batch_per_core
         .expect("this suite has no `batch_per_core` in stringwars.toml");
     per_core.saturating_mul(cores.max(1))
+}
+
+/// Points the CUDA runtime at `device_index`, so later allocations and third-party GPU libraries
+/// land on the device whose ordinal a row is named after. Returns false when CUDA is unavailable or
+/// the ordinal does not exist.
+#[cfg(feature = "cuda")]
+pub fn gpu_select_device(device_index: i32) -> bool {
+    extern "C" {
+        fn cudaSetDevice(device: i32) -> i32;
+    }
+    unsafe { cudaSetDevice(device_index) == 0 }
+}
+
+/// Without the CUDA feature there is no device to select.
+#[cfg(not(feature = "cuda"))]
+pub fn gpu_select_device(_device_index: i32) -> bool {
+    false
+}
+
+/// One GPU a suite puts rows on, and the batch sized for that device. `Scope` is the engine's own
+/// device handle, so this stays free of any engine dependency.
+#[allow(dead_code)]
+pub struct GpuDevice<Scope> {
+    pub ordinal: i32,
+    pub scope: Scope,
+    pub batch: usize,
+}
+
+/// Ordinals that should carry rows: the `STRINGWARS_DEVICES` request when there is one, and device
+/// zero otherwise. A probed device that turns out to be missing is skipped; a requested one is not.
+#[allow(dead_code)]
+pub fn gpu_ordinals(settings: &Settings) -> Vec<i32> {
+    settings.devices.clone().unwrap_or_else(|| vec![0])
+}
+
+/// Makes `ordinal` the device later allocations land on. Refuses the whole run when the ordinal was
+/// named in `STRINGWARS_DEVICES` and is unusable, and reports false when it was only probed, so a
+/// box without a GPU still runs its CPU rows.
+#[allow(dead_code)]
+pub fn gpu_require(settings: &Settings, ordinal: i32) -> bool {
+    if gpu_select_device(ordinal) {
+        return true;
+    }
+    assert!(
+        settings.devices.is_none(),
+        "Requested CUDA device cuda:{ordinal} is unavailable"
+    );
+    false
+}
+
+/// Batch for one device, scaling `STRINGWARS_BATCH_PER_CORE` by that device's own multiprocessor
+/// count rather than by whatever device zero reports.
+#[allow(dead_code)]
+pub fn gpu_batch_size(settings: &Settings, ordinal: i32) -> usize {
+    batch_size(
+        settings,
+        gpu_multiprocessor_count(ordinal).unwrap_or(FALLBACK_GPU_MULTIPROCESSORS),
+    )
 }
 
 /// Number of streaming multiprocessors on the given CUDA device, queried from the CUDA runtime.

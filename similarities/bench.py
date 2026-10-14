@@ -24,14 +24,15 @@ from nltk.metrics.distance import edit_distance as nltk_edit_distance
 from rapidfuzz.distance import Levenshtein as rapidfuzz_levenshtein
 
 from stringwars import (
-    FALLBACK_GPU_MULTIPROCESSORS,
     Bytes,
     MeasureSpec,
     Settings,
     Threads,
     batch_size,
     finish,
-    gpu_multiprocessor_count,
+    gpu_batch_size,
+    gpu_ordinals,
+    gpu_require,
     log_dataset,
     log_timing_overhead,
     measure,
@@ -155,6 +156,7 @@ class DeviceVariant:
     scope: szs.DeviceScope
     side: int
     concurrency: Threads = Threads(1)
+    ordinal: int | None = None
 
 
 def build_device_variants(settings: Settings, token_count: int) -> list[DeviceVariant]:
@@ -184,14 +186,23 @@ def build_device_variants(settings: Settings, token_count: int) -> list[DeviceVa
         ),
     )
 
-    try:
-        gpu_scope = szs.DeviceScope(gpu_device=0)
-    except Exception:  # any failure here means there is no usable GPU
-        gpu_scope = None
-    if gpu_scope is not None:
-        gpu_cores = gpu_multiprocessor_count(0) or FALLBACK_GPU_MULTIPROCESSORS
+    for ordinal in gpu_ordinals(settings):
+        if not gpu_require(settings, ordinal):
+            continue
+        try:
+            gpu_scope = szs.DeviceScope(gpu_device=ordinal)
+        except Exception as error:
+            if settings.devices is not None:
+                raise SystemExit(f"Requested CUDA device cuda:{ordinal} is unavailable: {error}") from error
+            continue
+        print(f"- GPU device: cuda:{ordinal}")
         variants.append(
-            DeviceVariant("<1gpu>", gpu_scope, crossproduct_side(batch_size(settings, gpu_cores), token_count))
+            DeviceVariant(
+                f"<cuda:{ordinal}>",
+                gpu_scope,
+                crossproduct_side(gpu_batch_size(settings, ordinal), token_count),
+                ordinal=ordinal,
+            )
         )
 
     return variants
@@ -216,6 +227,8 @@ def benchmark_stringzillas_distances(
     matrix is reused.
     """
     for variant in device_variants:
+        if variant.ordinal is not None and not gpu_require(settings, variant.ordinal):
+            continue
         full_name = f"{category}/{engine_name}{variant.label}"
         if not settings.selects(full_name):
             continue
@@ -284,6 +297,8 @@ def benchmark_stringzillas_scores(
     throughput denominator uses byte lengths (the binary cells), matching bench.rs.
     """
     for variant in device_variants:
+        if variant.ordinal is not None and not gpu_require(settings, variant.ordinal):
+            continue
         full_name = f"{category}/{engine_name}{variant.label}"
         if not settings.selects(full_name):
             continue
@@ -393,12 +408,14 @@ def benchmark_edit_distance_baselines(
 
     # cuDF batched GPU edit distance: it scores a whole batch per call, but exposes no cross-product,
     # so it is benchmarked over the diagonal pairs as a batched array kernel.
-    if not CUDF_AVAILABLE:
-        note_unavailable("levenshtein/cudf.edit_distance<1gpu>", "cudf not installed")
-    else:
-        gpu_cores = gpu_multiprocessor_count(0) or FALLBACK_GPU_MULTIPROCESSORS
-        gpu_batch_size = batch_size(settings, gpu_cores)
-        name = f"levenshtein/cudf.edit_distance<1gpu,batch={gpu_batch_size}>"
+    for ordinal in gpu_ordinals(settings):
+        if not CUDF_AVAILABLE:
+            note_unavailable(f"levenshtein/cudf.edit_distance<cuda:{ordinal}>", "cudf not installed")
+            continue
+        if not gpu_require(settings, ordinal):
+            continue
+        batch = gpu_batch_size(settings, ordinal)
+        name = f"levenshtein/cudf.edit_distance<cuda:{ordinal},batch={batch}>"
         if settings.selects(name):
             _benchmark_cudf_edit_distance(
                 settings,
@@ -606,6 +623,8 @@ def main() -> int:
 
     print("Benchmark configuration (all-pairs cross-product):")
     for variant in device_variants:
+        if variant.ordinal is not None and not gpu_require(settings, variant.ordinal):
+            continue
         side = variant.side
         print(f"- {variant.label}: {side}x{side} cross-product ({side * side:,} pairs)")
     print(f"- Tokens available: {token_count:,}")

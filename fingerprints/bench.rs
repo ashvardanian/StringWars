@@ -23,9 +23,9 @@ use probabilistic_collections::similarity::{ByteGrams, MinHash};
 use stringzilla::szs::{AnyBytesTape, DeviceScope, Fingerprints, UnifiedAlloc, UnifiedVec};
 
 use stringwars::{
-    batch_size, finish, gpu_multiprocessor_count, install_panic_hook, log_timing_overhead, measure,
-    print_machine, resolve_dataset, Bytes, MeasureSpec, ResultExt, Settings, Threads, Unit,
-    WorkUnits, FALLBACK_GPU_MULTIPROCESSORS,
+    batch_size, finish, gpu_batch_size, gpu_ordinals, gpu_require, install_panic_hook,
+    log_timing_overhead, measure, print_machine, resolve_dataset, Bytes, GpuDevice, MeasureSpec,
+    ResultExt, Settings, Threads, Unit, WorkUnits,
 };
 
 // Fixed n-gram widths for multi-scale fingerprinting
@@ -151,10 +151,12 @@ fn bench_fingerprints(settings: &Settings) {
     let threads = settings.threads;
     let batch_single_cpu = batch_size(settings, 1);
     let batch_multi_cpu = batch_size(settings, threads.0.get());
-    let batch_gpu = batch_size(
-        settings,
-        gpu_multiprocessor_count(0).unwrap_or(FALLBACK_GPU_MULTIPROCESSORS),
-    );
+    let mut gpu_batches: Vec<(i32, usize)> = Vec::new();
+    for ordinal in gpu_ordinals(settings) {
+        if gpu_require(settings, ordinal) {
+            gpu_batches.push((ordinal, gpu_batch_size(settings, ordinal)));
+        }
+    }
 
     let mut units_tape: BytesTape<u64, UnifiedAlloc> = BytesTape::new_in(UnifiedAlloc);
     units_tape
@@ -177,7 +179,9 @@ fn bench_fingerprints(settings: &Settings) {
             "- {}-core batch size (for StringZilla): {}",
             threads, batch_multi_cpu
         );
-        println!("- GPU batch size (for StringZilla): {}", batch_gpu);
+        for (ordinal, batch_gpu) in &gpu_batches {
+            println!("- cuda:{ordinal} batch size (for StringZilla): {batch_gpu}");
+        }
         println!("- Fingerprint dimensions: {}", dimensions);
         println!("- N-gram widths: {:?} bytes", NGRAM_WIDTHS);
         println!(
@@ -216,7 +220,26 @@ fn bench_fingerprints(settings: &Settings) {
                 threads, error
             )
         });
-        let maybe_gpu = DeviceScope::gpu_device(0);
+        let gpu_devices: Vec<GpuDevice<DeviceScope>> = gpu_batches
+            .iter()
+            .filter_map(|&(ordinal, batch)| {
+                gpu_require(settings, ordinal);
+                match DeviceScope::gpu_device(ordinal as usize) {
+                    Ok(scope) => Some(GpuDevice {
+                        ordinal,
+                        scope,
+                        batch,
+                    }),
+                    Err(error) => {
+                        assert!(
+                            settings.devices.is_none(),
+                            "Requested CUDA device cuda:{ordinal} is unavailable: {error}"
+                        );
+                        None
+                    }
+                }
+            })
+            .collect();
 
         let sz_single = Fingerprints::builder()
             .ascii()
@@ -240,14 +263,6 @@ fn bench_fingerprints(settings: &Settings) {
                     threads, error
                 )
             });
-        let maybe_sz_gpu = maybe_gpu.as_ref().ok().and_then(|gpu| {
-            Fingerprints::builder()
-                .ascii()
-                .window_widths(&NGRAM_WIDTHS)
-                .dimensions(dimensions)
-                .build(gpu)
-                .ok()
-        });
 
         let tokens_count = total_documents;
 
@@ -319,11 +334,25 @@ fn bench_fingerprints(settings: &Settings) {
             },
         );
 
-        // StringZilla: 1x GPU (if available). Result buffers sized to the GPU batch.
-        if let (Ok(gpu), Some(engine)) = (maybe_gpu.as_ref(), maybe_sz_gpu.as_ref()) {
+        // StringZilla: one row per selected GPU. Result buffers sized to that device's batch.
+        for device in &gpu_devices {
+            let (ordinal, gpu, batch_gpu) = (device.ordinal, &device.scope, device.batch);
+            assert!(
+                gpu_require(settings, ordinal),
+                "CUDA device cuda:{ordinal} is unavailable"
+            );
+            let Some(engine) = Fingerprints::builder()
+                .ascii()
+                .window_widths(&NGRAM_WIDTHS)
+                .dimensions(dimensions)
+                .build(gpu)
+                .ok()
+            else {
+                continue;
+            };
             measure_fingerprints(
                 settings,
-                &format!("minhash-{dimensions}/stringzillas::Fingerprints<1gpu>"),
+                &format!("minhash-{dimensions}/stringzillas::Fingerprints<cuda:{ordinal}>"),
                 &bytes_view,
                 batch_gpu,
                 dimensions,
@@ -340,10 +369,7 @@ fn bench_fingerprints(settings: &Settings) {
                             min_counts_slice,
                         )
                         .unwrap_or_else(|error| {
-                            panic!(
-                                "Failed to compute StringZilla fingerprints on GPU: {}",
-                                error
-                            )
+                            panic!("Failed to compute StringZilla fingerprints on cuda:{ordinal}: {error}")
                         });
                 },
                 |_actual, _min_hashes_slice| {},

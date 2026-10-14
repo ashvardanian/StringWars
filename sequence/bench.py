@@ -36,6 +36,8 @@ from stringwars import (
     MeasureSpec,
     Settings,
     finish,
+    gpu_ordinals,
+    gpu_require,
     log_dataset,
     log_timing_overhead,
     measure_with_setup,
@@ -201,15 +203,22 @@ def main() -> int:
     bench_sort_operation(
         settings, "argsort/polars.Series.sort", lambda: ps, lambda series: series.sort(), token_count, token_bytes
     )
-    # cuDF GPU (if available; sort_values returns a new Series).
-    if not CUDF_AVAILABLE:
-        note_unavailable("argsort/cudf.Series.sort_values<1gpu>", "cudf not installed")
-    elif settings.selects("argsort/cudf.Series.sort_values<1gpu>"):
+    # cuDF GPU, one row per selected device (sort_values returns a new Series).
+    for ordinal in gpu_ordinals(settings):
+        name = f"argsort/cudf.Series.sort_values<cuda:{ordinal}>"
+        if not CUDF_AVAILABLE:
+            note_unavailable(name, "cudf not installed")
+            continue
+        if not settings.selects(name):
+            continue
+        if not gpu_require(settings, ordinal):
+            continue
+        # Built after the device is current, so the series lives on it.
         cs = cudf.Series(tokens)
         bench_sort_operation(
             settings,
-            "argsort/cudf.Series.sort_values<1gpu>",
-            lambda: cs,
+            name,
+            lambda series=cs: series,
             lambda series: series.sort_values(ignore_index=True),
             token_count,
             token_bytes,
