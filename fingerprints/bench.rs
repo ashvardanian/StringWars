@@ -337,7 +337,9 @@ fn bench_overlap(settings: &Settings, documents: &[&[u8]], total_bytes: Bytes) {
             .collect();
         let mut scores = vec![0f32; queries.len() * query_stride];
         measure(settings, name, MeasureSpec::new(Unit::Bytes, work), || {
-            for (query_index, windows_by_width) in query_windows.iter().enumerate() {
+            for (query_index, (query, windows_by_width)) in
+                queries.iter().zip(&query_windows).enumerate()
+            {
                 for (candidate_index, candidate) in documents.iter().enumerate() {
                     for (width_index, &width) in NGRAM_WIDTHS.iter().enumerate() {
                         let distinct = &windows_by_width[width_index];
@@ -346,7 +348,8 @@ fn bench_overlap(settings: &Settings, documents: &[&[u8]], total_bytes: Bytes) {
                             .windows(width)
                             .filter(|window| distinct.contains(window))
                             .count();
-                        let total = distinct.len().max(windows).max(1);
+                        // The engine divides by every window of the longer side, repeats included.
+                        let total = query.len().saturating_sub(width - 1).max(windows).max(1);
                         scores[query_index * query_stride
                             + candidate_index * candidate_stride
                             + width_index] = hits as f32 / total as f32;
