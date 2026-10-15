@@ -48,8 +48,7 @@ bench_find = [
   "aho-corasick", # Byteset search
 ]
 bench_fingerprints = [
-  "probabilistic-collections", # MinHash
-  "forkunion",                 # One window-overlap engine per pool thread
+  "forkunion", # One window-overlap engine per pool thread
 ]
 bench_hash = [
   "bit-set",      # for collision counting
@@ -323,11 +322,6 @@ version = "0.10.0"
 [dependencies.rand_xoshiro]
 optional = true
 version = "0.8.1"
-
-[dependencies.probabilistic-collections]
-branch = "master"
-git = "https://github.com/ashvardanian/probabilistic-collections-rs"
-optional = true
 
 [dependencies.bit-set]
 optional = true

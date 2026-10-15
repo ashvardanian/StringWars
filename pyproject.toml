@@ -20,7 +20,7 @@ Repository = "https://github.com/ashvardanian/StringWars"
 containers = ["stringzilla>=6.0.0-rc.1", "numpy>=2.5.1", "pyprobables>=0.7.0", "xxhash>=3.8.1"]
 encryption = ["stringzilla>=6.0.0-rc.1", "cryptography>=49.0.0", "pycryptodome>=3.23.0", "pynacl>=1.6.2"]
 find = ["stringzilla>=6.0.0-rc.1", "pyahocorasick>=2.3.1"]
-fingerprints = ["stringzilla>=6.0.0-rc.1", "datasketch>=2.0.0", "numpy>=2.5.1", "scikit-learn>=1.9.0"]
+fingerprints = ["stringzilla>=6.0.0-rc.1", "numpy>=2.5.1", "scikit-learn>=1.9.0"]
 hash = [
   "stringzilla>=6.0.0-rc.1",
   "blake3>=1.0.9",

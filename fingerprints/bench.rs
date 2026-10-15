@@ -1,16 +1,10 @@
 #![doc = r#"# StringWars: Fingerprints
 
-MinHash fingerprinting benchmarks, and the exact window overlap MinHash estimates.
+Exact n-gram window overlap benchmarks: how many of one text's byte windows the other spells.
 
-- `STRINGWARS_DIMS` sets the sketch widths, one count or a comma list like `64,128`; the
-  width moves throughput by ~8x, so it is recorded with every published number.
 - `STRINGWARS_BATCH_PER_CORE` sets how many documents the overlap rows take as queries.
 - `STRINGWARS_THREADS` sets how many overlap engines the multi-core row runs, one per pool thread.
 - `STRINGWARS_DEVICES` names the GPUs that carry rows, in a `cuda` build.
-
-StringZilla v6 has no MinHash engine, so the MinHash groups note its row as unavailable and
-`OverlapEngine` answers the question MinHash approximates: how many of one text's n-grams the
-other spells.
 
 ```sh
 STRINGWARS_DATASET=README.md cargo bench --features bench_fingerprints --bench bench_fingerprints
@@ -18,12 +12,9 @@ STRINGWARS_DATASET=README.md cargo bench --features bench_fingerprints --bench b
 "#]
 #![allow(clippy::needless_range_loop)]
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 use std::process::ExitCode;
 
-use probabilistic_collections::similarity::{ByteGrams, MinHash};
 use stringzilla::sz::{
     Capabilities, OverlapEngine, Stream, Strings, StringsView, UnifiedAllocator,
 };
@@ -34,191 +25,7 @@ use stringwars::{
     resolve_dataset, Bytes, MeasureSpec, ResultExt, Settings, Unit, WorkUnits,
 };
 
-// Fixed n-gram widths for multi-scale fingerprinting
 const NGRAM_WIDTHS: [usize; 4] = [5, 9, 17, 33];
-
-/// Calculate bit entropy (how well distributed the bits are) over a flattened
-/// `documents × dimensions` sketch matrix, normalized to [0, 1].
-fn bit_entropy<T>(hash_values: &[T]) -> f64
-where
-    T: Copy + Into<u64>,
-{
-    if hash_values.is_empty() {
-        return 0.0;
-    }
-
-    let bits_per_hash = std::mem::size_of::<T>() * 8;
-    let mut bit_ones_count = vec![0usize; bits_per_hash];
-    for &hash_value in hash_values {
-        let hash_as_u64: u64 = hash_value.into();
-        for bit_position in 0..bits_per_hash {
-            if (hash_as_u64 >> bit_position) & 1 == 1 {
-                bit_ones_count[bit_position] += 1;
-            }
-        }
-    }
-
-    let mut total_entropy = 0.0;
-    for ones_count in bit_ones_count {
-        let probability_of_one = ones_count as f64 / hash_values.len() as f64;
-        if probability_of_one > 0.0 && probability_of_one < 1.0 {
-            total_entropy -= probability_of_one * probability_of_one.log2()
-                + (1.0 - probability_of_one) * (1.0 - probability_of_one).log2();
-        }
-    }
-
-    total_entropy / bits_per_hash as f64
-}
-
-/// Calculate collision rate (duplicate hash values) over a flattened sketch matrix. This is a
-/// birthday statistic, so it is meaningful only over the whole sample it is reported for.
-fn collision_rate<T>(hash_values: &[T]) -> f64
-where
-    T: Copy + std::hash::Hash + Eq,
-{
-    if hash_values.is_empty() {
-        return 0.0;
-    }
-
-    let unique_hash_values: HashSet<T> = hash_values.iter().copied().collect();
-    1.0 - (unique_hash_values.len() as f64 / hash_values.len() as f64)
-}
-
-fn bench_minhash(settings: &Settings, documents: &[&[u8]], total_bytes: Bytes) {
-    let total_documents = documents.len();
-    for &dimensions in &settings.dims {
-        println!("\nBenchmark configuration:");
-        println!("- Fingerprint dimensions: {}", dimensions);
-        println!("- N-gram widths: {:?} bytes", NGRAM_WIDTHS);
-        println!(
-            "- Hashes per width: {} (total NDIM: {})",
-            dimensions / NGRAM_WIDTHS.len(),
-            dimensions
-        );
-
-        // Quality-analysis matrices, flattened to one contiguous `N_docs * N_dims` buffer each:
-        // a Vec-of-Vec rebuilt per NDIM scale cost ~120k allocations against a 1 MB working set.
-        let mut serial_matrix = vec![0u64; total_documents * dimensions];
-        let mut pc_matrix = vec![0u64; total_documents * dimensions];
-        let mut serial_document_index = 0usize;
-        let mut pc_document_index = 0usize;
-
-        println!("# minhash-{dimensions}");
-
-        let stringzilla_name = format!("minhash-{dimensions}/stringzillas::Fingerprints");
-        if settings.selects(&stringzilla_name) {
-            note_unavailable(&stringzilla_name, "StringZilla v6 has no MinHash engine");
-        }
-
-        let hashes_per_width = dimensions / NGRAM_WIDTHS.len();
-        // One MinHash per n-gram width, on the stack (no heap Vec).
-        let minhashers: [MinHash<ByteGrams, _>; NGRAM_WIDTHS.len()] =
-            core::array::from_fn(|_| MinHash::new(hashes_per_width));
-        let work = || {
-            MeasureSpec::new(
-                Unit::Hashes,
-                WorkUnits::new(dimensions as u64 * total_bytes.0, total_bytes),
-            )
-        };
-
-        // pc::MinHash baseline (single-threaded scalar).
-        {
-            // Reused across documents and passes, like the serial baseline below.
-            let mut combined_signature = Vec::with_capacity(dimensions);
-            measure(
-                settings,
-                &format!("minhash-{dimensions}/pc::MinHash<ByteGrams>"),
-                work(),
-                || {
-                    for line_bytes in documents.iter().filter(|line| !line.is_empty()) {
-                        combined_signature.clear();
-                        for (width_index, &width) in NGRAM_WIDTHS.iter().enumerate() {
-                            let iter = ByteGrams::new(line_bytes, width);
-                            let partial_sig = minhashers[width_index].get_min_hashes(iter);
-                            combined_signature.extend(partial_sig);
-                        }
-                        if pc_document_index < total_documents
-                            && combined_signature.len() == dimensions
-                        {
-                            pc_matrix[pc_document_index * dimensions..][..dimensions]
-                                .copy_from_slice(&combined_signature);
-                            pc_document_index += 1;
-                        }
-                        std::hint::black_box(&combined_signature);
-                    }
-                },
-            );
-        }
-
-        // Serial MinHash baseline with independent universal hash functions per dimension.
-        {
-            // Each hash function uses: hash_i(x) = (a_i * hash(x) + b_i) mod mersenne_prime
-            const MERSENNE_PRIME: u64 = (1u64 << 61) - 1;
-            let hash_params: Vec<(u64, u64)> = (0..dimensions)
-                .map(|dimension_index| (2 * dimension_index as u64 + 1, dimension_index as u64))
-                .collect();
-
-            // Reused across documents and passes, so no allocation lands in the timed loop.
-            let mut min_hashes = vec![u64::MAX; dimensions];
-            measure(
-                settings,
-                &format!("minhash-{dimensions}/serial::MinHash<ByteGrams>"),
-                work(),
-                || {
-                    for line_bytes in documents.iter().filter(|line| !line.is_empty()) {
-                        min_hashes.fill(u64::MAX);
-                        for &width in &NGRAM_WIDTHS {
-                            for window in line_bytes.windows(width) {
-                                let mut hasher = DefaultHasher::new();
-                                window.hash(&mut hasher);
-                                let base_hash = hasher.finish();
-                                for (hash_index, &(multiplier, offset)) in
-                                    hash_params.iter().enumerate()
-                                {
-                                    let independent_hash = (multiplier
-                                        .wrapping_mul(base_hash)
-                                        .wrapping_add(offset))
-                                        % MERSENNE_PRIME;
-                                    min_hashes[hash_index] =
-                                        min_hashes[hash_index].min(independent_hash);
-                                }
-                            }
-                        }
-                        if serial_document_index < total_documents {
-                            serial_matrix[serial_document_index * dimensions..][..dimensions]
-                                .copy_from_slice(&min_hashes);
-                            serial_document_index += 1;
-                        }
-                        std::hint::black_box(&min_hashes);
-                    }
-                },
-            );
-        }
-
-        println!("\nHash Quality Analysis");
-        println!(
-            "Documents processed: PC={}, Serial={}",
-            pc_document_index, serial_document_index
-        );
-
-        if pc_document_index > 0 {
-            let pc_slice = &pc_matrix[..pc_document_index * dimensions];
-            println!("\npc::MinHash<ByteGrams>:");
-            println!("  Bit Entropy:  {:.4}", bit_entropy(pc_slice));
-            println!("  Collision:    {:.4}%", collision_rate(pc_slice) * 100.0);
-        }
-
-        if serial_document_index > 0 {
-            let serial_slice = &serial_matrix[..serial_document_index * dimensions];
-            println!("\nserial::MinHash<ByteGrams>:");
-            println!("  Bit Entropy:  {:.4}", bit_entropy(serial_slice));
-            println!(
-                "  Collision:    {:.4}%",
-                collision_rate(serial_slice) * 100.0
-            );
-        }
-    }
-}
 
 /// The candidates one of `threads` engines scores, contiguous so its block of scores is too.
 fn share(count: usize, thread: usize, threads: usize) -> std::ops::Range<usize> {
@@ -228,8 +35,8 @@ fn share(count: usize, thread: usize, threads: usize) -> std::ops::Range<usize> 
 }
 
 /// Scores the first `batch_per_core` documents as queries against every document as a candidate,
-/// at every n-gram width, the exact overlap a MinHash sketch estimates. One pass streams every
-/// candidate past every query, so the byte rate is candidate bytes per query batch.
+/// at every n-gram width. One pass streams every candidate past every query, so the byte rate is
+/// candidate bytes per query batch.
 fn bench_overlap(settings: &Settings, documents: &[&[u8]], total_bytes: Bytes) {
     let queries = &documents[..batch_size(settings, 1).min(documents.len())];
     let widths = NGRAM_WIDTHS.len();
@@ -366,16 +173,14 @@ fn main() -> ExitCode {
     print_machine();
     let settings = Settings::read("fingerprints");
     settings.print();
-    println!("Text Fingerprinting Benchmarks");
-    println!("- pc::MinHash<ByteGrams>: MinHash with ByteGrams iterator");
-    println!("- stringzilla::OverlapEngine: exact n-gram overlap, the quantity MinHash estimates");
+    println!("Window Overlap Benchmarks");
+    println!("- stringzilla::OverlapEngine: exact n-gram window overlap");
 
     let tape = resolve_dataset(&settings).unwrap_nice();
     log_timing_overhead(&settings);
     let documents: Vec<&[u8]> = tape.iter().collect();
     let total_bytes = Bytes(documents.iter().map(|token| token.len() as u64).sum());
 
-    bench_minhash(&settings, &documents, total_bytes);
     bench_overlap(&settings, &documents, total_bytes);
 
     finish()

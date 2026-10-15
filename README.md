@@ -139,7 +139,7 @@ Matching a whole dictionary of needles against a whole corpus in one pass is wha
 Counting, resolving a leftmost cover, rewriting, and BM25 scoring all ride the same compiled dictionary.
 Numbers await a quiet machine; the sweep and its framing are in [substrings/README.md](substrings/README.md).
 
-Two things that table has to say out loud: every rival is single-threaded and CPU-only, so the honest head-to-head is against `stringzillas::Substrings<1cpu>` rather than its multi-core or GPU rows; and BM25 here is a scan against a fixed query, not an inverted index, so `bm25` and `bm25s` are compared on index build and on query separately.
+Two things that table has to say out loud: every rival is single-threaded and CPU-only, so the honest head-to-head is against `stringzilla::Substrings<1cpu>` rather than its multi-core or GPU rows; and BM25 here is a scan against a fixed query, not an inverted index, so `bm25` and `bm25s` are compared on index build and on query separately.
 
 See [substrings/README.md](substrings/README.md) for details
 
@@ -255,18 +255,9 @@ stringzilla<H100>                                    ██████         
 
 See [similarities/README.md](similarities/README.md) for details
 
-### Fingerprinting
+### Window Overlap
 
-Converting variable-length strings into fixed-length sketches (like Min-Hashing) enables fast approximate matching in large-scale retrieval.
-Throughput on ~1,000 byte lines:
-
-```
-Rust:
-                        1 Core                       1 Socket
-pc::MinHash             ████████████████████   3.01
-stringzilla<384xGNR>    ███▏                   0.49  ███████████████▍      288.30 MB/s
-stringzilla<H100>                                    ████████████████████  374.19 MB/s
-```
+Scoring the exact share of byte windows two variable-length strings have in common enables near-duplicate matching in large-scale retrieval.
 
 See [fingerprints/README.md](fingerprints/README.md) for details
 
@@ -328,7 +319,6 @@ An empty variable means the same as an unset one, and a value that does not pars
 | `STRINGWARS_BATCH_PER_CORE` | per suite          | Items per core, or per GPU streaming multiprocessor, in batched suites       |
 | `STRINGWARS_DEVICES`        | `cuda:0`           | CUDA devices in GPU suites, like `cuda:0,cuda:1`, one row per device         |
 | `STRINGWARS_THREADS`        | all cores          | Cores for multi-core rows, `0` for all of them                               |
-| `STRINGWARS_DIMS`           | per suite          | MinHash widths in `fingerprints`, one like `128` or a list like `64,128,256` |
 | `STRINGWARS_DATASET`        | per suite          | Path to the textual dataset file                                             |
 | `STRINGWARS_TOKENS`         | per suite          | Tokenization mode: `file`, `lines`, or `words`                               |
 | `STRINGWARS_UNIQUE`         | `false`            | `1` or `true` deduplicates the tokens read                                   |
@@ -599,7 +589,7 @@ Such as using `ncu` for NVIDIA GPUs to evaluate the register usage and occupancy
   --kernel-name "levenshtein_on_each_cuda_thread" \
   --launch-skip 5 \
   --launch-count 1 \
-  bash -c 'STRINGWARS_DATASET=data/acgt/acgt_100.txt STRINGWARS_BATCH_PER_CORE=65536 STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzillas::LevenshteinDistances\(1xGPU\)" cargo bench --features "cuda bench_similarities" --bench bench_similarities --jobs 1'
+  bash -c 'STRINGWARS_DATASET=data/acgt/acgt_100.txt STRINGWARS_BATCH_PER_CORE=65536 STRINGWARS_TOKENS=lines STRINGWARS_FILTER="uniform/stringzilla::LevenshteinDistances\(1xGPU\)" cargo bench --features "cuda bench_similarities" --bench bench_similarities --jobs 1'
 ```
 
 Using `perf` on Linux to analyze the CPU-side performance of SIMD-accelerated substring search:

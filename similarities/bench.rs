@@ -469,7 +469,7 @@ fn perform_score_benchmarks(
     }
 
     for engine in ["NeedlemanWunschScores", "SmithWatermanScores"] {
-        let name = format!("{group_name}/stringzillas::{engine}");
+        let name = format!("{group_name}/stringzilla::{engine}");
         if settings.selects(&name) {
             note_unavailable(&name, "StringZilla v6 scores unit-cost Levenshtein only");
         }

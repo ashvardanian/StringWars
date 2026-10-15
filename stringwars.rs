@@ -10,7 +10,6 @@
 //! `STRINGWARS_BYTES`           per suite, see the manifest  Bytes read from the dataset, like `256MB`
 //! `STRINGWARS_BATCH_PER_CORE`  per suite, see the manifest  Items per core, or per GPU multiprocessor
 //! `STRINGWARS_THREADS`         all cores                    Cores for multi-core rows, `0` for all
-//! `STRINGWARS_DIMS`            per suite, see the manifest  MinHash widths, like `128` or `64,128,256`
 //! `STRINGWARS_DATASET`         per suite, see the manifest  Path to the textual dataset
 //! `STRINGWARS_TOKENS`          per suite, see the manifest  `lines`, `words` or `file`
 //! `STRINGWARS_UNIQUE`          `false`                      Drops repeated tokens
@@ -121,11 +120,6 @@ pub fn parse_count(text: &str) -> Option<usize> {
         .then(|| text.parse().ok())
         .flatten()
         .filter(|&count| count != 0)
-}
-
-/// Parses one count like `128` or a comma list like `64,128,256,512`.
-pub fn parse_dims(text: &str) -> Option<Vec<usize>> {
-    text.split(',').map(parse_count).collect()
 }
 
 /// Parses a duration like `200ms` or `10s`; a bare number, a fraction or zero is `None`.
@@ -542,7 +536,6 @@ pub struct Settings {
     pub dataset_bytes: Bytes,
     pub batch_per_core: Option<usize>,
     pub threads: Threads,
-    pub dims: Vec<usize>,
     pub dataset_path: PathBuf,
     pub tokenization: Tokenization,
     pub duplicates: Duplicates,
@@ -636,14 +629,6 @@ impl Settings {
                 |text| parse_threads(text, all_cores),
                 "a count, 0 for all cores",
             ),
-            dims: env_parsed(
-                "STRINGWARS_DIMS",
-                text("dims").map_or_else(Vec::new, |dims| {
-                    parse_dims(dims).expect("stringwars.toml: `dims` is not a count list")
-                }),
-                parse_dims,
-                "positive counts like 64,128",
-            ),
             dataset_path: env_text("STRINGWARS_DATASET")
                 .or_else(|| text("dataset").map(str::to_string))
                 .map(PathBuf::from)
@@ -718,10 +703,6 @@ impl Settings {
             println!("- Batch per core: {batch_per_core}");
         }
         println!("- Threads: {}", self.threads);
-        if !self.dims.is_empty() {
-            let dims: Vec<String> = self.dims.iter().map(usize::to_string).collect();
-            println!("- Dims: {}", dims.join(","));
-        }
         println!("- Dataset: {}", self.dataset_path.display());
         println!("- Tokens: {}", self.tokenization);
         println!("- Unique: {}", self.duplicates == Duplicates::Drop);

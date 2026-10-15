@@ -7,136 +7,89 @@ Benchmarks for random byte generation, lookup-table transforms, and the fill, co
 Some of the most common operations in data processing are random generation and lookup tables.
 That's true not only for strings but for any data type, and StringZilla has been extensively used in Image Processing and Bioinformatics for those purposes.
 
-## Random Byte Generation
+The `fill_random` and `random` rows generate random bytes.
 
-### Intel Xeon4 Sapphire Rapids
+The `lookup_inplace`, `lookup_in` and `translate` rows perform lookups in a precomputed table of 256 bytes.
+The `StringsView::lookup_in`, `Strings.translate` and Arrow `take` rows map a whole column of tokens in one call, so they pay no per-token dispatch.
 
-| Library                        |    Short Words |     Long Lines |
-| ------------------------------ | -------------: | -------------: |
-| Rust                           |                |                |
-| `getrandom::fill`              |      0.03 GB/s |      0.43 GB/s |
-| `rand_chacha::ChaCha20Rng`     |      0.06 GB/s |      1.86 GB/s |
-| `rand_xoshiro::Xoshiro128Plus` |      0.37 GB/s |      3.75 GB/s |
-| `stringzilla::fill_random`     | __0.941 GB/s__ |  __7.99 GB/s__ |
-|                                |                |                |
-| Python                         |                |                |
-| `numpy.PCG64`                  |     0.009 GB/s |      1.74 GB/s |
-| `numpy.Philox`                 |     0.009 GB/s |      1.35 GB/s |
-| `pycryptodome.AES-CTR`         |     0.009 GB/s |      0.34 GB/s |
-| `stringzilla.fill_random`      |              — |              — |
-| `stringzilla.random`           |  __0.10 GB/s__ | __17.19 GB/s__ |
+The `Strings::copy_in` and `stringzilla.Strings` rows copy every token into a matching slice of a second, non-overlapping arena — the `memcpy` pattern.
+Together with the `BinaryArray` and `pyarrow.array` rows they gather a whole column into one tape of bytes and offsets in one call.
 
-> Measured June 17, 2026.
+The `fill`, `copy` and `move_` rivals (`memset`, `memcpy` and `memmove` patterns, plus `zeroize::zeroize`) are benchmarked as listed, with no StringZilla row yet.
 
-### Apple M5 Pro
+Every table reports single-core throughput in bytes per second, over whitespace-delimited words (_short words_) and newline-delimited lines (_long lines_).
+Speedup is StringZilla's speed over the alternative's, `–` marks a row without an alternative, `✗` a result that failed its check, and `⋯` an alternative not benchmarked on that chip.
+The `serial code` alternative is a plain loop over the same bytes.
 
-| Library                        |   Short Words |     Long Lines |
-| ------------------------------ | ------------: | -------------: |
-| Rust                           |               |                |
-| `getrandom::fill`              |             — |      0.22 GB/s |
-| `rand_chacha::ChaCha20Rng`     |     0.38 GB/s |      0.83 GB/s |
-| `rand_xoshiro::Xoshiro128Plus` |     1.03 GB/s |      5.68 GB/s |
-| `stringzilla::fill_random`     | __1.15 GB/s__ | __34.54 GB/s__ |
-|                                |               |                |
-| Python                         |               |                |
-| `numpy.PCG64`                  |     0.03 GB/s |      2.18 GB/s |
-| `numpy.Philox`                 |     0.03 GB/s |      2.86 GB/s |
-| `pycryptodome.AES-CTR`         |     0.02 GB/s |      0.43 GB/s |
-| `stringzilla.fill_random`      |     0.13 GB/s |     24.09 GB/s |
-| `stringzilla.random`           | __0.42 GB/s__ | __43.71 GB/s__ |
+## Intel Xeon5 Emerald Rapids
 
-> Measured July 29, 2026.
+### Rust
 
-## Lookup Tables
+Also benchmarked: `getrandom::fill`, `rand_chacha::ChaCha20Rng`, `std::ptr::write_bytes`, `slice::fill`, `zeroize::zeroize`, `std::ptr::copy_nonoverlapping`, `slice::copy_from_slice`, `std::ptr::copy`, `slice::copy_within`.
 
-Performing in-place lookups in a precomputed table of 256 bytes:
+| StringZilla                                        |     Speed | Speedup | Alternative                                   |     Speed |
+| :------------------------------------------------- | --------: | ------: | :-------------------------------------------- | --------: |
+| `stringzilla::fill_random`, short words            | 1.47 GB/s |   2.27× | `rand_xoshiro::Xoshiro128Plus`                |  648 MB/s |
+| `stringzilla::fill_random`, long lines             |   10 GB/s |   2.22× | `rand_xoshiro::Xoshiro128Plus`                | 4.51 GB/s |
+| `stringzilla::lookup_inplace`, short words         |  356 MB/s |   0.47× | serial code                                   |  751 MB/s |
+| `stringzilla::lookup_inplace`, long lines          |   10 GB/s |   5.56× | serial code                                   |  1.8 GB/s |
+| `stringzilla::StringsView::lookup_in`, short words |  380 MB/s |   1.00× | `arrow::compute::take`                        |  380 MB/s |
+| `stringzilla::StringsView::lookup_in`, long lines  | 2.11 GB/s |   5.49× | `arrow::compute::take`                        |  384 MB/s |
+| `stringzilla::Strings::copy_in`, short words       |  510 MB/s |   1.04× | `arrow::array::BinaryArray::from_iter_values` |  490 MB/s |
+| `stringzilla::Strings::copy_in`, long lines        | 1.86 GB/s |   2.81× | `arrow::array::BinaryArray::from_iter_values` |  663 MB/s |
 
-### Intel Xeon4 Sapphire Rapids
+> Measured October 14, 2026.
 
-| Library                          |   Short Words |     Long Lines |
-| -------------------------------- | ------------: | -------------: |
-| Rust                             |               |                |
-| serial code                      | __0.44 GB/s__ |      3.78 GB/s |
-| `stringzilla::lookup_inplace`    |     0.39 GB/s | __9.518 GB/s__ |
-|                                  |               |                |
-| Python                           |               |                |
-| `bytes.translate<new>`           | __0.11 GB/s__ |      2.50 GB/s |
-| `numpy.indexing<new>`            |             — |              — |
-| `numpy.indexing<inplace>`        |             — |              — |
-| `numpy.take<new>`                |    0.009 GB/s |      0.80 GB/s |
-| `numpy.take<inplace>`            |             — |              — |
-| `opencv.LUT<new>`                |    0.009 GB/s |      1.86 GB/s |
-| `opencv.LUT<inplace>`            |    0.009 GB/s |      2.01 GB/s |
-| `stringzilla.translate<new>`     |     0.08 GB/s |      7.39 GB/s |
-| `stringzilla.translate<inplace>` |     0.07 GB/s |  __7.47 GB/s__ |
+### Python
 
-> Measured June 17, 2026.
+Also benchmarked: `numpy.Philox`, `pycryptodome.AES-CTR`, `numpy.indexing<new>`, `numpy.indexing<inplace>`, `numpy.take<new>`, `numpy.take<inplace>`, `opencv.LUT<new>`, `opencv.LUT<inplace>`.
 
-### Apple M5 Pro
+| StringZilla                                   |     Speed | Speedup | Alternative            |      Speed |
+| :-------------------------------------------- | --------: | ------: | :--------------------- | ---------: |
+| `stringzilla.fill_random`, short words        | 98.3 MB/s |   7.56× | `numpy.PCG64`          |    13 MB/s |
+| `stringzilla.fill_random`, long lines         |   20 GB/s |   7.69× | `numpy.PCG64`          |   2.6 GB/s |
+| `stringzilla.random`, short words             |  376 MB/s |   28.9× | `numpy.PCG64`          |    13 MB/s |
+| `stringzilla.random`, long lines              |   36 GB/s |   13.8× | `numpy.PCG64`          |   2.6 GB/s |
+| `stringzilla.translate<new>`, short words     | 85.6 MB/s |   0.56× | `bytes.translate<new>` | 153.5 MB/s |
+| `stringzilla.translate<new>`, long lines      |  5.5 GB/s |   3.24× | `bytes.translate<new>` |   1.7 GB/s |
+| `stringzilla.translate<inplace>`, short words | 75.5 MB/s |   0.49× | `bytes.translate<new>` | 153.5 MB/s |
+| `stringzilla.translate<inplace>`, long lines  |  5.9 GB/s |   3.47× | `bytes.translate<new>` |   1.7 GB/s |
+| `stringzilla.Strings.translate`, short words  |  1.2 GB/s |   0.35× | `pyarrow.compute.take` |   3.4 GB/s |
+| `stringzilla.Strings.translate`, long lines   |  1.7 GB/s |   0.50× | `pyarrow.compute.take` |   3.4 GB/s |
+| `stringzilla.Strings`, short words            |  203 MB/s |   0.65× | `pyarrow.array`        |   310 MB/s |
+| `stringzilla.Strings`, long lines             | 1.87 GB/s |   0.62× | `pyarrow.array`        |     3 GB/s |
 
-| Library                          |   Short Words |     Long Lines |
-| -------------------------------- | ------------: | -------------: |
-| Rust                             |               |                |
-| serial code                      | __1.08 GB/s__ |      4.98 GB/s |
-| `stringzilla::lookup_inplace`    |     0.79 GB/s | __13.75 GB/s__ |
-|                                  |               |                |
-| Python                           |               |                |
-| `bytes.translate<new>`           | __0.21 GB/s__ |      4.41 GB/s |
-| `numpy.indexing<new>`            |     0.03 GB/s |      1.10 GB/s |
-| `numpy.indexing<inplace>`        |     0.02 GB/s |      1.05 GB/s |
-| `numpy.take<new>`                |     0.02 GB/s |      0.71 GB/s |
-| `numpy.take<inplace>`            |     0.02 GB/s |      0.68 GB/s |
-| `opencv.LUT<new>`                |     0.02 GB/s |      2.79 GB/s |
-| `opencv.LUT<inplace>`            |     0.03 GB/s |      2.93 GB/s |
-| `stringzilla.translate<new>`     |     0.18 GB/s |     10.58 GB/s |
-| `stringzilla.translate<inplace>` |     0.14 GB/s | __11.25 GB/s__ |
+> Measured October 14, 2026.
+
+## Apple M5 Pro
+
+### Rust
+
+Also benchmarked: `getrandom::fill`, `rand_chacha::ChaCha20Rng`, `std::ptr::write_bytes`, `slice::fill`, `zeroize::zeroize`, `std::ptr::copy_nonoverlapping`, `slice::copy_from_slice`, `std::ptr::copy`, `slice::copy_within`.
+
+| StringZilla                                |      Speed | Speedup | Alternative                    |      Speed |
+| :----------------------------------------- | ---------: | ------: | :----------------------------- | ---------: |
+| `stringzilla::fill_random`, short words    |  1.15 GB/s |   1.12× | `rand_xoshiro::Xoshiro128Plus` |  1.03 GB/s |
+| `stringzilla::fill_random`, long lines     | 34.54 GB/s |   6.08× | `rand_xoshiro::Xoshiro128Plus` |  5.68 GB/s |
+| `stringzilla::lookup_inplace`, short words |  0.79 GB/s |   0.73× | serial code                    |  1.08 GB/s |
+| `stringzilla::lookup_inplace`, long lines  | 13.75 GB/s |   2.76× | serial code                    |  4.98 GB/s |
 
 > Measured July 29, 2026.
 
-## Memory Fills
+### Python
 
-Overwriting every token in place with one constant byte — the `memset` pattern.
-`zeroize::zeroize` belongs here rather than with the random generators: it writes zeros, and it does so through volatile stores that the compiler may not widen or elide.
+Also benchmarked: `pycryptodome.AES-CTR`, `numpy.indexing<new>`, `numpy.indexing<inplace>`, `numpy.take<new>`, `numpy.take<inplace>`, `opencv.LUT<new>`, `opencv.LUT<inplace>`.
 
-### Apple M5 Pro
-
-| Library                 |   Short Words |     Long Lines |
-| ----------------------- | ------------: | -------------: |
-| Rust                    |               |                |
-| `stringzilla::fill`     |     1.04 GB/s |     38.69 GB/s |
-| `std::ptr::write_bytes` |     1.16 GB/s | __48.96 GB/s__ |
-| `slice::fill`           |     1.17 GB/s |     48.89 GB/s |
-| `zeroize::zeroize`      | __1.18 GB/s__ |      3.97 GB/s |
-
-> Measured July 29, 2026.
-
-## Memory Copies
-
-Copying every token into a matching slice of a second, non-overlapping arena — the `memcpy` pattern.
-
-### Apple M5 Pro
-
-| Library                         |   Short Words |     Long Lines |
-| ------------------------------- | ------------: | -------------: |
-| Rust                            |               |                |
-| `stringzilla::copy`             |     1.07 GB/s |     35.19 GB/s |
-| `slice::copy_from_slice`        | __1.16 GB/s__ | __39.36 GB/s__ |
-| `std::ptr::copy_nonoverlapping` |    0.997 GB/s |     39.25 GB/s |
-
-> Measured July 29, 2026.
-
-## Memory Moves
-
-Shifting every token 8 bytes forward inside its own buffer, so source and destination overlap — the `memmove` pattern.
-
-### Apple M5 Pro
-
-| Library              |   Short Words |     Long Lines |
-| -------------------- | ------------: | -------------: |
-| Rust                 |               |                |
-| `stringzilla::move_` |     1.02 GB/s |     33.75 GB/s |
-| `std::ptr::copy`     |     1.05 GB/s | __40.00 GB/s__ |
-| `slice::copy_within` | __1.07 GB/s__ |     39.94 GB/s |
+| StringZilla                                   |      Speed | Speedup | Alternative            |      Speed |
+| :-------------------------------------------- | ---------: | ------: | :--------------------- | ---------: |
+| `stringzilla.fill_random`, short words        |  0.13 GB/s |   4.33× | `numpy.PCG64`          |  0.03 GB/s |
+| `stringzilla.fill_random`, long lines         | 24.09 GB/s |   8.42× | `numpy.Philox`         |  2.86 GB/s |
+| `stringzilla.random`, short words             |  0.42 GB/s |   14.0× | `numpy.PCG64`          |  0.03 GB/s |
+| `stringzilla.random`, long lines              | 43.71 GB/s |   15.3× | `numpy.Philox`         |  2.86 GB/s |
+| `stringzilla.translate<new>`, short words     |  0.18 GB/s |   0.86× | `bytes.translate<new>` |  0.21 GB/s |
+| `stringzilla.translate<new>`, long lines      | 10.58 GB/s |   2.40× | `bytes.translate<new>` |  4.41 GB/s |
+| `stringzilla.translate<inplace>`, short words |  0.14 GB/s |   0.67× | `bytes.translate<new>` |  0.21 GB/s |
+| `stringzilla.translate<inplace>`, long lines  | 11.25 GB/s |   2.55× | `bytes.translate<new>` |  4.41 GB/s |
 
 > Measured July 29, 2026.
 

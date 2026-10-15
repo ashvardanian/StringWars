@@ -53,8 +53,8 @@ warmup = "1s"
 # STRINGWARS_TOKENS are unset, and record what its published numbers were taken
 # with. Suites whose tables have several dataset columns name the first one here.
 # `bytes` overrides the global size where a pass would otherwise be too slow to
-# collect `min_samples` inside `time_limit`. `batch_per_core` and `dims` are the
-# defaults of `STRINGWARS_BATCH_PER_CORE` and `STRINGWARS_DIMS` in the suites that read them.
+# collect `min_samples` inside `time_limit`. `batch_per_core` is the
+# default of `STRINGWARS_BATCH_PER_CORE` in the suites that read it.
 [suite]
 containers = { dataset = "data/xlsum/xlsum.csv", tokens = "words" }
 find = { dataset = "data/xlsum/xlsum.csv", tokens = "words" }
@@ -78,11 +78,23 @@ sequence = { dataset = "data/xlsum/xlsum.csv", tokens = "lines", bytes = "32MB" 
 substrings = { dataset = "data/xlsum/xlsum.csv", tokens = "lines", bytes = "64MB" }
 
 # Compute-bound for the same reason: three vocabularies × four verbs × every device.
+#
+# The literal and lookaround vocabularies are news words and figures, so `xlsum` stays the default.
+# The plain vocabulary's emails, URLs and log lines are denser in these, described in `regex/README.md`:
+#   data/rebar/lh3lh3-reb-howto.txt              39,422,105 bytes
+#   data/rebar/mariomka.txt                       6,839,410 bytes
+#   data/rebar/opensubtitles-en-sampled.txt         899,232 bytes
+#   data/loghub-openstack/openstack.log           5,394,691 bytes compressed
 regex = { dataset = "data/xlsum/xlsum.csv", tokens = "lines", bytes = "64MB" }
 
 # One GH Archive hour, a JSON event per line. The XML paths run over a Stack Exchange `Posts.xml`
 # instead, whose `<row>` lines are documents of their own: point STRINGWARS_DATASET at
 # `data/stackexchange-bioinformatics/Posts.xml`. The extension picks the format.
+#
+# Corpora that need vocabularies of their own, and a correctness suite, described in `subdocuments/README.md`:
+#   data/jsonbench-bluesky/file_0001.json       135,176,827 bytes compressed
+#   data/xmark/standard.xml                      37,924,307 bytes compressed, one document under `tokens = "file"`
+#   data/jsonpath-compliance/cts.json               236,904 bytes, RFC 9535 queries with expected results
 subdocuments = { dataset = "data/gharchive/2024-01-01-15.json", tokens = "lines", bytes = "64MB" }
 
 # Whole-corpus passes over one `file`-mode token, so `bytes` is also the length of the
@@ -96,8 +108,12 @@ subdocuments = { dataset = "data/gharchive/2024-01-01-15.json", tokens = "lines"
 normalization = { dataset = "data/leipzig-1m/leipzig1M_en.txt", tokens = "file", bytes = "512KB" }
 tokenization = { dataset = "data/leipzig-1m/leipzig1M_en.txt", tokens = "file", bytes = "16MB" }
 
-# Sweeps DIMS 64/128/256/512, so a pass is paid four times over. `serial::MinHash`
-# runs at ~0.22 MB/s, which puts the collectability ceiling near 1 MB — three orders
-# below anything resident. This is the widest gap in the repo and the clearest case
-# of collectability overriding residency. 128 documents per core already saturates it.
-fingerprints = { dataset = "data/acgt/acgt_100.txt", tokens = "lines", bytes = "1MB", batch_per_core = 128, dims = "64,128,256,512" }
+# `serial::window_overlap` scores every query against every candidate, which puts the
+# collectability ceiling near 1 MB — far below anything resident. This is the widest gap
+# in the repo and the clearest case of collectability overriding residency. 128 documents
+# per core already saturates it.
+#
+# `acgt` lines are random and hold no near-duplicates; one corpus with labelled ones, described in
+# `fingerprints/README.md`:
+#   data/core-deduplication/train.jsonl         203,599,780 bytes
+fingerprints = { dataset = "data/acgt/acgt_100.txt", tokens = "lines", bytes = "1MB", batch_per_core = 128 }

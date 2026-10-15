@@ -10,7 +10,6 @@ Variable                     Default                      Meaning
 `STRINGWARS_BYTES`           per suite, see the manifest  Bytes read from the dataset, like `256MB`
 `STRINGWARS_BATCH_PER_CORE`  per suite, see the manifest  Items per core, or per GPU multiprocessor
 `STRINGWARS_THREADS`         all cores                    Cores for multi-core rows, `0` for all
-`STRINGWARS_DIMS`            per suite, see the manifest  MinHash widths, like `128` or `64,128,256`
 `STRINGWARS_DATASET`         per suite, see the manifest  Path to the textual dataset
 `STRINGWARS_TOKENS`          per suite, see the manifest  `lines`, `words` or `file`
 `STRINGWARS_UNIQUE`          `false`                      Drops repeated tokens
@@ -107,12 +106,6 @@ def parse_count(text: str) -> int | None:
     """Parses a positive whole number in ASCII digits, like `128`; zero is `None`."""
     digits = re.fullmatch(r"[0-9]+", text) is not None
     return (int(text) or None) if digits else None
-
-
-def parse_dims(text: str) -> list[int] | None:
-    """Parses one count like `128` or a comma list like `64,128,256,512`."""
-    counts = [count for piece in text.split(",") if (count := parse_count(piece)) is not None]
-    return counts if len(counts) == text.count(",") + 1 else None
 
 
 def parse_duration(text: str) -> Seconds | None:
@@ -402,7 +395,6 @@ class Settings:
     dataset_bytes: Bytes
     batch_per_core: int | None
     threads: Threads
-    dims: list[int]
     dataset_path: str
     tokenization: Tokenization
     duplicates: Duplicates
@@ -461,12 +453,6 @@ def read_settings(suite: str) -> Settings:
         threads=env_parsed(
             "STRINGWARS_THREADS", Threads(os.process_cpu_count() or 1), parse_threads, "a count, 0 for all cores"
         ),
-        dims=env_parsed(
-            "STRINGWARS_DIMS",
-            manifest_parsed(entry, "dims", parse_dims, "a count list") if "dims" in entry else [],
-            parse_dims,
-            "positive counts like 64,128",
-        ),
         dataset_path=env_text("STRINGWARS_DATASET") or entry["dataset"],
         tokenization=env_parsed(
             "STRINGWARS_TOKENS", Tokenization(entry.get("tokens", "lines")), Tokenization, "lines, words or file"
@@ -497,8 +483,6 @@ def print_settings(settings: Settings) -> None:
     if settings.batch_per_core is not None:
         print(f"- Batch per core: {settings.batch_per_core}")
     print(f"- Threads: {settings.threads}")
-    if settings.dims:
-        print(f"- Dims: {','.join(map(str, settings.dims))}")
     print(f"- Dataset: {settings.dataset_path}")
     print(f"- Tokens: {settings.tokenization}")
     print(f"- Unique: {str(settings.duplicates == 'drop').lower()}")

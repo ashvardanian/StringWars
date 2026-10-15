@@ -15,6 +15,9 @@ What separates them is whether they build a tree first.
 - `cudf.Series.str.get_json_object` is the GPU dataframe counterpart, where RAPIDS is installed.
 
 Throughput is reported in __bytes/s of document bytes consumed__.
+CPU rows are single-core.
+Speedup is StringZilla's speed over the alternative's, `–` marks a row without an alternative, `✗` a query the rival's parser rejected, and `⋯` an alternative not benchmarked on that chip.
+A `–` alternative is an operation that engine is never asked for, not a slow result.
 
 ## Methodology
 
@@ -34,8 +37,8 @@ __Find__ materializes each selected node's span with the index of the path that 
 
 Two framing rules, without which the tables lie.
 
-__The head-to-head row is `<1cpu>`.__
-Every rival is single-threaded and CPU-only, so `<Ncpu>` and `<cuda:0>` are what the engine adds, not what it beats them by.
+__The head-to-head rows are single-core.__
+Every rival is single-threaded and CPU-only, so the multi-core and GPU runs are what the engine adds, not what it beats them by, and the tables keep only the single-core CPU rows and the GPU rows.
 
 __The DOM rivals pay their parse in every pass.__
 Selecting nodes is what the parse is for, so a DOM built outside the loop would time a lookup in a structure the engine never builds.
@@ -48,67 +51,73 @@ Neither corpus ships with the repository; the suite expects them under `data/` a
 - `data/gharchive/2024-01-01-15.json`: one hour of public GitHub events from [GH Archive](https://www.gharchive.org), one JSON object per line, from `https://data.gharchive.org/2024-01-01-15.json.gz` at 83,156,149 bytes compressed. The suite reads its first 64 MB by default.
 - `data/stackexchange-bioinformatics/Posts.xml`: the posts of [bioinformatics.stackexchange.com](https://bioinformatics.stackexchange.com) from the [Stack Exchange data dump](https://archive.org/details/stackexchange), one `<row>` element per line, from `https://archive.org/download/stackexchange/bioinformatics.stackexchange.com.7z` at 17,525,174 bytes compressed.
 
-## Performance
+Three more fit the suite, none of them read by default.
 
-No run has filled these tables yet; `<Ncpu>` stands for `STRINGWARS_THREADS` engines, one per pool thread.
-A `–` cell is an operation that engine is never asked for, not a slow result.
+- `data/jsonbench-bluesky/file_0001.json`: the first of the 1,000 Bluesky event files of [ClickHouse JSONBench](https://github.com/ClickHouse/JSONBench), a million events, one JSON object per line, from `https://clickhouse-public-datasets.s3.amazonaws.com/bluesky/file_0001.json.gz` at 135,176,827 bytes compressed, the later files numbered up to `file_1000.json.gz`. Its events share none of GH Archive's top-level keys, so it needs a vocabulary of its own paths, like `$.commit.collection`.
+- `data/xmark/standard.xml`: the 100 MB reference document of the [XMark](https://projects.cwi.nl/xmark/) auction benchmark, from `https://projects.cwi.nl/xmark/Assets/standard.gz` at 37,924,307 bytes compressed, for deep XPath. It is one document rather than a `<row>` per line, so it runs under `STRINGWARS_TOKENS=file` and with XPath queries of its own.
+- `data/jsonpath-compliance/cts.json`: the [RFC 9535 JSONPath Compliance Test Suite](https://github.com/jsonpath-standard/jsonpath-compliance-test-suite), from `https://raw.githubusercontent.com/jsonpath-standard/jsonpath-compliance-test-suite/main/cts.json` at 236,904 bytes. It holds queries, documents and expected results, so it cross-checks the JSONPath rivals and the engine against the standard rather than timing them.
 
-### JSON Pointers
+The rows are named by vocabulary and operation.
 
-| Library                                   | Count | Find |
-| ----------------------------------------- | ----: | ---: |
-| Rust                                      |       |      |
-| `stringzilla::SubdocumentsEngine<1cpu>`   |       |      |
-| `stringzilla::SubdocumentsEngine<Ncpu>`   |       |      |
-| `stringzilla::SubdocumentsEngine<cuda:0>` |       |      |
-| `serde_json_path::JsonPath::query`        |       |    – |
-| `jsonpath_rust::JsonPath::query`          |       |    – |
-| `serde_json::Value::pointer`              |       |    – |
-| `sonic_rs::get`                           |       |    – |
-| `simd_json::to_borrowed_value`            |       |    – |
-|                                           |       |      |
-| Python                                    |       |      |
-| `stringzilla.SubdocumentsEngine<1cpu>`    |       |      |
-| `stringzilla.SubdocumentsEngine<Ncpu>`    |       |      |
-| `stringzilla.SubdocumentsEngine<cuda:0>`  |       |      |
-| `jsonpath_ng.JSONPath.find`               |       |    – |
-| `orjson.loads`                            |       |    – |
-| `simdjson.Parser.parse`                   |       |    – |
-| `cudf.Series.str.get_json_object<cuda:0>` |       |    – |
+## Intel Xeon5 Emerald Rapids
 
-### JSON Wildcards, Descendants and Filters
+### Rust
 
-| Library                                   | Count | Find |
-| ----------------------------------------- | ----: | ---: |
-| Rust                                      |       |      |
-| `stringzilla::SubdocumentsEngine<1cpu>`   |       |      |
-| `stringzilla::SubdocumentsEngine<Ncpu>`   |       |      |
-| `stringzilla::SubdocumentsEngine<cuda:0>` |       |      |
-| `serde_json_path::JsonPath::query`        |       |    – |
-| `jsonpath_rust::JsonPath::query`          |       |    – |
-|                                           |       |      |
-| Python                                    |       |      |
-| `stringzilla.SubdocumentsEngine<1cpu>`    |       |      |
-| `stringzilla.SubdocumentsEngine<Ncpu>`    |       |      |
-| `stringzilla.SubdocumentsEngine<cuda:0>`  |       |      |
-| `jsonpath_ng.JSONPath.find`               |       |    – |
-| `cudf.Series.str.get_json_object<cuda:0>` |       |    – |
+Also benchmarked: `jsonpath_rust::JsonPath::query`, `serde_json::Value::pointer`, `simd_json::to_borrowed_value`.
 
-### XML Attributes
+| StringZilla                                             |    Speed | Speedup | Alternative                        |     Speed |
+| :------------------------------------------------------ | -------: | ------: | :--------------------------------- | --------: |
+| `stringzilla::SubdocumentsEngine`, json-pointer count   | 3.8 GB/s |   0.79× | `sonic_rs::get`                    | 4.84 GB/s |
+| `stringzilla::SubdocumentsEngine`, json-pointer find    | 3.6 GB/s |       – | –                                  |         – |
+| `stringzilla::SubdocumentsEngine`, json-query count     | 1.1 GB/s |   5.00× | `serde_json_path::JsonPath::query` |  220 MB/s |
+| `stringzilla::SubdocumentsEngine`, json-query find      | 1.1 GB/s |       – | –                                  |         – |
+| `stringzilla::SubdocumentsEngine`, xml-attributes count | 4.6 GB/s |   65.7× | `sxd_xpath::XPath::evaluate`       |   70 MB/s |
+| `stringzilla::SubdocumentsEngine`, xml-attributes find  |   4 GB/s |       – | –                                  |         – |
 
-| Library                                   | Count | Find |
-| ----------------------------------------- | ----: | ---: |
-| Rust                                      |       |      |
-| `stringzilla::SubdocumentsEngine<1cpu>`   |       |      |
-| `stringzilla::SubdocumentsEngine<Ncpu>`   |       |      |
-| `stringzilla::SubdocumentsEngine<cuda:0>` |       |      |
-| `sxd_xpath::XPath::evaluate`              |       |    – |
-|                                           |       |      |
-| Python                                    |       |      |
-| `stringzilla.SubdocumentsEngine<1cpu>`    |       |      |
-| `stringzilla.SubdocumentsEngine<Ncpu>`    |       |      |
-| `stringzilla.SubdocumentsEngine<cuda:0>`  |       |      |
-| `lxml.etree.XPath`                        |       |    – |
+> Measured October 14, 2026.
+
+### Python
+
+Also benchmarked: `orjson.loads`.
+
+| StringZilla                                            |    Speed | Speedup | Alternative                 |     Speed |
+| :----------------------------------------------------- | -------: | ------: | :-------------------------- | --------: |
+| `stringzilla.SubdocumentsEngine`, json-pointer count   |   4 GB/s |   2.00× | `simdjson.Parser.parse`     |    2 GB/s |
+| `stringzilla.SubdocumentsEngine`, json-pointer find    |   4 GB/s |       – | –                           |         – |
+| `stringzilla.SubdocumentsEngine`, json-query count     | 1.1 GB/s |       – | `jsonpath_ng.JSONPath.find` |         ✗ |
+| `stringzilla.SubdocumentsEngine`, json-query find      |   1 GB/s |       – | –                           |         – |
+| `stringzilla.SubdocumentsEngine`, xml-attributes count |   3 GB/s |   42.9× | `lxml.etree.XPath`          |   70 MB/s |
+| `stringzilla.SubdocumentsEngine`, xml-attributes find  |   4 GB/s |       – | –                           |         – |
+
+> Measured October 14, 2026.
+
+## 148× Nvidia SM100
+
+### Rust
+
+| StringZilla                                             |     Speed | Speedup | Alternative | Speed |
+| :------------------------------------------------------ | --------: | ------: | :---------- | ----: |
+| `stringzilla::SubdocumentsEngine`, json-pointer count   | 4.07 GB/s |       – | –           |     – |
+| `stringzilla::SubdocumentsEngine`, json-pointer find    | 2.06 GB/s |       – | –           |     – |
+| `stringzilla::SubdocumentsEngine`, json-query count     | 2.34 GB/s |       – | –           |     – |
+| `stringzilla::SubdocumentsEngine`, json-query find      | 1.18 GB/s |       – | –           |     – |
+| `stringzilla::SubdocumentsEngine`, xml-attributes count |  5.5 GB/s |       – | –           |     – |
+| `stringzilla::SubdocumentsEngine`, xml-attributes find  |  2.8 GB/s |       – | –           |     – |
+
+> Measured October 14, 2026.
+
+### Python
+
+| StringZilla                                            |      Speed | Speedup | Alternative                       |   Speed |
+| :----------------------------------------------------- | ---------: | ------: | :-------------------------------- | ------: |
+| `stringzilla.SubdocumentsEngine`, json-pointer count   |  4.11 GB/s |  0.057× | `cudf.Series.str.get_json_object` | 72 GB/s |
+| `stringzilla.SubdocumentsEngine`, json-pointer find    |  2.07 GB/s |       – | –                                 |       – |
+| `stringzilla.SubdocumentsEngine`, json-query count     |  2.33 GB/s |       – | `cudf.Series.str.get_json_object` |       ✗ |
+| `stringzilla.SubdocumentsEngine`, json-query find      | 1.177 GB/s |       – | –                                 |       – |
+| `stringzilla.SubdocumentsEngine`, xml-attributes count |   5.4 GB/s |       – | –                                 |       – |
+| `stringzilla.SubdocumentsEngine`, xml-attributes find  |   2.8 GB/s |       – | –                                 |       – |
+
+> Measured October 14, 2026.
 
 ## Reproducing
 

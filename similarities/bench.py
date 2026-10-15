@@ -396,7 +396,7 @@ def perform_score_benchmarks(
             settings, tokens, device_variants[0].side, byte_lengths, gap_open, gap_extend, group_name, mode
         )
     for engine in ("NeedlemanWunschScores", "SmithWatermanScores"):
-        name = f"{group_name}/stringzillas.{engine}"
+        name = f"{group_name}/stringzilla.{engine}"
         if settings.selects(name):
             note_unavailable(name, "StringZilla v6 scores unit-cost Levenshtein only")
 

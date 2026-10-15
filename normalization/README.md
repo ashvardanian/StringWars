@@ -2,106 +2,431 @@
 
 Benchmarks for Unicode case-insensitive operations and normalization — case folding, case-insensitive comparison and substring search, and NFC/NFD/NFKC/NFKD normalization — across different languages and hardware platforms.
 
-## Case Folding
-
-Measured single-threaded on a 512 KB prefix of each Leipzig corpus, as one `file`-mode token.
+Case folding, case-insensitive search and NFC normalization are each measured single-threaded, one row per Leipzig corpus language.
+Case folding runs on a 512 KB prefix of each corpus, as one `file`-mode token.
 The 512 KB size is set by `pyunormalize`, which sustains ~53 MChar/s to 800 K characters and then collapses by more than four orders of magnitude.
-`Standard` is `std::to_lowercase` and `str.casefold()`, `StringZilla` is `utf8_uncased_fold`.
+`stringzilla::utf8_uncased_fold` is StringZilla's full Unicode case fold.
+Its Rust alternative is ICU4X's `icu::CaseMapper::fold_string` and its Python alternative is PyICU's `icu.CaseMap.foldCase`.
+`std::to_lowercase` lowercases rather than folds, so it is not an alternative.
+A `–` alternative is a chip where that ICU rival was not measured.
 
-### Intel Xeon4 Sapphire Rapids
+The `utf8_uncased_search` and `utf8_uncased_matches` rows search a case-insensitive needle, against `memchr::Finder` over ICU-folded text in Rust and PyICU's `icu.StringSearch` in Python.
 
-| Language      | Standard 🦀 | StringZilla 🦀 |     | Standard 🐍 | StringZilla 🐍 |     |
-| ------------- | ----------: | -------------: | --: | ----------: | -------------: | --: |
-| Arabic 🇸🇦     |     84 MB/s |      2.10 GB/s | 26x |    179 MB/s |       288 MB/s |  2x |
-| Armenian 🇦🇲   |     69 MB/s |       356 MB/s |  5x |    199 MB/s |       172 MB/s |  1x |
-| Bengali 🇧🇩    |     94 MB/s |      2.25 GB/s | 24x |    289 MB/s |       362 MB/s |  1x |
-| Chinese 🇨🇳    |     92 MB/s |       395 MB/s |  4x |    228 MB/s |       181 MB/s |  1x |
-| Czech 🇨🇿      |     92 MB/s |      1.31 GB/s | 15x |    119 MB/s |       217 MB/s |  2x |
-| Dutch 🇳🇱      |    130 MB/s |      4.39 GB/s | 35x |    289 MB/s |       316 MB/s |  1x |
-| English 🇬🇧    |    129 MB/s |      4.72 GB/s | 37x |    344 MB/s |       375 MB/s |  1x |
-| Farsi 🇮🇷      |     80 MB/s |      1.07 GB/s | 14x |    209 MB/s |       258 MB/s |  1x |
-| French 🇫🇷     |    119 MB/s |      1.59 GB/s | 14x |    116 MB/s |       227 MB/s |  2x |
-| Georgian 🇬🇪   |           — |              — |   — |           — |              — |   — |
-| German 🇩🇪     |    127 MB/s |      1.91 GB/s | 15x |    118 MB/s |       268 MB/s |  2x |
-| Greek 🇬🇷      |     66 MB/s |      1.17 GB/s | 18x |    185 MB/s |       262 MB/s |  1x |
-| Hebrew 🇮🇱     |     71 MB/s |      2.21 GB/s | 32x |    172 MB/s |       248 MB/s |  1x |
-| Hindi 🇮🇳      |     93 MB/s |      2.28 GB/s | 25x |    278 MB/s |       350 MB/s |  1x |
-| Italian 🇮🇹    |    134 MB/s |      2.86 GB/s | 22x |    145 MB/s |       327 MB/s |  2x |
-| Japanese 🇯🇵   |     93 MB/s |      1.09 GB/s | 12x |    231 MB/s |       255 MB/s |  1x |
-| Korean 🇰🇷     |    142 MB/s |      2.09 GB/s | 15x |    230 MB/s |       273 MB/s |  1x |
-| Polish 🇵🇱     |    112 MB/s |      1.04 GB/s | 10x |    105 MB/s |       186 MB/s |  2x |
-| Portuguese 🇧🇷 |    127 MB/s |      2.14 GB/s | 17x |    109 MB/s |       253 MB/s |  2x |
-| Russian 🇷🇺    |     66 MB/s |      1.22 GB/s | 19x |    190 MB/s |       275 MB/s |  1x |
-| Spanish 🇪🇸    |    124 MB/s |      2.02 GB/s | 17x |    104 MB/s |       267 MB/s |  3x |
-| Tamil 🇮🇳      |    108 MB/s |      2.24 GB/s | 21x |    304 MB/s |       376 MB/s |  1x |
-| Turkish 🇹🇷    |    101 MB/s |      1.04 GB/s | 11x |    118 MB/s |       217 MB/s |  2x |
-| Ukrainian 🇺🇦  |     66 MB/s |      1.15 GB/s | 18x |    194 MB/s |       270 MB/s |  1x |
-| Vietnamese 🇻🇳 |     82 MB/s |      1.16 GB/s | 15x |    148 MB/s |       243 MB/s |  2x |
+The `utf8_norm` rows normalize each corpus into NFC; NFD, NFKC and NFKD were measured too and follow the same ordering, so only NFC is tabulated.
+Rust races `icu::ComposingNormalizer` and the `unicode-normalization` crate, and Python races PyICU's `icu.Normalizer2`, with `unicodedata.normalize` and [`pyunormalize`](https://github.com/mlodel/pyunormalize) — a pure-Python UAX #15 implementation that ships its own Unicode tables, included as the reference for what the algorithm costs with no native code behind it — listed as other benchmarked rivals.
 
-> Measured June 17, 2026.
+Speedup is StringZilla's speed over the alternative's, `–` marks a row without an alternative, `✗` a result that failed its check, and `⋯` an alternative not benchmarked on that chip.
+A language has rows on a chip only where it was measured there.
 
-### AMD Zen5 Turin
+## Intel Xeon5 Emerald Rapids
 
-| Language      | Standard 🦀 | StringZilla 🦀 |     | Standard 🐍 | StringZilla 🐍 |     |
-| ------------- | ----------: | -------------: | --: | ----------: | -------------: | --: |
-| English 🇬🇧    |    460 MB/s |      7.01 GB/s | 16x |    245 MB/s |      2.92 GB/s | 12x |
-| German 🇩🇪     |    412 MB/s |      2.41 GB/s |  6x |    248 MB/s |      1.69 GB/s |  7x |
-| Russian 🇷🇺    |    207 MB/s |      2.05 GB/s | 10x |    448 MB/s |      1.45 GB/s |  3x |
-| French 🇫🇷     |    330 MB/s |      1.71 GB/s |  5x |    261 MB/s |      1.28 GB/s |  5x |
-| Greek 🇬🇷      |    210 MB/s |     0.931 GB/s |  5x |    411 MB/s |       743 MB/s |  2x |
-| Armenian 🇦🇲   |    213 MB/s |       866 MB/s |  4x |    448 MB/s |       711 MB/s |  2x |
-| Vietnamese 🇻🇳 |    253 MB/s |       336 MB/s |  1x |    324 MB/s |       278 MB/s |  1x |
-| Arabic 🇸🇦     |    221 MB/s |     957.5 MB/s |  4x |    445 MB/s |      1.68 GB/s |  4x |
-| Bengali 🇧🇩    |    299 MB/s |      5.75 GB/s | 20x |    662 MB/s |      2.71 GB/s |  4x |
-| Chinese 🇨🇳    |    310 MB/s |      1.13 GB/s |  4x |    665 MB/s |       845 MB/s |  1x |
-| Czech 🇨🇿      |    307 MB/s |       789 MB/s |  3x |    278 MB/s |       656 MB/s |  2x |
-| Dutch 🇳🇱      |    449 MB/s |      4.41 GB/s | 10x |    250 MB/s |      2.77 GB/s | 11x |
-| Farsi 🇮🇷      |    224 MB/s |       818 MB/s |  4x |    453 MB/s |      1.32 GB/s |  3x |
-| Georgian 🇬🇪   |    280 MB/s |       183 MB/s |  1x |    657 MB/s |       465 MB/s |  1x |
-| Hebrew 🇮🇱     |    222 MB/s |     0.941 GB/s |  4x |    451 MB/s |      1.73 GB/s |  4x |
-| Hindi 🇮🇳      |           — |              — |   — |           — |              — |   — |
-| Italian 🇮🇹    |    419 MB/s |      2.13 GB/s |  5x |    256 MB/s |      1.80 GB/s |  7x |
-| Japanese 🇯🇵   |    315 MB/s |      3.27 GB/s | 11x |    692 MB/s |      1.86 GB/s |  3x |
-| Korean 🇰🇷     |    299 MB/s |       821 MB/s |  3x |    594 MB/s |      2.61 GB/s |  4x |
-| Lithuanian 🇱🇹 |    336 MB/s |       824 MB/s |  2x |    261 MB/s |       694 MB/s |  3x |
-| Polish 🇵🇱     |    347 MB/s |       896 MB/s |  3x |    264 MB/s |       750 MB/s |  3x |
-| Portuguese 🇧🇷 |    377 MB/s |      2.22 GB/s |  6x |    257 MB/s |      1.67 GB/s |  7x |
-| Spanish 🇪🇸    |    395 MB/s |      2.22 GB/s |  6x |    259 MB/s |      1.68 GB/s |  7x |
-| Tamil 🇮🇳      |    292 MB/s |      5.63 GB/s | 20x |    679 MB/s |      2.82 GB/s |  4x |
-| Turkish 🇹🇷    |    311 MB/s |       813 MB/s |  3x |    271 MB/s |       673 MB/s |  2x |
-| Ukrainian 🇺🇦  |    207 MB/s |      1.95 GB/s | 10x |    454 MB/s |      1.47 GB/s |  3x |
+### Rust
 
-### Apple M5 Pro
+Also benchmarked: `std::to_lowercase`, `pcre2::pre-jit`, `pcre2::jit-on-fly`, `pcre2::no-jit`, `unicode-normalization::nfc`.
 
-| Language      | Standard 🦀 | StringZilla 🦀 |       | Standard 🐍 |  PyICU 🐍 | StringZilla 🐍 |       |
-| ------------- | ----------: | -------------: | ----: | ----------: | --------: | -------------: | ----: |
-| Arabic 🇸🇦     |    304 MB/s |      2.20 GB/s |  7.4x |    873 MB/s |  434 MB/s |      2.17 GB/s |  2.5x |
-| Armenian 🇦🇲   |    295 MB/s |       902 MB/s |  3.1x |    890 MB/s |  426 MB/s |       871 MB/s |  1.0x |
-| Bengali 🇧🇩    |    421 MB/s |      6.29 GB/s | 15.3x |   1.39 GB/s | 1.32 GB/s |      6.21 GB/s |  4.5x |
-| Chinese 🇨🇳    |    441 MB/s |       515 MB/s |  1.2x |   1.28 GB/s |  668 MB/s |       573 MB/s |  0.4x |
-| Czech 🇨🇿      |    319 MB/s |      1.30 GB/s |  4.2x |    473 MB/s |  535 MB/s |      1.27 GB/s |  2.7x |
-| Dutch 🇳🇱      |    676 MB/s |     14.64 GB/s | 22.2x |    474 MB/s |  478 MB/s |     14.21 GB/s | 30.7x |
-| English 🇬🇧    |    680 MB/s |     14.88 GB/s | 22.4x |    535 MB/s |  426 MB/s |     14.85 GB/s | 28.4x |
-| Farsi 🇮🇷      |    295 MB/s |      2.47 GB/s |  8.6x |    751 MB/s |  508 MB/s |      2.52 GB/s |  3.4x |
-| French 🇫🇷     |    524 MB/s |      1.33 GB/s |  2.6x |    444 MB/s |  485 MB/s |      1.29 GB/s |  3.0x |
-| Georgian 🇬🇪   |    424 MB/s |       774 MB/s |  1.8x |   1.01 GB/s |  392 MB/s |       714 MB/s |  0.7x |
-| German 🇩🇪     |    625 MB/s |      2.19 GB/s |  3.6x |    544 MB/s |  362 MB/s |      2.10 GB/s |  4.0x |
-| Greek 🇬🇷      |    298 MB/s |      1.62 GB/s |  5.6x |    649 MB/s |  196 MB/s |      1.46 GB/s |  2.3x |
-| Hebrew 🇮🇱     |    308 MB/s |      2.65 GB/s |  8.8x |    686 MB/s |  391 MB/s |      2.65 GB/s |  4.0x |
-| Hindi 🇮🇳      |    400 MB/s |      6.83 GB/s | 17.5x |   1.07 GB/s | 1.17 GB/s |      6.74 GB/s |  6.3x |
-| Italian 🇮🇹    |    654 MB/s |      3.89 GB/s |  6.1x |    538 MB/s |  480 MB/s |      3.79 GB/s |  7.2x |
-| Japanese 🇯🇵   |    423 MB/s |      1.68 GB/s |  4.1x |   1.32 GB/s |  749 MB/s |      1.79 GB/s |  1.4x |
-| Korean 🇰🇷     |    391 MB/s |      1.73 GB/s |  4.5x |   1.01 GB/s | 1.05 GB/s |      1.63 GB/s |  1.6x |
-| Polish 🇵🇱     |    492 MB/s |      1.29 GB/s |  2.7x |    452 MB/s |  472 MB/s |      1.25 GB/s |  2.8x |
-| Portuguese 🇧🇷 |    582 MB/s |      1.69 GB/s |  3.0x |    441 MB/s |  464 MB/s |      1.62 GB/s |  3.8x |
-| Russian 🇷🇺    |    299 MB/s |      1.04 GB/s |  3.6x |    913 MB/s |  254 MB/s |     0.950 GB/s |  1.1x |
-| Spanish 🇪🇸    |    611 MB/s |      1.91 GB/s |  3.2x |    435 MB/s |  472 MB/s |      1.81 GB/s |  4.3x |
-| Tamil 🇮🇳      |    432 MB/s |      5.84 GB/s | 13.8x |   1.02 GB/s |  710 MB/s |      5.81 GB/s |  5.7x |
-| Turkish 🇹🇷    |    401 MB/s |      1.18 GB/s |  3.0x |    585 MB/s |  476 MB/s |      1.15 GB/s |  2.0x |
-| Ukrainian 🇺🇦  |    293 MB/s |      1.05 GB/s |  3.7x |    723 MB/s |  289 MB/s |     0.969 GB/s |  1.4x |
-| Vietnamese 🇻🇳 |    331 MB/s |      1.34 GB/s |  4.1x |    537 MB/s |  379 MB/s |      1.29 GB/s |  2.5x |
+| StringZilla                                    |     Speed | Speedup | Alternative                    |      Speed |
+| :--------------------------------------------- | --------: | ------: | :----------------------------- | ---------: |
+| `stringzilla::utf8_uncased_fold`, Arabic       |  4.7 GB/s |   54.7× | `icu::CaseMapper::fold_string` |    86 MB/s |
+| `stringzilla::utf8_uncased_fold`, Armenian     |  710 MB/s |   4.97× | `icu::CaseMapper::fold_string` |   143 MB/s |
+| `stringzilla::utf8_uncased_fold`, Bengali      |  4.3 GB/s |   18.7× | `icu::CaseMapper::fold_string` |   230 MB/s |
+| `stringzilla::utf8_uncased_fold`, Chinese      |  430 MB/s |   2.26× | `icu::CaseMapper::fold_string` |   190 MB/s |
+| `stringzilla::utf8_uncased_fold`, Czech        |  2.4 GB/s |   32.0× | `icu::CaseMapper::fold_string` |    75 MB/s |
+| `stringzilla::utf8_uncased_fold`, Dutch        |   21 GB/s |    285× | `icu::CaseMapper::fold_string` |  73.6 MB/s |
+| `stringzilla::utf8_uncased_fold`, English      |   20 GB/s |    292× | `icu::CaseMapper::fold_string` |  68.6 MB/s |
+| `stringzilla::utf8_uncased_fold`, Farsi        |  2.4 GB/s |   15.0× | `icu::CaseMapper::fold_string` |   160 MB/s |
+| `stringzilla::utf8_uncased_fold`, French       |  2.7 GB/s |   37.5× | `icu::CaseMapper::fold_string` |    72 MB/s |
+| `stringzilla::utf8_uncased_fold`, Georgian     |  1.6 GB/s |   11.4× | `icu::CaseMapper::fold_string` |   140 MB/s |
+| `stringzilla::utf8_uncased_fold`, German       |  4.1 GB/s |   59.5× | `icu::CaseMapper::fold_string` |  68.9 MB/s |
+| `stringzilla::utf8_uncased_fold`, Greek        |  2.4 GB/s |   24.5× | `icu::CaseMapper::fold_string` |  97.8 MB/s |
+| `stringzilla::utf8_uncased_fold`, Hebrew       |  4.9 GB/s |   37.4× | `icu::CaseMapper::fold_string` |   131 MB/s |
+| `stringzilla::utf8_uncased_fold`, Hindi        |  4.3 GB/s |   19.5× | `icu::CaseMapper::fold_string` |   220 MB/s |
+| `stringzilla::utf8_uncased_fold`, Italian      |  7.5 GB/s |    107× | `icu::CaseMapper::fold_string` |  70.3 MB/s |
+| `stringzilla::utf8_uncased_fold`, Japanese     |  1.4 GB/s |   7.37× | `icu::CaseMapper::fold_string` |   190 MB/s |
+| `stringzilla::utf8_uncased_fold`, Korean       |  2.2 GB/s |   12.5× | `icu::CaseMapper::fold_string` |   176 MB/s |
+| `stringzilla::utf8_uncased_fold`, Lithuanian   |  1.6 GB/s |   24.2× | `icu::CaseMapper::fold_string` |  66.2 MB/s |
+| `stringzilla::utf8_uncased_fold`, Polish       |  2.1 GB/s |   29.8× | `icu::CaseMapper::fold_string` |  70.4 MB/s |
+| `stringzilla::utf8_uncased_fold`, Portuguese   |  3.4 GB/s |   47.8× | `icu::CaseMapper::fold_string` |  71.2 MB/s |
+| `stringzilla::utf8_uncased_fold`, Russian      |  1.6 GB/s |   14.5× | `icu::CaseMapper::fold_string` |   110 MB/s |
+| `stringzilla::utf8_uncased_fold`, Spanish      |  3.8 GB/s |   52.6× | `icu::CaseMapper::fold_string` |  72.3 MB/s |
+| `stringzilla::utf8_uncased_fold`, Tamil        |  4.4 GB/s |   21.0× | `icu::CaseMapper::fold_string` |   210 MB/s |
+| `stringzilla::utf8_uncased_fold`, Turkish      |  2.0 GB/s |   28.4× | `icu::CaseMapper::fold_string` |  70.3 MB/s |
+| `stringzilla::utf8_uncased_fold`, Ukrainian    |  1.5 GB/s |   13.2× | `icu::CaseMapper::fold_string` |   114 MB/s |
+| `stringzilla::utf8_uncased_fold`, Vietnamese   |  2.5 GB/s |   29.1× | `icu::CaseMapper::fold_string` |  85.8 MB/s |
+| `stringzilla::utf8_uncased_search`, Arabic     |   13 GB/s |   95.6× | `memchr::Finder<icu-fold>`     |   136 MB/s |
+| `stringzilla::utf8_uncased_search`, Armenian   |  805 MB/s |   5.88× | `memchr::Finder<icu-fold>`     |   137 MB/s |
+| `stringzilla::utf8_uncased_search`, Bengali    |   28 GB/s |    122× | `memchr::Finder<icu-fold>`     |   230 MB/s |
+| `stringzilla::utf8_uncased_search`, Chinese    | 22.7 GB/s |    119× | `memchr::Finder<icu-fold>`     |   190 MB/s |
+| `stringzilla::utf8_uncased_search`, Czech      |  8.8 GB/s |    119× | `memchr::Finder<icu-fold>`     |    74 MB/s |
+| `stringzilla::utf8_uncased_search`, Dutch      |  8.5 GB/s |    117× | `memchr::Finder<icu-fold>`     |  72.7 MB/s |
+| `stringzilla::utf8_uncased_search`, English    | 10.4 GB/s |    149× | `memchr::Finder<icu-fold>`     |    70 MB/s |
+| `stringzilla::utf8_uncased_search`, Farsi      |   27 GB/s |    176× | `memchr::Finder<icu-fold>`     |   153 MB/s |
+| `stringzilla::utf8_uncased_search`, French     |  7.1 GB/s |   97.9× | `memchr::Finder<icu-fold>`     |  72.5 MB/s |
+| `stringzilla::utf8_uncased_search`, Georgian   | 8.96 GB/s |   64.9× | `memchr::Finder<icu-fold>`     |   138 MB/s |
+| `stringzilla::utf8_uncased_search`, German     | 6.01 GB/s |   87.7× | `memchr::Finder<icu-fold>`     |  68.5 MB/s |
+| `stringzilla::utf8_uncased_search`, Greek      | 4.25 GB/s |   43.3× | `memchr::Finder<icu-fold>`     |  98.1 MB/s |
+| `stringzilla::utf8_uncased_search`, Hebrew     |   15 GB/s |    115× | `memchr::Finder<icu-fold>`     |   131 MB/s |
+| `stringzilla::utf8_uncased_search`, Hindi      |   11 GB/s |   52.6× | `memchr::Finder<icu-fold>`     |   209 MB/s |
+| `stringzilla::utf8_uncased_search`, Italian    | 10.6 GB/s |    152× | `memchr::Finder<icu-fold>`     |  69.6 MB/s |
+| `stringzilla::utf8_uncased_search`, Japanese   | 20.2 GB/s |    105× | `memchr::Finder<icu-fold>`     |   193 MB/s |
+| `stringzilla::utf8_uncased_search`, Korean     |   32 GB/s |    183× | `memchr::Finder<icu-fold>`     |   175 MB/s |
+| `stringzilla::utf8_uncased_search`, Lithuanian |   13 GB/s |    197× | `memchr::Finder<icu-fold>`     |  66.0 MB/s |
+| `stringzilla::utf8_uncased_search`, Polish     | 10.3 GB/s |    143× | `memchr::Finder<icu-fold>`     |  71.9 MB/s |
+| `stringzilla::utf8_uncased_search`, Portuguese |   11 GB/s |    154× | `memchr::Finder<icu-fold>`     |  71.2 MB/s |
+| `stringzilla::utf8_uncased_search`, Russian    | 7.28 GB/s |   66.9× | `memchr::Finder<icu-fold>`     | 108.8 MB/s |
+| `stringzilla::utf8_uncased_search`, Spanish    | 7.41 GB/s |    103× | `memchr::Finder<icu-fold>`     | 71.93 MB/s |
+| `stringzilla::utf8_uncased_search`, Tamil      |   21 GB/s |    107× | `memchr::Finder<icu-fold>`     |   196 MB/s |
+| `stringzilla::utf8_uncased_search`, Turkish    | 12.0 GB/s |    172× | `memchr::Finder<icu-fold>`     |  69.8 MB/s |
+| `stringzilla::utf8_uncased_search`, Ukrainian  | 9.94 GB/s |   88.0× | `memchr::Finder<icu-fold>`     |   113 MB/s |
+| `stringzilla::utf8_uncased_search`, Vietnamese |  4.6 GB/s |   53.9× | `memchr::Finder<icu-fold>`     | 85.32 MB/s |
+| `stringzilla::utf8_norm`, Arabic               |  600 MB/s |   1.30× | `icu::ComposingNormalizer`     |   460 MB/s |
+| `stringzilla::utf8_norm`, Armenian             |  590 MB/s |   1.23× | `icu::ComposingNormalizer`     |   480 MB/s |
+| `stringzilla::utf8_norm`, Bengali              |  320 MB/s |   1.23× | `icu::ComposingNormalizer`     |   260 MB/s |
+| `stringzilla::utf8_norm`, Chinese              |  690 MB/s |   0.92× | `icu::ComposingNormalizer`     |   750 MB/s |
+| `stringzilla::utf8_norm`, Czech                |  9.5 GB/s |   4.75× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Dutch                |   27 GB/s |   13.5× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, English              |   13 GB/s |   6.50× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Farsi                |  550 MB/s |   1.20× | `icu::ComposingNormalizer`     |   460 MB/s |
+| `stringzilla::utf8_norm`, French               |  6.2 GB/s |   3.10× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Georgian             |  640 MB/s |   0.93× | `icu::ComposingNormalizer`     |   690 MB/s |
+| `stringzilla::utf8_norm`, German               |  6.9 GB/s |   3.45× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Greek                |  600 MB/s |   1.22× | `icu::ComposingNormalizer`     |   490 MB/s |
+| `stringzilla::utf8_norm`, Hebrew               |  570 MB/s |   1.21× | `icu::ComposingNormalizer`     |   470 MB/s |
+| `stringzilla::utf8_norm`, Hindi                |  570 MB/s |   1.36× | `icu::ComposingNormalizer`     |   420 MB/s |
+| `stringzilla::utf8_norm`, Italian              |   14 GB/s |   7.00× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Japanese             |  660 MB/s |   0.90× | `icu::ComposingNormalizer`     |   730 MB/s |
+| `stringzilla::utf8_norm`, Korean               |  530 MB/s |   0.90× | `icu::ComposingNormalizer`     |   590 MB/s |
+| `stringzilla::utf8_norm`, Lithuanian           |  3.6 GB/s |   1.80× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Polish               |  5.8 GB/s |   2.90× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Portuguese           |   14 GB/s |   7.00× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Russian              |  4.8 GB/s |   10.0× | `icu::ComposingNormalizer`     |   480 MB/s |
+| `stringzilla::utf8_norm`, Spanish              |   14 GB/s |   7.00× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Tamil                |  490 MB/s |   1.96× | `icu::ComposingNormalizer`     |   250 MB/s |
+| `stringzilla::utf8_norm`, Turkish              |  6.6 GB/s |   3.30× | `icu::ComposingNormalizer`     |     2 GB/s |
+| `stringzilla::utf8_norm`, Ukrainian            |  2.3 GB/s |   4.51× | `icu::ComposingNormalizer`     |   510 MB/s |
+| `stringzilla::utf8_norm`, Vietnamese           |  520 MB/s |   0.57× | `icu::ComposingNormalizer`     |   910 MB/s |
+
+> Measured October 15, 2026.
+
+### Python
+
+Also benchmarked: `str.casefold`, `str.casefold.find`, `regex.finditer`, `unicodedata.normalize`, `pyunormalize.normalize`.
+
+| StringZilla                                    |     Speed | Speedup | Alternative            |      Speed |
+| :--------------------------------------------- | --------: | ------: | :--------------------- | ---------: |
+| `stringzilla.utf8_uncased_fold`, Arabic        |  4.7 GB/s |   16.8× | `icu.CaseMap.foldCase` |   280 MB/s |
+| `stringzilla.utf8_uncased_fold`, Armenian      |  710 MB/s |   2.73× | `icu.CaseMap.foldCase` |   260 MB/s |
+| `stringzilla.utf8_uncased_fold`, Bengali       |  4.3 GB/s |   4.78× | `icu.CaseMap.foldCase` |   900 MB/s |
+| `stringzilla.utf8_uncased_fold`, Chinese       |  440 MB/s |   1.10× | `icu.CaseMap.foldCase` |   400 MB/s |
+| `stringzilla.utf8_uncased_fold`, Czech         |  2.3 GB/s |   6.22× | `icu.CaseMap.foldCase` |   370 MB/s |
+| `stringzilla.utf8_uncased_fold`, Dutch         |   19 GB/s |   57.6× | `icu.CaseMap.foldCase` |   330 MB/s |
+| `stringzilla.utf8_uncased_fold`, English       |   18 GB/s |   62.1× | `icu.CaseMap.foldCase` |   290 MB/s |
+| `stringzilla.utf8_uncased_fold`, Farsi         |  2.4 GB/s |   6.86× | `icu.CaseMap.foldCase` |   350 MB/s |
+| `stringzilla.utf8_uncased_fold`, French        | 2.66 GB/s |   7.82× | `icu.CaseMap.foldCase` |   340 MB/s |
+| `stringzilla.utf8_uncased_fold`, Georgian      |  1.6 GB/s |   8.00× | `icu.CaseMap.foldCase` |   200 MB/s |
+| `stringzilla.utf8_uncased_fold`, German        |  4.4 GB/s |   17.6× | `icu.CaseMap.foldCase` |   250 MB/s |
+| `stringzilla.utf8_uncased_fold`, Greek         |  2.4 GB/s |   21.8× | `icu.CaseMap.foldCase` |   110 MB/s |
+| `stringzilla.utf8_uncased_fold`, Hebrew        |  4.8 GB/s |   18.5× | `icu.CaseMap.foldCase` |   260 MB/s |
+| `stringzilla.utf8_uncased_fold`, Hindi         |  4.3 GB/s |   5.51× | `icu.CaseMap.foldCase` |   780 MB/s |
+| `stringzilla.utf8_uncased_fold`, Italian       |  7.1 GB/s |   20.9× | `icu.CaseMap.foldCase` |   340 MB/s |
+| `stringzilla.utf8_uncased_fold`, Japanese      |  1.4 GB/s |   2.98× | `icu.CaseMap.foldCase` |   470 MB/s |
+| `stringzilla.utf8_uncased_fold`, Korean        |  2.2 GB/s |   3.06× | `icu.CaseMap.foldCase` |   720 MB/s |
+| `stringzilla.utf8_uncased_fold`, Lithuanian    |  1.6 GB/s |   4.85× | `icu.CaseMap.foldCase` |   330 MB/s |
+| `stringzilla.utf8_uncased_fold`, Polish        |  2.1 GB/s |   6.36× | `icu.CaseMap.foldCase` |   330 MB/s |
+| `stringzilla.utf8_uncased_fold`, Portuguese    |  3.3 GB/s |   10.3× | `icu.CaseMap.foldCase` |   320 MB/s |
+| `stringzilla.utf8_uncased_fold`, Russian       |  1.6 GB/s |   12.3× | `icu.CaseMap.foldCase` |   130 MB/s |
+| `stringzilla.utf8_uncased_fold`, Spanish       |  3.7 GB/s |   11.2× | `icu.CaseMap.foldCase` |   330 MB/s |
+| `stringzilla.utf8_uncased_fold`, Tamil         | 4.39 GB/s |   9.98× | `icu.CaseMap.foldCase` |   440 MB/s |
+| `stringzilla.utf8_uncased_fold`, Turkish       | 2.00 GB/s |   6.01× | `icu.CaseMap.foldCase` |   333 MB/s |
+| `stringzilla.utf8_uncased_fold`, Ukrainian     |  1.5 GB/s |   10.0× | `icu.CaseMap.foldCase` |   150 MB/s |
+| `stringzilla.utf8_uncased_fold`, Vietnamese    |  2.5 GB/s |   10.0× | `icu.CaseMap.foldCase` |   250 MB/s |
+| `stringzilla.utf8_uncased_matches`, Arabic     |  9.7 GB/s |    157× | `icu.StringSearch`     |  61.9 MB/s |
+| `stringzilla.utf8_uncased_matches`, Armenian   |  800 MB/s |   9.55× | `icu.StringSearch`     |  83.8 MB/s |
+| `stringzilla.utf8_uncased_matches`, Bengali    |   24 GB/s |    212× | `icu.StringSearch`     |   113 MB/s |
+| `stringzilla.utf8_uncased_matches`, Chinese    |   15 GB/s |    225× | `icu.StringSearch`     |  66.8 MB/s |
+| `stringzilla.utf8_uncased_matches`, Czech      | 8.48 GB/s |    183× | `icu.StringSearch`     |  46.4 MB/s |
+| `stringzilla.utf8_uncased_matches`, Dutch      | 4.94 GB/s |    101× | `icu.StringSearch`     |  48.8 MB/s |
+| `stringzilla.utf8_uncased_matches`, English    |  7.3 GB/s |    151× | `icu.StringSearch`     |  48.5 MB/s |
+| `stringzilla.utf8_uncased_matches`, Farsi      |   20 GB/s |    282× | `icu.StringSearch`     | 70.91 MB/s |
+| `stringzilla.utf8_uncased_matches`, French     | 6.40 GB/s |    133× | `icu.StringSearch`     |  48.2 MB/s |
+| `stringzilla.utf8_uncased_matches`, Georgian   | 8.27 GB/s |   67.2× | `icu.StringSearch`     |   123 MB/s |
+| `stringzilla.utf8_uncased_matches`, German     |  4.8 GB/s |   99.8× | `icu.StringSearch`     |  48.1 MB/s |
+| `stringzilla.utf8_uncased_matches`, Greek      | 3.95 GB/s |   56.8× | `icu.StringSearch`     |  69.5 MB/s |
+| `stringzilla.utf8_uncased_matches`, Hebrew     |   12 GB/s |    155× | `icu.StringSearch`     |  77.5 MB/s |
+| `stringzilla.utf8_uncased_matches`, Hindi      |  9.1 GB/s |   78.4× | `icu.StringSearch`     |   116 MB/s |
+| `stringzilla.utf8_uncased_matches`, Italian    | 9.31 GB/s |    185× | `icu.StringSearch`     |  50.2 MB/s |
+| `stringzilla.utf8_uncased_matches`, Japanese   |   15 GB/s |    195× | `icu.StringSearch`     |  76.9 MB/s |
+| `stringzilla.utf8_uncased_matches`, Korean     |   29 GB/s |    609× | `icu.StringSearch`     |  47.6 MB/s |
+| `stringzilla.utf8_uncased_matches`, Lithuanian |   13 GB/s |    274× | `icu.StringSearch`     |  47.4 MB/s |
+| `stringzilla.utf8_uncased_matches`, Polish     | 9.28 GB/s |    194× | `icu.StringSearch`     |  47.9 MB/s |
+| `stringzilla.utf8_uncased_matches`, Portuguese |   10 GB/s |    207× | `icu.StringSearch`     |  48.2 MB/s |
+| `stringzilla.utf8_uncased_matches`, Russian    | 7.21 GB/s |   91.9× | `icu.StringSearch`     | 78.49 MB/s |
+| `stringzilla.utf8_uncased_matches`, Spanish    |  6.3 GB/s |    130× | `icu.StringSearch`     |  48.6 MB/s |
+| `stringzilla.utf8_uncased_matches`, Tamil      |   20 GB/s |    164× | `icu.StringSearch`     |   122 MB/s |
+| `stringzilla.utf8_uncased_matches`, Turkish    |   11 GB/s |    219× | `icu.StringSearch`     |  50.2 MB/s |
+| `stringzilla.utf8_uncased_matches`, Ukrainian  | 9.29 GB/s |    118× | `icu.StringSearch`     |    79 MB/s |
+| `stringzilla.utf8_uncased_matches`, Vietnamese |  4.2 GB/s |   96.1× | `icu.StringSearch`     |  43.7 MB/s |
+| `stringzilla.utf8_norm`, Arabic                |  510 MB/s |   0.94× | `icu.Normalizer2`      |   540 MB/s |
+| `stringzilla.utf8_norm`, Armenian              |  500 MB/s |   0.93× | `icu.Normalizer2`      |   540 MB/s |
+| `stringzilla.utf8_norm`, Bengali               |  300 MB/s |   0.77× | `icu.Normalizer2`      |   390 MB/s |
+| `stringzilla.utf8_norm`, Chinese               |  580 MB/s |   0.64× | `icu.Normalizer2`      |   900 MB/s |
+| `stringzilla.utf8_norm`, Czech                 |  2.5 GB/s |   2.60× | `icu.Normalizer2`      |   960 MB/s |
+| `stringzilla.utf8_norm`, Dutch                 |  2.9 GB/s |   3.33× | `icu.Normalizer2`      |   870 MB/s |
+| `stringzilla.utf8_norm`, English               |  2.6 GB/s |   2.89× | `icu.Normalizer2`      |   900 MB/s |
+| `stringzilla.utf8_norm`, Farsi                 |  470 MB/s |   0.84× | `icu.Normalizer2`      |   560 MB/s |
+| `stringzilla.utf8_norm`, French                |  2.1 GB/s |   2.36× | `icu.Normalizer2`      |   890 MB/s |
+| `stringzilla.utf8_norm`, Georgian              |  540 MB/s |   0.68× | `icu.Normalizer2`      |   800 MB/s |
+| `stringzilla.utf8_norm`, German                |  2.2 GB/s |   2.53× | `icu.Normalizer2`      |   870 MB/s |
+| `stringzilla.utf8_norm`, Greek                 |  500 MB/s |   0.93× | `icu.Normalizer2`      |   540 MB/s |
+| `stringzilla.utf8_norm`, Hebrew                |  480 MB/s |   0.92× | `icu.Normalizer2`      |   520 MB/s |
+| `stringzilla.utf8_norm`, Hindi                 |  490 MB/s |   0.78× | `icu.Normalizer2`      |   630 MB/s |
+| `stringzilla.utf8_norm`, Italian               |  2.6 GB/s |   2.99× | `icu.Normalizer2`      |   870 MB/s |
+| `stringzilla.utf8_norm`, Japanese              |  550 MB/s |   0.60× | `icu.Normalizer2`      |   910 MB/s |
+| `stringzilla.utf8_norm`, Korean                |  450 MB/s |   0.65× | `icu.Normalizer2`      |   690 MB/s |
+| `stringzilla.utf8_norm`, Lithuanian            |  1.6 GB/s |   1.80× | `icu.Normalizer2`      |   890 MB/s |
+| `stringzilla.utf8_norm`, Polish                |  2.1 GB/s |   2.33× | `icu.Normalizer2`      |   900 MB/s |
+| `stringzilla.utf8_norm`, Portuguese            |  2.5 GB/s |   2.81× | `icu.Normalizer2`      |   890 MB/s |
+| `stringzilla.utf8_norm`, Russian               |  1.9 GB/s |   3.58× | `icu.Normalizer2`      |   530 MB/s |
+| `stringzilla.utf8_norm`, Spanish               |  2.5 GB/s |   2.81× | `icu.Normalizer2`      |   890 MB/s |
+| `stringzilla.utf8_norm`, Tamil                 |  430 MB/s |   0.98× | `icu.Normalizer2`      |   440 MB/s |
+| `stringzilla.utf8_norm`, Turkish               |  2.2 GB/s |   2.34× | `icu.Normalizer2`      |   940 MB/s |
+| `stringzilla.utf8_norm`, Ukrainian             |  1.3 GB/s |   2.28× | `icu.Normalizer2`      |   570 MB/s |
+| `stringzilla.utf8_norm`, Vietnamese            |  450 MB/s |   0.76× | `icu.Normalizer2`      |   590 MB/s |
+
+> Measured October 15, 2026.
+
+## AMD Zen5 Turin
+
+### Rust
+
+| StringZilla                                  |      Speed | Speedup | Alternative |  Speed |
+| :------------------------------------------- | ---------: | ------: | :---------- | -----: |
+| `stringzilla::utf8_uncased_fold`, Arabic     | 957.5 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Armenian   |   866 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Bengali    |  5.75 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Chinese    |  1.13 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Czech      |   789 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Dutch      |  4.41 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, English    |  7.01 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Farsi      |   818 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, French     |  1.71 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Georgian   |   183 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, German     |  2.41 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Greek      | 0.931 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Hebrew     | 0.941 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Italian    |  2.13 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Japanese   |  3.27 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Korean     |   821 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Lithuanian |   824 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Polish     |   896 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Portuguese |  2.22 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Russian    |  2.05 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Spanish    |  2.22 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Tamil      |  5.63 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Turkish    |   813 MB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Ukrainian  |  1.95 GB/s |       – | –           |      – |
+| `stringzilla::utf8_uncased_fold`, Vietnamese |   336 MB/s |       – | –           |      – |
+
+### Python
+
+| StringZilla                                 |      Speed | Speedup | Alternative |  Speed |
+| :------------------------------------------ | ---------: | ------: | :---------- | -----: |
+| `stringzilla.utf8_uncased_fold`, Arabic     |  1.68 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Armenian   |   711 MB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Bengali    |  2.71 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Chinese    |   845 MB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Czech      |   656 MB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Dutch      |  2.77 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, English    |  2.92 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Farsi      |  1.32 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, French     |  1.28 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Georgian   |   465 MB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, German     |  1.69 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Greek      |   743 MB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Hebrew     |  1.73 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Italian    |  1.80 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Japanese   |  1.86 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Korean     |  2.61 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Lithuanian |   694 MB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Polish     |   750 MB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Portuguese |  1.67 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Russian    |  1.45 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Spanish    |  1.68 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Tamil      |  2.82 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Turkish    |   673 MB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Ukrainian  |  1.47 GB/s |       – | –           |      – |
+| `stringzilla.utf8_uncased_fold`, Vietnamese |   278 MB/s |       – | –           |      – |
+
+## Apple M5 Pro
+
+### Rust
+
+Also benchmarked: `std::to_lowercase`, `pcre2::no-jit`, `pcre2::jit-on-fly`, `pcre2::pre-jit`, `unicode-normalization::nfc`.
+
+| StringZilla                                          |      Speed | Speedup | Alternative                |      Speed |
+| :--------------------------------------------------- | ---------: | ------: | :------------------------- | ---------: |
+| `stringzilla::utf8_uncased_fold`, Arabic             |  2.20 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Armenian           |   902 MB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Bengali            |  6.29 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Chinese            |   515 MB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Czech              |  1.30 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Dutch              | 14.64 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, English            | 14.88 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Farsi              |  2.47 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, French             |  1.33 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Georgian           |   774 MB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, German             |  2.19 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Greek              |  1.62 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Hebrew             |  2.65 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Hindi              |  6.83 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Italian            |  3.89 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Japanese           |  1.68 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Korean             |  1.73 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Polish             |  1.29 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Portuguese         |  1.69 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Russian            |  1.04 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Spanish            |  1.91 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Tamil              |  5.84 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Turkish            |  1.18 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Ukrainian          |  1.05 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_fold`, Vietnamese         |  1.34 GB/s |       – | –                          |          – |
+| `stringzilla::utf8_uncased_search`, Arabic           | 10.44 GB/s |   37.0× | `memchr::Finder<icu-fold>` |   282 MB/s |
+| `stringzilla::utf8_uncased_search`, Armenian         |  1.07 GB/s |   3.69× | `memchr::Finder<icu-fold>` |   290 MB/s |
+| `stringzilla::utf8_uncased_search`, Bengali          | 22.68 GB/s |   51.3× | `memchr::Finder<icu-fold>` |   442 MB/s |
+| `stringzilla::utf8_uncased_search`, Chinese          | 11.64 GB/s |   29.2× | `memchr::Finder<icu-fold>` |   398 MB/s |
+| `stringzilla::utf8_uncased_search`, Czech            |  4.07 GB/s |   25.6× | `memchr::Finder<icu-fold>` |   159 MB/s |
+| `stringzilla::utf8_uncased_search`, Dutch            |  5.31 GB/s |   32.6× | `memchr::Finder<icu-fold>` |   163 MB/s |
+| `stringzilla::utf8_uncased_search`, English          |  6.43 GB/s |   42.9× | `memchr::Finder<icu-fold>` |   150 MB/s |
+| `stringzilla::utf8_uncased_search`, Farsi            | 20.96 GB/s |   65.9× | `memchr::Finder<icu-fold>` |   318 MB/s |
+| `stringzilla::utf8_uncased_search`, French           |  6.58 GB/s |   42.4× | `memchr::Finder<icu-fold>` |   155 MB/s |
+| `stringzilla::utf8_uncased_search`, Georgian         |  3.32 GB/s |   11.6× | `memchr::Finder<icu-fold>` |   287 MB/s |
+| `stringzilla::utf8_uncased_search`, German           |  7.00 GB/s |   45.2× | `memchr::Finder<icu-fold>` |   155 MB/s |
+| `stringzilla::utf8_uncased_search`, Greek            |  1.61 GB/s |   8.26× | `memchr::Finder<icu-fold>` |   195 MB/s |
+| `stringzilla::utf8_uncased_search`, Hebrew           | 15.77 GB/s |   59.1× | `memchr::Finder<icu-fold>` |   267 MB/s |
+| `stringzilla::utf8_uncased_search`, Hindi            | 14.94 GB/s |   35.2× | `memchr::Finder<icu-fold>` |   425 MB/s |
+| `stringzilla::utf8_uncased_search`, Italian          |  5.23 GB/s |   34.0× | `memchr::Finder<icu-fold>` |   154 MB/s |
+| `stringzilla::utf8_uncased_search`, Japanese         | 10.27 GB/s |   25.5× | `memchr::Finder<icu-fold>` |   402 MB/s |
+| `stringzilla::utf8_uncased_search`, Korean           | 28.14 GB/s |   91.4× | `memchr::Finder<icu-fold>` |   308 MB/s |
+| `stringzilla::utf8_uncased_search`, Polish           |  4.76 GB/s |   31.3× | `memchr::Finder<icu-fold>` |   152 MB/s |
+| `stringzilla::utf8_uncased_search`, Portuguese       |  4.33 GB/s |   27.4× | `memchr::Finder<icu-fold>` |   158 MB/s |
+| `stringzilla::utf8_uncased_search`, Russian          |  3.53 GB/s |   16.2× | `memchr::Finder<icu-fold>` |   218 MB/s |
+| `stringzilla::utf8_uncased_search`, Spanish          |  4.94 GB/s |   32.1× | `memchr::Finder<icu-fold>` |   154 MB/s |
+| `stringzilla::utf8_uncased_search`, Tamil            | 18.47 GB/s |   48.5× | `memchr::Finder<icu-fold>` |   381 MB/s |
+| `stringzilla::utf8_uncased_search`, Turkish          |  2.55 GB/s |   17.2× | `memchr::Finder<icu-fold>` |   148 MB/s |
+| `stringzilla::utf8_uncased_search`, Ukrainian        |  2.47 GB/s |   10.6× | `memchr::Finder<icu-fold>` |   234 MB/s |
+| `stringzilla::utf8_uncased_search`, Vietnamese       |  1.85 GB/s |   10.5× | `memchr::Finder<icu-fold>` |   176 MB/s |
+| `stringzilla::utf8_norm`, Arabic                     |  1.09 GB/s |   2.26× | `icu::ComposingNormalizer` |   483 MB/s |
+| `stringzilla::utf8_norm`, Armenian                   |  1.04 GB/s |   2.15× | `icu::ComposingNormalizer` |   484 MB/s |
+| `stringzilla::utf8_norm`, Bengali                    |   404 MB/s |   1.13× | `icu::ComposingNormalizer` |   357 MB/s |
+| `stringzilla::utf8_norm`, Chinese                    |  1.08 GB/s |   1.50× | `icu::ComposingNormalizer` |   722 MB/s |
+| `stringzilla::utf8_norm`, Czech                      | 14.33 GB/s |   3.98× | `icu::ComposingNormalizer` |  3.60 GB/s |
+| `stringzilla::utf8_norm`, Dutch                      | 35.89 GB/s |   9.62× | `icu::ComposingNormalizer` |  3.73 GB/s |
+| `stringzilla::utf8_norm`, English                    | 20.48 GB/s |   5.75× | `icu::ComposingNormalizer` |  3.56 GB/s |
+| `stringzilla::utf8_norm`, Farsi                      | 0.987 GB/s |   2.04× | `icu::ComposingNormalizer` |   484 MB/s |
+| `stringzilla::utf8_norm`, French                     | 12.66 GB/s |   3.67× | `icu::ComposingNormalizer` |  3.45 GB/s |
+| `stringzilla::utf8_norm`, Georgian                   | 0.978 GB/s |   1.50× | `icu::ComposingNormalizer` |   653 MB/s |
+| `stringzilla::utf8_norm`, German                     | 15.45 GB/s |   4.40× | `icu::ComposingNormalizer` |  3.51 GB/s |
+| `stringzilla::utf8_norm`, Greek                      |  1.19 GB/s |   2.34× | `icu::ComposingNormalizer` |   509 MB/s |
+| `stringzilla::utf8_norm`, Hebrew                     |  1.02 GB/s |   2.10× | `icu::ComposingNormalizer` |   485 MB/s |
+| `stringzilla::utf8_norm`, Hindi                      |   731 MB/s |   1.53× | `icu::ComposingNormalizer` |   479 MB/s |
+| `stringzilla::utf8_norm`, Italian                    | 27.25 GB/s |   7.35× | `icu::ComposingNormalizer` |  3.71 GB/s |
+| `stringzilla::utf8_norm`, Japanese                   | 0.950 GB/s |   1.36× | `icu::ComposingNormalizer` |   700 MB/s |
+| `stringzilla::utf8_norm`, Korean                     |   824 MB/s |   1.45× | `icu::ComposingNormalizer` |   570 MB/s |
+| `stringzilla::utf8_norm`, Polish                     | 11.00 GB/s |   3.21× | `icu::ComposingNormalizer` |  3.43 GB/s |
+| `stringzilla::utf8_norm`, Portuguese                 | 18.71 GB/s |   5.04× | `icu::ComposingNormalizer` |  3.71 GB/s |
+| `stringzilla::utf8_norm`, Russian                    | 10.78 GB/s |   22.3× | `icu::ComposingNormalizer` |   484 MB/s |
+| `stringzilla::utf8_norm`, Spanish                    | 20.19 GB/s |   5.43× | `icu::ComposingNormalizer` |  3.72 GB/s |
+| `stringzilla::utf8_norm`, Tamil                      |   526 MB/s |   1.50× | `icu::ComposingNormalizer` |   350 MB/s |
+| `stringzilla::utf8_norm`, Turkish                    | 12.65 GB/s |   3.61× | `icu::ComposingNormalizer` |  3.50 GB/s |
+| `stringzilla::utf8_norm`, Ukrainian                  |  5.82 GB/s |   11.3× | `icu::ComposingNormalizer` |   515 MB/s |
+| `stringzilla::utf8_norm`, Vietnamese                 |   821 MB/s |   0.59× | `icu::ComposingNormalizer` |  1.40 GB/s |
 
 > Measured July 29, 2026.
+
+### Python
+
+Also benchmarked: `str.casefold`, `regex`, `casefold.find`, `unicodedata.normalize`, `pyunormalize`.
+
+| StringZilla                                         |      Speed | Speedup | Alternative               |      Speed |
+| :-------------------------------------------------- | ---------: | ------: | :------------------------ | ---------: |
+| `stringzilla.utf8_uncased_fold`, Arabic             |  2.17 GB/s |   5.00× | `icu.CaseMap.foldCase`    |   434 MB/s |
+| `stringzilla.utf8_uncased_fold`, Armenian           |   871 MB/s |   2.04× | `icu.CaseMap.foldCase`    |   426 MB/s |
+| `stringzilla.utf8_uncased_fold`, Bengali            |  6.21 GB/s |   4.70× | `icu.CaseMap.foldCase`    |  1.32 GB/s |
+| `stringzilla.utf8_uncased_fold`, Chinese            |   573 MB/s |   0.86× | `icu.CaseMap.foldCase`    |   668 MB/s |
+| `stringzilla.utf8_uncased_fold`, Czech              |  1.27 GB/s |   2.37× | `icu.CaseMap.foldCase`    |   535 MB/s |
+| `stringzilla.utf8_uncased_fold`, Dutch              | 14.21 GB/s |   29.7× | `icu.CaseMap.foldCase`    |   478 MB/s |
+| `stringzilla.utf8_uncased_fold`, English            | 14.85 GB/s |   34.9× | `icu.CaseMap.foldCase`    |   426 MB/s |
+| `stringzilla.utf8_uncased_fold`, Farsi              |  2.52 GB/s |   4.96× | `icu.CaseMap.foldCase`    |   508 MB/s |
+| `stringzilla.utf8_uncased_fold`, French             |  1.29 GB/s |   2.66× | `icu.CaseMap.foldCase`    |   485 MB/s |
+| `stringzilla.utf8_uncased_fold`, Georgian           |   714 MB/s |   1.82× | `icu.CaseMap.foldCase`    |   392 MB/s |
+| `stringzilla.utf8_uncased_fold`, German             |  2.10 GB/s |   5.80× | `icu.CaseMap.foldCase`    |   362 MB/s |
+| `stringzilla.utf8_uncased_fold`, Greek              |  1.46 GB/s |   7.45× | `icu.CaseMap.foldCase`    |   196 MB/s |
+| `stringzilla.utf8_uncased_fold`, Hebrew             |  2.65 GB/s |   6.78× | `icu.CaseMap.foldCase`    |   391 MB/s |
+| `stringzilla.utf8_uncased_fold`, Hindi              |  6.74 GB/s |   5.76× | `icu.CaseMap.foldCase`    |  1.17 GB/s |
+| `stringzilla.utf8_uncased_fold`, Italian            |  3.79 GB/s |   7.90× | `icu.CaseMap.foldCase`    |   480 MB/s |
+| `stringzilla.utf8_uncased_fold`, Japanese           |  1.79 GB/s |   2.39× | `icu.CaseMap.foldCase`    |   749 MB/s |
+| `stringzilla.utf8_uncased_fold`, Korean             |  1.63 GB/s |   1.55× | `icu.CaseMap.foldCase`    |  1.05 GB/s |
+| `stringzilla.utf8_uncased_fold`, Polish             |  1.25 GB/s |   2.65× | `icu.CaseMap.foldCase`    |   472 MB/s |
+| `stringzilla.utf8_uncased_fold`, Portuguese         |  1.62 GB/s |   3.49× | `icu.CaseMap.foldCase`    |   464 MB/s |
+| `stringzilla.utf8_uncased_fold`, Russian            | 0.950 GB/s |   3.74× | `icu.CaseMap.foldCase`    |   254 MB/s |
+| `stringzilla.utf8_uncased_fold`, Spanish            |  1.81 GB/s |   3.83× | `icu.CaseMap.foldCase`    |   472 MB/s |
+| `stringzilla.utf8_uncased_fold`, Tamil              |  5.81 GB/s |   8.18× | `icu.CaseMap.foldCase`    |   710 MB/s |
+| `stringzilla.utf8_uncased_fold`, Turkish            |  1.15 GB/s |   2.42× | `icu.CaseMap.foldCase`    |   476 MB/s |
+| `stringzilla.utf8_uncased_fold`, Ukrainian          | 0.969 GB/s |   3.35× | `icu.CaseMap.foldCase`    |   289 MB/s |
+| `stringzilla.utf8_uncased_fold`, Vietnamese         |  1.29 GB/s |   3.40× | `icu.CaseMap.foldCase`    |   379 MB/s |
+| `stringzilla.utf8_uncased_matches`, Arabic          | 10.41 GB/s |   82.6× | `icu.StringSearch`        |   126 MB/s |
+| `stringzilla.utf8_uncased_matches`, Armenian        |  1.01 GB/s |   5.94× | `icu.StringSearch`        |   170 MB/s |
+| `stringzilla.utf8_uncased_matches`, Bengali         | 27.87 GB/s |    124× | `icu.StringSearch`        |   224 MB/s |
+| `stringzilla.utf8_uncased_matches`, Chinese         | 13.88 GB/s |    104× | `icu.StringSearch`        |   134 MB/s |
+| `stringzilla.utf8_uncased_matches`, Czech           |  2.70 GB/s |   27.7× | `icu.StringSearch`        |  97.3 MB/s |
+| `stringzilla.utf8_uncased_matches`, Dutch           |  4.86 GB/s |   45.0× | `icu.StringSearch`        |   108 MB/s |
+| `stringzilla.utf8_uncased_matches`, English         |  5.68 GB/s |   61.1× | `icu.StringSearch`        |    93 MB/s |
+| `stringzilla.utf8_uncased_matches`, Farsi           | 13.76 GB/s |   98.3× | `icu.StringSearch`        |   140 MB/s |
+| `stringzilla.utf8_uncased_matches`, French          |  4.00 GB/s |   40.0× | `icu.StringSearch`        |   100 MB/s |
+| `stringzilla.utf8_uncased_matches`, Georgian        |  2.82 GB/s |   11.0× | `icu.StringSearch`        |   257 MB/s |
+| `stringzilla.utf8_uncased_matches`, German          |  5.32 GB/s |   54.2× | `icu.StringSearch`        |  98.2 MB/s |
+| `stringzilla.utf8_uncased_matches`, Greek           |  1.89 GB/s |   13.1× | `icu.StringSearch`        |   144 MB/s |
+| `stringzilla.utf8_uncased_matches`, Hebrew          | 10.10 GB/s |   62.0× | `icu.StringSearch`        |   163 MB/s |
+| `stringzilla.utf8_uncased_matches`, Hindi           | 12.59 GB/s |   48.8× | `icu.StringSearch`        |   258 MB/s |
+| `stringzilla.utf8_uncased_matches`, Italian         |  6.04 GB/s |   58.1× | `icu.StringSearch`        |   104 MB/s |
+| `stringzilla.utf8_uncased_matches`, Japanese        |  8.97 GB/s |   57.5× | `icu.StringSearch`        |   156 MB/s |
+| `stringzilla.utf8_uncased_matches`, Korean          | 27.99 GB/s |    304× | `icu.StringSearch`        |    92 MB/s |
+| `stringzilla.utf8_uncased_matches`, Polish          |  4.27 GB/s |   42.7× | `icu.StringSearch`        |   100 MB/s |
+| `stringzilla.utf8_uncased_matches`, Portuguese      |  5.08 GB/s |   49.3× | `icu.StringSearch`        |   103 MB/s |
+| `stringzilla.utf8_uncased_matches`, Russian         |  2.62 GB/s |   15.9× | `icu.StringSearch`        |   165 MB/s |
+| `stringzilla.utf8_uncased_matches`, Spanish         |  4.57 GB/s |   45.7× | `icu.StringSearch`        |   100 MB/s |
+| `stringzilla.utf8_uncased_matches`, Tamil           | 19.79 GB/s |   74.7× | `icu.StringSearch`        |   265 MB/s |
+| `stringzilla.utf8_uncased_matches`, Turkish         |  2.78 GB/s |   26.2× | `icu.StringSearch`        |   106 MB/s |
+| `stringzilla.utf8_uncased_matches`, Ukrainian       |  3.00 GB/s |   17.9× | `icu.StringSearch`        |   168 MB/s |
+| `stringzilla.utf8_uncased_matches`, Vietnamese      |  1.81 GB/s |   20.1× | `icu.StringSearch`        |    90 MB/s |
+| `stringzilla.utf8_norm`, Arabic                     |  1.13 GB/s |   1.21× | `icu.Normalizer2`         | 0.931 GB/s |
+| `stringzilla.utf8_norm`, Armenian                   |  1.07 GB/s |   1.12× | `icu.Normalizer2`         | 0.959 GB/s |
+| `stringzilla.utf8_norm`, Bengali                    |   387 MB/s |   0.49× | `icu.Normalizer2`         |   791 MB/s |
+| `stringzilla.utf8_norm`, Chinese                    |  1.09 GB/s |   0.69× | `icu.Normalizer2`         |  1.57 GB/s |
+| `stringzilla.utf8_norm`, Czech                      | 11.57 GB/s |   11.9× | `icu.Normalizer2`         | 0.969 GB/s |
+| `stringzilla.utf8_norm`, Dutch                      | 21.23 GB/s |   23.6× | `icu.Normalizer2`         |   899 MB/s |
+| `stringzilla.utf8_norm`, English                    | 14.92 GB/s |   16.7× | `icu.Normalizer2`         |   891 MB/s |
+| `stringzilla.utf8_norm`, Farsi                      | 0.997 GB/s |   1.00× | `icu.Normalizer2`         | 0.997 GB/s |
+| `stringzilla.utf8_norm`, French                     | 9.993 GB/s |   10.8× | `icu.Normalizer2`         |   924 MB/s |
+| `stringzilla.utf8_norm`, Georgian                   | 0.987 GB/s |   0.68× | `icu.Normalizer2`         |  1.46 GB/s |
+| `stringzilla.utf8_norm`, German                     | 11.90 GB/s |   13.2× | `icu.Normalizer2`         |   901 MB/s |
+| `stringzilla.utf8_norm`, Greek                      |  1.18 GB/s |   1.25× | `icu.Normalizer2`         | 0.941 GB/s |
+| `stringzilla.utf8_norm`, Hebrew                     |  1.03 GB/s |   1.11× | `icu.Normalizer2`         |   925 MB/s |
+| `stringzilla.utf8_norm`, Hindi                      |   726 MB/s |   0.52× | `icu.Normalizer2`         |  1.40 GB/s |
+| `stringzilla.utf8_norm`, Italian                    | 18.81 GB/s |   20.7× | `icu.Normalizer2`         |   909 MB/s |
+| `stringzilla.utf8_norm`, Japanese                   | 0.969 GB/s |   0.60× | `icu.Normalizer2`         |  1.61 GB/s |
+| `stringzilla.utf8_norm`, Korean                     |   758 MB/s |   0.58× | `icu.Normalizer2`         |  1.31 GB/s |
+| `stringzilla.utf8_norm`, Polish                     | 9.360 GB/s |   10.0× | `icu.Normalizer2`         |   934 MB/s |
+| `stringzilla.utf8_norm`, Portuguese                 | 13.26 GB/s |   14.4× | `icu.Normalizer2`         |   920 MB/s |
+| `stringzilla.utf8_norm`, Russian                    |  9.15 GB/s |   9.54× | `icu.Normalizer2`         | 0.959 GB/s |
+| `stringzilla.utf8_norm`, Spanish                    | 13.90 GB/s |   15.0× | `icu.Normalizer2`         |   926 MB/s |
+| `stringzilla.utf8_norm`, Tamil                      |   508 MB/s |   0.55× | `icu.Normalizer2`         |   923 MB/s |
+| `stringzilla.utf8_norm`, Turkish                    | 9.937 GB/s |   10.5× | `icu.Normalizer2`         | 0.950 GB/s |
+| `stringzilla.utf8_norm`, Ukrainian                  |  5.27 GB/s |   5.29× | `icu.Normalizer2`         | 0.997 GB/s |
+| `stringzilla.utf8_norm`, Vietnamese                 |   779 MB/s |   0.89× | `icu.Normalizer2`         |   874 MB/s |
+
+> Measured July 29, 2026.
+
+## Reproducing
 
 To rerun the benchmarks for all languages:
 
@@ -117,73 +442,6 @@ for f in leipzig*.txt; do
 done
 ```
 
-## Case-Insensitive Substring Search
-
-### Intel Xeon4 Sapphire Rapids
-
-| Language      | Standard 🦀 | StringZilla 🦀 |        | Standard 🐍 | StringZilla 🐍 |      |
-| ------------- | ----------: | -------------: | -----: | ----------: | -------------: | ---: |
-| Arabic 🇸🇦     |   98.2 MB/s |      6.74 GB/s |  70.3x |   2.80 GB/s |     13.76 GB/s | 4.9x |
-| Armenian 🇦🇲   |    129 MB/s |       259 MB/s |   2.0x |   1.93 GB/s |       820 MB/s | 0.4x |
-| Bengali 🇧🇩    |    182 MB/s |      6.49 GB/s |  36.5x |   4.20 GB/s |     19.73 GB/s | 4.7x |
-| Chinese 🇨🇳    |   99.2 MB/s |      8.12 GB/s |  83.8x |   5.03 GB/s |     12.98 GB/s | 2.6x |
-| Czech 🇨🇿      |     38 MB/s |      4.96 GB/s | 133.2x |   1.29 GB/s |      5.92 GB/s | 4.6x |
-| Dutch 🇳🇱      |     39 MB/s |      4.03 GB/s | 105.6x |    820 MB/s |      7.44 GB/s | 9.3x |
-| English 🇬🇧    |     41 MB/s |      4.57 GB/s | 114.2x |    734 MB/s |      5.22 GB/s | 7.3x |
-| Farsi 🇮🇷      |    121 MB/s |      6.17 GB/s |  52.2x |   2.20 GB/s |     9.965 GB/s | 4.5x |
-| French 🇫🇷     |     59 MB/s |      4.99 GB/s |  86.5x |   1.02 GB/s |      6.36 GB/s | 6.2x |
-| Georgian 🇬🇪   |    181 MB/s |     0.959 GB/s |   5.4x |   2.98 GB/s |       591 MB/s | 0.2x |
-| German 🇩🇪     |     45 MB/s |      4.16 GB/s |  95.1x |    858 MB/s |      5.66 GB/s | 6.8x |
-| Greek 🇬🇷      |     53 MB/s |      1.55 GB/s |  29.6x |   1.29 GB/s |      2.31 GB/s | 1.8x |
-| Hebrew 🇮🇱     |     73 MB/s |      6.39 GB/s |  89.1x |   2.72 GB/s |     14.64 GB/s | 5.4x |
-| Hindi 🇮🇳      |           — |              — |      — |           — |              — |    — |
-| Italian 🇮🇹    |     59 MB/s |      4.68 GB/s |  81.1x |    925 MB/s |      8.26 GB/s | 9.1x |
-| Japanese 🇯🇵   |    101 MB/s |      8.76 GB/s |  88.8x |   4.54 GB/s |     12.27 GB/s | 2.7x |
-| Korean 🇰🇷     |    147 MB/s |      9.26 GB/s |  64.5x |   4.27 GB/s |     18.67 GB/s | 4.4x |
-| Polish 🇵🇱     |     40 MB/s |      4.13 GB/s | 105.5x |   1.20 GB/s |      7.47 GB/s | 6.2x |
-| Portuguese 🇧🇷 |     39 MB/s |      4.59 GB/s | 120.2x |   1.02 GB/s |      7.56 GB/s | 7.4x |
-| Russian 🇷🇺    |     57 MB/s |      3.30 GB/s |  59.0x |   2.14 GB/s |      5.31 GB/s | 2.5x |
-| Spanish 🇪🇸    |     61 MB/s |      4.54 GB/s |  76.2x |  0.950 GB/s |      5.90 GB/s | 6.2x |
-| Tamil 🇮🇳      |    111 MB/s |      6.50 GB/s |  60.2x |   5.41 GB/s |     21.52 GB/s | 4.0x |
-| Turkish 🇹🇷    |     59 MB/s |      3.84 GB/s |  66.5x |   1.39 GB/s |      4.89 GB/s | 3.5x |
-| Ukrainian 🇺🇦  |     93 MB/s |      2.77 GB/s |  30.6x |   2.10 GB/s |      4.98 GB/s | 2.4x |
-| Vietnamese 🇻🇳 |     72 MB/s |      4.71 GB/s |  66.6x |  0.997 GB/s |      1.04 GB/s | 1.0x |
-
-> Measured June 17, 2026.
-> `Standard` is `pcre2::pre-jit` 🦀 / `regex.search<fullcase>` 🐍 — PCRE2/regex with full Unicode case folding, the fair baseline against StringZilla's own full case folding.
-
-### Apple M5 Pro
-
-| Language      | memchr+ICU 🦀 | pcre2 no-jit 🦀 | pcre2 jit-on-fly 🦀 | pcre2 pre-jit 🦀 | StringZilla 🦀 |         | casefold.find 🐍 |  PyICU 🐍 |   regex 🐍 | StringZilla 🐍 |      |
-| ------------- | ------------: | --------------: | ------------------: | ---------------: | -------------: | ------: | ---------------: | --------: | ---------: | -------------: | ---: |
-| Arabic 🇸🇦     |      282 MB/s |          9 MB/s |              9 MB/s |           9 MB/s |     10.44 GB/s | 1245.6x |         658 MB/s |  126 MB/s |  3.02 GB/s |     10.41 GB/s | 3.5x |
-| Armenian 🇦🇲   |      290 MB/s |         50 MB/s |             60 MB/s |          59 MB/s |      1.07 GB/s |   18.5x |         668 MB/s |  170 MB/s |  2.57 GB/s |      1.01 GB/s | 0.4x |
-| Bengali 🇧🇩    |      442 MB/s |         21 MB/s |             23 MB/s |          23 MB/s |     22.68 GB/s | 1014.6x |         913 MB/s |  224 MB/s |  4.85 GB/s |     27.87 GB/s | 5.7x |
-| Chinese 🇨🇳    |      398 MB/s |        9.5 MB/s |            9.5 MB/s |         9.5 MB/s |     11.64 GB/s | 1250.0x |        1.11 GB/s |  134 MB/s |  5.16 GB/s |     13.88 GB/s | 2.7x |
-| Czech 🇨🇿      |      159 MB/s |         23 MB/s |             24 MB/s |          24 MB/s |      4.07 GB/s |  174.8x |         389 MB/s | 97.3 MB/s |  1.56 GB/s |      2.70 GB/s | 1.7x |
-| Dutch 🇳🇱      |      163 MB/s |          9 MB/s |              9 MB/s |           9 MB/s |      5.31 GB/s |  633.3x |         325 MB/s |  108 MB/s |  1.08 GB/s |      4.86 GB/s | 4.5x |
-| English 🇬🇧    |      150 MB/s |         18 MB/s |             18 MB/s |          18 MB/s |      6.43 GB/s |  363.2x |         374 MB/s |   93 MB/s |  1.12 GB/s |      5.68 GB/s | 5.1x |
-| Farsi 🇮🇷      |      318 MB/s |          8 MB/s |              8 MB/s |           8 MB/s |     20.96 GB/s | 2813.8x |         564 MB/s |  140 MB/s |  2.52 GB/s |     13.76 GB/s | 5.5x |
-| French 🇫🇷     |      155 MB/s |         28 MB/s |             29 MB/s |          29 MB/s |      6.58 GB/s |  235.3x |         352 MB/s |  100 MB/s |  1.04 GB/s |      4.00 GB/s | 3.8x |
-| Georgian 🇬🇪   |      287 MB/s |       99.2 MB/s |            131 MB/s |         131 MB/s |      3.32 GB/s |   26.0x |         857 MB/s |  257 MB/s |  3.08 GB/s |      2.82 GB/s | 0.9x |
-| German 🇩🇪     |      155 MB/s |         14 MB/s |             15 MB/s |          15 MB/s |      7.00 GB/s |  470.0x |         398 MB/s | 98.2 MB/s | 0.950 GB/s |      5.32 GB/s | 5.6x |
-| Greek 🇬🇷      |      195 MB/s |         40 MB/s |             46 MB/s |          45 MB/s |      1.61 GB/s |   36.8x |         528 MB/s |  144 MB/s |  2.34 GB/s |      1.89 GB/s | 0.8x |
-| Hebrew 🇮🇱     |      267 MB/s |         23 MB/s |             25 MB/s |          26 MB/s |     15.77 GB/s |  627.0x |         597 MB/s |  163 MB/s |  2.83 GB/s |     10.10 GB/s | 3.6x |
-| Hindi 🇮🇳      |      425 MB/s |          7 MB/s |              7 MB/s |           7 MB/s |     14.94 GB/s | 2291.4x |       0.997 GB/s |  258 MB/s |  4.58 GB/s |     12.59 GB/s | 2.7x |
-| Italian 🇮🇹    |      154 MB/s |         41 MB/s |             42 MB/s |          43 MB/s |      5.23 GB/s |  124.9x |         419 MB/s |  104 MB/s |  1.04 GB/s |      6.04 GB/s | 5.8x |
-| Japanese 🇯🇵   |      402 MB/s |         11 MB/s |             11 MB/s |          11 MB/s |     10.27 GB/s |  919.2x |        1.17 GB/s |  156 MB/s | 9.472 GB/s |      8.97 GB/s | 0.9x |
-| Korean 🇰🇷     |      308 MB/s |         75 MB/s |             93 MB/s |          93 MB/s |     28.14 GB/s |  308.3x |         813 MB/s |   92 MB/s |  5.05 GB/s |     27.99 GB/s | 5.5x |
-| Polish 🇵🇱     |      152 MB/s |         60 MB/s |             64 MB/s |          63 MB/s |      4.76 GB/s |   77.4x |         364 MB/s |  100 MB/s |  1.20 GB/s |      4.27 GB/s | 3.6x |
-| Portuguese 🇧🇷 |      158 MB/s |         44 MB/s |             46 MB/s |          46 MB/s |      4.33 GB/s |   96.9x |         338 MB/s |  103 MB/s |  1.26 GB/s |      5.08 GB/s | 4.0x |
-| Russian 🇷🇺    |      218 MB/s |         51 MB/s |             61 MB/s |          61 MB/s |      3.53 GB/s |   59.2x |         714 MB/s |  165 MB/s |  2.72 GB/s |      2.62 GB/s | 1.0x |
-| Spanish 🇪🇸    |      154 MB/s |         19 MB/s |             20 MB/s |          20 MB/s |      4.94 GB/s |  252.4x |         340 MB/s |  100 MB/s |  1.07 GB/s |      4.57 GB/s | 4.3x |
-| Tamil 🇮🇳      |      381 MB/s |         50 MB/s |             57 MB/s |          58 MB/s |     18.47 GB/s |  325.1x |       0.997 GB/s |  265 MB/s |  4.92 GB/s |     19.79 GB/s | 4.0x |
-| Turkish 🇹🇷    |      148 MB/s |         13 MB/s |             13 MB/s |          13 MB/s |      2.55 GB/s |  195.7x |         374 MB/s |  106 MB/s |  1.54 GB/s |      2.78 GB/s | 1.8x |
-| Ukrainian 🇺🇦  |      234 MB/s |         16 MB/s |             17 MB/s |          17 MB/s |      2.47 GB/s |  147.2x |         582 MB/s |  168 MB/s |  2.70 GB/s |      3.00 GB/s | 1.1x |
-| Vietnamese 🇻🇳 |      176 MB/s |          4 MB/s |              4 MB/s |           4 MB/s |      1.85 GB/s |  497.5x |         422 MB/s |   90 MB/s |  1.43 GB/s |      1.81 GB/s | 1.3x |
-
-> Measured July 29, 2026.
-
 To rerun the benchmarks for all languages:
 
 ```bash
@@ -193,44 +451,6 @@ for f in leipzig*.txt; do
   STRINGWARS_DATASET="$f" STRINGWARS_TOKENS=file STRINGWARS_FILTER="case-insensitive-find" "$bin"
 done
 ```
-
-## Unicode Normalization
-
-Normalizing each Leipzig corpus into NFC, single-threaded.
-Rust compares `stringzilla::utf8_norm` against the `unicode-normalization` crate and ICU4X's `ComposingNormalizer`; Python compares `stringzilla.utf8_norm` against `unicodedata.normalize`, PyICU's `Normalizer2`, and [`pyunormalize`](https://github.com/mlodel/pyunormalize) — a pure-Python UAX #15 implementation that ships its own Unicode tables, included as the reference for what the algorithm costs with no native code behind it.
-NFD/NFKC/NFKD were measured too and follow the same ordering; only NFC is tabulated here.
-
-### Apple M5 Pro
-
-| Language      | unicode-norm 🦀 |      ICU4X 🦀 | StringZilla 🦀 | unicodedata 🐍 |       PyICU 🐍 | pyunormalize 🐍 | StringZilla 🐍 |
-| ------------- | --------------: | ------------: | -------------: | -------------: | -------------: | --------------: | -------------: |
-| Arabic 🇸🇦     |        153 MB/s |      483 MB/s |  __1.09 GB/s__ |  __2.37 GB/s__ |     0.931 GB/s |               — |      1.13 GB/s |
-| Armenian 🇦🇲   |        169 MB/s |      484 MB/s |  __1.04 GB/s__ |        80 MB/s |     0.959 GB/s |               — |  __1.07 GB/s__ |
-| Bengali 🇧🇩    |        229 MB/s |      357 MB/s |   __404 MB/s__ |        93 MB/s |   __791 MB/s__ |               — |       387 MB/s |
-| Chinese 🇨🇳    |        250 MB/s |      722 MB/s |  __1.08 GB/s__ |  __3.95 GB/s__ |      1.57 GB/s |         73 MB/s |      1.09 GB/s |
-| Czech 🇨🇿      |        118 MB/s |     3.60 GB/s | __14.33 GB/s__ |      1.81 GB/s |     0.969 GB/s |         52 MB/s | __11.57 GB/s__ |
-| Dutch 🇳🇱      |        132 MB/s |     3.73 GB/s | __35.89 GB/s__ |      1.67 GB/s |       899 MB/s |         50 MB/s | __21.23 GB/s__ |
-| English 🇬🇧    |        128 MB/s |     3.56 GB/s | __20.48 GB/s__ |      1.74 GB/s |       891 MB/s |         45 MB/s | __14.92 GB/s__ |
-| Farsi 🇮🇷      |        166 MB/s |      484 MB/s | __0.987 GB/s__ |        68 MB/s | __0.997 GB/s__ |               — |     0.997 GB/s |
-| French 🇫🇷     |        128 MB/s |     3.45 GB/s | __12.66 GB/s__ |      1.69 GB/s |       924 MB/s |         51 MB/s | __9.993 GB/s__ |
-| Georgian 🇬🇪   |        244 MB/s |      653 MB/s | __0.978 GB/s__ |        92 MB/s |  __1.46 GB/s__ |               — |     0.987 GB/s |
-| German 🇩🇪     |        130 MB/s |     3.51 GB/s | __15.45 GB/s__ |      1.66 GB/s |       901 MB/s |         51 MB/s | __11.90 GB/s__ |
-| Greek 🇬🇷      |        148 MB/s |      509 MB/s |  __1.19 GB/s__ |  __2.65 GB/s__ |     0.941 GB/s |         61 MB/s |      1.18 GB/s |
-| Hebrew 🇮🇱     |        160 MB/s |      485 MB/s |  __1.02 GB/s__ |        84 MB/s |       925 MB/s |               — |  __1.03 GB/s__ |
-| Hindi 🇮🇳      |        229 MB/s |      479 MB/s |   __731 MB/s__ |        93 MB/s |  __1.40 GB/s__ |               — |       726 MB/s |
-| Italian 🇮🇹    |        131 MB/s |     3.71 GB/s | __27.25 GB/s__ |      1.64 GB/s |       909 MB/s |         51 MB/s | __18.81 GB/s__ |
-| Japanese 🇯🇵   |        215 MB/s |      700 MB/s | __0.950 GB/s__ |  __4.07 GB/s__ |      1.61 GB/s |         81 MB/s |     0.969 GB/s |
-| Korean 🇰🇷     |        128 MB/s |      570 MB/s |   __824 MB/s__ |  __3.96 GB/s__ |      1.31 GB/s |         71 MB/s |       758 MB/s |
-| Polish 🇵🇱     |        123 MB/s |     3.43 GB/s | __11.00 GB/s__ |       117 MB/s |       934 MB/s |               — | __9.360 GB/s__ |
-| Portuguese 🇧🇷 |        123 MB/s |     3.71 GB/s | __18.71 GB/s__ |      1.69 GB/s |       920 MB/s |         51 MB/s | __13.26 GB/s__ |
-| Russian 🇷🇺    |        163 MB/s |      484 MB/s | __10.78 GB/s__ |        70 MB/s |     0.959 GB/s |               — |  __9.15 GB/s__ |
-| Spanish 🇪🇸    |        128 MB/s |     3.72 GB/s | __20.19 GB/s__ |      1.67 GB/s |       926 MB/s |         51 MB/s | __13.90 GB/s__ |
-| Tamil 🇮🇳      |        209 MB/s |      350 MB/s |   __526 MB/s__ |        82 MB/s |   __923 MB/s__ |               — |       508 MB/s |
-| Turkish 🇹🇷    |        114 MB/s |     3.50 GB/s | __12.65 GB/s__ |      1.78 GB/s |     0.950 GB/s |         52 MB/s | __9.937 GB/s__ |
-| Ukrainian 🇺🇦  |        160 MB/s |      515 MB/s |  __5.82 GB/s__ |        69 MB/s |     0.997 GB/s |               — |  __5.27 GB/s__ |
-| Vietnamese 🇻🇳 |        106 MB/s | __1.40 GB/s__ |       821 MB/s |        72 MB/s |   __874 MB/s__ |               — |       779 MB/s |
-
-> Measured July 29, 2026.
 
 ---
 

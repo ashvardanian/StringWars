@@ -7,20 +7,23 @@ Benchmarks for matching a __whole dictionary of needles__ against a __whole coll
 Every engine here is an Aho-Corasick automaton compiled once from the needle set and reused across every later call, so the dictionary is paid for outside the measured loop.
 What separates them is the automaton's memory layout and what the walk is allowed to report.
 
-- `stringzillas::Substrings` splits a goto-completed automaton into a dense 256-wide row per frequently-visited state and a double array for the rest, so a step is one load with no failure-following at runtime. It runs across a slice of CPU cores or a CUDA GPU, advancing many documents concurrently rather than making any single document faster.
+- `stringzilla::Substrings` splits a goto-completed automaton into a dense 256-wide row per frequently-visited state and a double array for the rest, so a step is one load with no failure-following at runtime. It runs across a slice of CPU cores or a CUDA GPU, advancing many documents concurrently rather than making any single document faster.
 - `aho-corasick` is the reference Rust implementation, benchmarked as a dense `DFA` and as a `ContiguousNFA` — the two ends of the same speed-for-memory trade the tier split makes internally.
 - `daachorse` is a double-array Aho-Corasick, the direct analog of our cold tier on its own.
 - `regex` over an alternation of escaped literals is the baseline most people actually write, and its literal prefilters make it a real competitor rather than a strawman.
 - `pyahocorasick` and `ahocorasick_rs` are the Python side's C and Rust automata.
 - `bm25`, `bm25s`, `rank_bm25`, `sklearn.TfidfVectorizer` and `cuml.TfidfVectorizer` are index-then-query scorers, present in the scoring group only. `rank_bm25` is the most installed of them, `TfidfVectorizer` is the TF-IDF reference rather than a BM25, and cuML is its GPU counterpart. No comparable GPU BM25 library exists.
 
-Throughput is reported in __MB/s of document bytes consumed__, the rate at which the automaton advances over the corpus; the tables below predate the shared harness and use decimal prefixes.
+Throughput is reported in __MB/s of document bytes consumed__, the rate at which the automaton advances over the corpus; the tables below come from the shared harness, which counts megabytes in powers of two.
+CPU rows are single-core.
+Speedup is StringZilla's speed over the alternative's, `–` marks a row without an alternative, `✗` a result that failed its check, and `⋯` an alternative not benchmarked on that chip.
+Rows are named by vocabulary slice and operation, and a row is left out where StringZilla's kernel was never measured.
 
 ## Methodology
 
 Each table fixes one input shape: `xlsum.csv` split into lines as documents, searched with one slice of that corpus's own frequency-ordered vocabulary as the dictionary.
 The vocabulary is whitespace-cut words of 3 to 32 bytes, with every term occurring once and the most frequent one percent dropped; slices are taken by term count, so the frequent and the rare slice of the same percentage hold the same number of needles and differ only in byte totals, since Zipf makes frequent terms short and their automata correspondingly shallower.
-This is the recipe `bench/substrings.cpp` uses inside StringZilla, so these numbers sit beside the cross-backend tables in `include/stringzillas/substrings/README.md` rather than floating free.
+This is the recipe `bench/substrings.cpp` uses inside StringZilla, so these numbers sit beside the cross-backend tables in `include/stringzilla/substrings/README.md` rather than floating free.
 
 Each table below fixes one vocabulary slice, so a row is an engine and a column is the question asked of it.
 
@@ -33,173 +36,123 @@ __BM25__ reduces each document to one float, weighting every needle uniformly, s
 
 Two framing rules, without which the table lies.
 
-__The head-to-head row is `<1xSPR>`.__
-Every rival is single-threaded and CPU-only, so `<16xSPR>` and `<H100>` are what the engine adds, not what it beats them by.
+__The head-to-head rows are single-core.__
+Every rival is single-threaded and CPU-only, so the multi-core and GPU runs are what the engine adds, not what it beats them by, and the tables keep only the single-core CPU rows and the GPU rows.
 
 __Scoring is scan versus index.__
-`bm25`, `bm25s`, `rank_bm25` and `sklearn.TfidfVectorizer` tokenize the corpus and build an inverted index once, then answer many queries against it; `stringzillas::Substrings` scans raw bytes against a fixed dictionary and builds nothing per query.
+`bm25`, `bm25s`, `rank_bm25` and `sklearn.TfidfVectorizer` tokenize the corpus and build an inverted index once, then answer many queries against it; `stringzilla::Substrings` scans raw bytes against a fixed dictionary and builds nothing per query.
 Build and query are therefore separate rows, and a query rate is only meaningful once the build above it has been paid for.
 The regime this engine is for is a corpus seen once — a firehose being filtered, or a candidate set handed over by a first-stage retriever — where the index does not exist yet and building it is the whole cost.
 
 Uncased matching is not benchmarked here.
-`aho-corasick`'s `ascii_case_insensitive` folds ASCII only, while `stringzillas::Substrings` applies full Unicode case folding to both sides of the comparison, so the two solve different problems.
+`aho-corasick`'s `ascii_case_insensitive` folds ASCII only, while `stringzilla::Substrings` applies full Unicode case folding to both sides of the comparison, so the two solve different problems.
 The cross-backend uncased numbers live in StringZilla's own tables.
 
-## Performance
+## Intel Xeon5 Emerald Rapids
 
-### Intel Xeon4 Sapphire Rapids & NVIDIA H100
+### Rust
 
-One run per language produced every cell: 64 MiB of `xlsum.csv` split into lines — 13,699 documents — on one Xeon Platinum 8468 and one idle H100 80GB HBM3.
-A `–` cell is an operation that engine is never asked for, not a slow result: `daachorse` has no rewrite, `regex` is only ever asked for a leftmost cover, the `aho_corasick` kind split is a counting-only knob, and the index scorers answer the scoring question alone.
-Python's `re.finditer` is the one omission that is about cost rather than coverage — see the note under __Reproducing__.
+Also benchmarked: `aho_corasick<ContiguousNFA>`, `regex::find_iter`.
 
-The five tables below cover the four walk-shaped operations.
-Scoring gets a table of its own after them, because it is the one place where a rival can answer the same question by a different route: an index engine pays a __build__ before it can answer anything, then queries cheaply, while a scan answers from raw bytes with no build at all.
-That table carries the build in one column, since a build never sees the dictionary and does not vary with the slice, and the query in one column per vocabulary size, since a query takes the slice itself and widens with it.
+| StringZilla                                           |     Speed | Speedup | Alternative           |     Speed |
+| :---------------------------------------------------- | --------: | ------: | :-------------------- | --------: |
+| `stringzilla::Substrings`, most frequent 1% count     |  500 MB/s |   2.38× | `aho_corasick<DFA>`   |  210 MB/s |
+| `stringzilla::Substrings`, most frequent 1% cover     |  282 MB/s |   1.86× | `daachorse`           |  152 MB/s |
+| `stringzilla::Substrings`, most frequent 1% find      |  380 MB/s |   3.04× | `aho_corasick`        |  125 MB/s |
+| `stringzilla::Substrings`, most frequent 1% replace   |  246 MB/s |   2.24× | `aho_corasick`        |  110 MB/s |
+| `stringzilla::Substrings`, most frequent 1% BM25      |  361 MB/s |       – | –                     |         – |
+| `stringzilla::Substrings`, most frequent 10% count    |  139 MB/s |   1.05× | `daachorse`           |  132 MB/s |
+| `stringzilla::Substrings`, most frequent 10% cover    |   80 MB/s |   0.53× | `daachorse`           |  150 MB/s |
+| `stringzilla::Substrings`, most frequent 10% find     |  106 MB/s |   1.23× | `aho_corasick`        | 86.0 MB/s |
+| `stringzilla::Substrings`, most frequent 10% replace  | 67.4 MB/s |   0.89× | `aho_corasick`        | 75.7 MB/s |
+| `stringzilla::Substrings`, most frequent 10% BM25     |   94 MB/s |       – | –                     |         – |
+| `stringzilla::Substrings`, least frequent 1% count    | 4.39 GB/s |   3.14× | `daachorse`           |  1.4 GB/s |
+| `stringzilla::Substrings`, least frequent 1% cover    | 3.30 GB/s |   2.36× | `daachorse`           |  1.4 GB/s |
+| `stringzilla::Substrings`, least frequent 1% find     | 3.85 GB/s |   7.55× | `aho_corasick`        |  510 MB/s |
+| `stringzilla::Substrings`, least frequent 1% replace  |  2.7 GB/s |   5.09× | `aho_corasick`        |  530 MB/s |
+| `stringzilla::Substrings`, least frequent 1% BM25     | 3.41 GB/s |       – | –                     |         – |
+| `stringzilla::Substrings`, least frequent 10% count   |  340 MB/s |   1.05× | `daachorse`           |  324 MB/s |
+| `stringzilla::Substrings`, least frequent 10% cover   |  253 MB/s |   0.78× | `daachorse`           |  326 MB/s |
+| `stringzilla::Substrings`, least frequent 10% find    |  301 MB/s |   1.48× | `aho_corasick`        |  203 MB/s |
+| `stringzilla::Substrings`, least frequent 10% replace |  226 MB/s |   1.26× | `aho_corasick`        |  180 MB/s |
+| `stringzilla::Substrings`, least frequent 10% BM25    |  288 MB/s |       – | –                     |         – |
+| `stringzilla::Substrings`, entire vocabulary count    | 95.3 MB/s |   1.25× | `daachorse`           | 76.0 MB/s |
+| `stringzilla::Substrings`, entire vocabulary cover    |   39 MB/s |   0.40× | `daachorse`           |   97 MB/s |
+| `stringzilla::Substrings`, entire vocabulary find     | 60.6 MB/s |   1.33× | `aho_corasick`        | 45.5 MB/s |
+| `stringzilla::Substrings`, entire vocabulary replace  |   33 MB/s |   0.76× | `aho_corasick`        | 43.2 MB/s |
+| `stringzilla::Substrings`, entire vocabulary BM25     | 48.1 MB/s |       – | –                     |         – |
 
-Three results the tables state plainly.
+> Measured October 14, 2026.
 
-__The dictionary's shape decides the single-core winner, not the engine.__
-`stringzillas::Substrings<1xSPR>` takes counting, cover and find on the frequent one percent, and `daachorse` takes counting on the other four slices — by 3.2x on the rare one percent, where its double array holds a shallow automaton that stays in cache.
-The rewrite column never goes to us on one core: `aho_corasick::replace_all_bytes` leads it on every slice, since our rewrite pays for a leftmost cover the counting path does not.
+### Python
 
-__Scoring can outrun counting on the GPU.__
-On the rare one percent the H100 scores BM25 at 47.3 GB/s against 32.2 GB/s for the count it is built on, because scoring reduces each document to one float while counting materializes a tally per needle.
+Also benchmarked: `pyahocorasick.Automaton.iter`, `bm25s.BM25.index`, `sklearn.TfidfVectorizer.fit`.
 
-__The vectorizer rows are not a like-for-like race, and their query column should not be read as one.__
-`TfidfVectorizer` lowercases and cuts tokens on `\b\w\w+\b`, so 21.5% of our needles never reach its vocabulary at all — punctuation-attached words and non-Latin scripts among them — and it answers about four fifths of the question the scan answers.
-It also matches whole tokens where the scan matches substrings anywhere in a document, and scores a TF-IDF dot product rather than BM25 with saturation.
-Its query touches an index of postings rather than the corpus, so an equal MB/s does not mean equal work; only the build column, which is one honest pass over the corpus, compares directly.
-Read those rows as the cost of the index-then-query route, not as a faster answer to the same question.
+| StringZilla                                           |     Speed | Speedup | Alternative      |     Speed |
+| :---------------------------------------------------- | --------: | ------: | :--------------- | --------: |
+| `stringzilla.Substrings`, most frequent 1% count      |  530 MB/s |   5.64× | `ahocorasick_rs` |   94 MB/s |
+| `stringzilla.Substrings`, most frequent 1% cover      |  276 MB/s |   2.79× | `ahocorasick_rs` | 98.9 MB/s |
+| `stringzilla.Substrings`, most frequent 1% find       |  380 MB/s |   4.04× | `ahocorasick_rs` |   94 MB/s |
+| `stringzilla.Substrings`, most frequent 1% replace    |  243 MB/s |       – | –                |         – |
+| `stringzilla.Substrings`, most frequent 1% BM25       |  359 MB/s |  0.033× | `bm25s.BM25`     |   11 GB/s |
+| `stringzilla.Substrings`, most frequent 10% count     |  152 MB/s |   2.76× | `ahocorasick_rs` |   55 MB/s |
+| `stringzilla.Substrings`, most frequent 10% cover     | 86.2 MB/s |   1.39× | `ahocorasick_rs` |   62 MB/s |
+| `stringzilla.Substrings`, most frequent 10% find      |  113 MB/s |   2.09× | `ahocorasick_rs` |   54 MB/s |
+| `stringzilla.Substrings`, most frequent 10% replace   | 75.3 MB/s |       – | –                |         – |
+| `stringzilla.Substrings`, most frequent 10% BM25      | 97.3 MB/s |  0.085× | `bm25s.BM25`     | 1.14 GB/s |
+| `stringzilla.Substrings`, least frequent 1% count     | 4.70 GB/s |   18.0× | `ahocorasick_rs` |  261 MB/s |
+| `stringzilla.Substrings`, least frequent 1% cover     |  3.3 GB/s |   11.6× | `ahocorasick_rs` |  285 MB/s |
+| `stringzilla.Substrings`, least frequent 1% find      |  4.1 GB/s |   16.0× | `ahocorasick_rs` |  256 MB/s |
+| `stringzilla.Substrings`, least frequent 1% replace   |  2.8 GB/s |       – | –                |         – |
+| `stringzilla.Substrings`, least frequent 1% BM25      | 3.40 GB/s |   0.30× | `bm25s.BM25`     | 11.4 GB/s |
+| `stringzilla.Substrings`, least frequent 10% count    |  376 MB/s |   2.89× | `ahocorasick_rs` |  130 MB/s |
+| `stringzilla.Substrings`, least frequent 10% cover    |  266 MB/s |   1.94× | `ahocorasick_rs` |  137 MB/s |
+| `stringzilla.Substrings`, least frequent 10% find     |  320 MB/s |   2.41× | `ahocorasick_rs` |  133 MB/s |
+| `stringzilla.Substrings`, least frequent 10% replace  |  240 MB/s |       – | –                |         – |
+| `stringzilla.Substrings`, least frequent 10% BM25     |  297 MB/s |   0.23× | `bm25s.BM25`     | 1.27 GB/s |
+| `stringzilla.Substrings`, entire vocabulary count     | 93.6 MB/s |   3.34× | `ahocorasick_rs` |   28 MB/s |
+| `stringzilla.Substrings`, entire vocabulary cover     | 39.2 MB/s |   0.87× | `ahocorasick_rs` |   45 MB/s |
+| `stringzilla.Substrings`, entire vocabulary find      |   61 MB/s |   2.10× | `ahocorasick_rs` |   29 MB/s |
+| `stringzilla.Substrings`, entire vocabulary replace   |   34 MB/s |       – | –                |         – |
+| `stringzilla.Substrings`, entire vocabulary BM25      | 48.7 MB/s |   0.44× | `bm25s.BM25`     |  110 MB/s |
 
-__The two harnesses agree where they should.__
-`stringzillas::Substrings<1xSPR>` counts at 239.8 MB/s from Rust and 240.6 MB/s from Python over the same corpus and dictionary, which is what makes the Python rivals below comparable to the Rust ones above rather than a separate table.
-Those runs predate the shared harness, and their two vocabularies differed by 16 terms out of 346,205, since the Rust side cut words on ASCII whitespace and the Python one on Unicode whitespace; both now cut on the normative `words` rule.
+> Measured October 14, 2026.
 
-### Most Frequent 1% of the Vocabulary
+## 148× Nvidia SM100
 
-| Library                            |             Count |             Cover |              Find |          Replace |
-| :--------------------------------- | ----------------: | ----------------: | ----------------: | ---------------: |
-| Rust                               |                   |                   |                   |                  |
-| `aho_corasick<DFA>`                |        181.1 MB/s |                 – |                 – |                – |
-| `aho_corasick<ContiguousNFA>`      |        106.1 MB/s |                 – |                 – |                – |
-| `aho_corasick`                     |                 – |        106.0 MB/s |        105.6 MB/s |       100.6 MB/s |
-| `daachorse`                        |        129.2 MB/s |        128.8 MB/s |                 – |                – |
-| `regex::find_iter`                 |                 – |        106.2 MB/s |                 – |                – |
-| `stringzillas::Substrings<1xSPR>`  |        239.8 MB/s |        183.6 MB/s |        112.9 MB/s |        89.1 MB/s |
-| `stringzillas::Substrings<16xSPR>` |      2,520.0 MB/s |      1,380.0 MB/s |      1,180.0 MB/s |       719.4 MB/s |
-| `stringzillas::Substrings<H100>`   | __28,610.0 MB/s__ | __21,230.0 MB/s__ | __13,130.0 MB/s__ | __8,180.0 MB/s__ |
-|                                    |                   |                   |                   |                  |
-| Python                             |                   |                   |                   |                  |
-| `pyahocorasick`                    |         23.0 MB/s |                 – |                 – |                – |
-| `ahocorasick_rs`                   |         81.9 MB/s |         84.3 MB/s |         81.2 MB/s |                – |
-| `re.finditer`                      |                 – |        188.4 kB/s |                 – |                – |
-| `stringzillas.Substrings<1xSPR>`   |        241.2 MB/s |        184.0 MB/s |         74.2 MB/s |        71.7 MB/s |
-| `stringzillas.Substrings<16xSPR>`  |      2,210.0 MB/s |      1,380.0 MB/s |        618.3 MB/s |       292.3 MB/s |
-| `stringzillas.Substrings<H100>`    | __27,360.0 MB/s__ | __19,420.0 MB/s__ |  __3,970.0 MB/s__ | __1,030.0 MB/s__ |
+### Rust
 
-### Most Frequent 10% of the Vocabulary
+| StringZilla                                        |     Speed | Speedup | Alternative | Speed |
+| :------------------------------------------------- | --------: | ------: | :---------- | ----: |
+| `stringzilla::Substrings`, most frequent 1% count  |   40 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, most frequent 1% BM25   |   20 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, most frequent 10% count |   30 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, most frequent 10% BM25  |  7.6 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, least frequent 1% count |   50 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, least frequent 1% BM25  |   60 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, least frequent 10% count |  39 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, least frequent 10% BM25 |   24 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, entire vocabulary count |   28 GB/s |       – | –           |     – |
+| `stringzilla::Substrings`, entire vocabulary BM25  | 4.17 GB/s |       – | –           |     – |
 
-| Library                            |             Count |            Cover |             Find |          Replace |
-| :--------------------------------- | ----------------: | ---------------: | ---------------: | ---------------: |
-| Rust                               |                   |                  |                  |                  |
-| `aho_corasick<DFA>`                |         54.0 MB/s |                – |                – |                – |
-| `aho_corasick<ContiguousNFA>`      |         74.0 MB/s |                – |                – |                – |
-| `aho_corasick`                     |                 – |        77.2 MB/s |        71.4 MB/s |        65.0 MB/s |
-| `daachorse`                        |        111.9 MB/s |       126.7 MB/s |                – |                – |
-| `regex::find_iter`                 |                 – |        77.4 MB/s |                – |                – |
-| `stringzillas::Substrings<1xSPR>`  |         90.8 MB/s |        65.1 MB/s |        42.5 MB/s |        30.4 MB/s |
-| `stringzillas::Substrings<16xSPR>` |        780.9 MB/s |       547.6 MB/s |       392.6 MB/s |       247.8 MB/s |
-| `stringzillas::Substrings<H100>`   | __15,220.0 MB/s__ | __8,150.0 MB/s__ | __3,810.0 MB/s__ | __4,340.0 MB/s__ |
-|                                    |                   |                  |                  |                  |
-| Python                             |                   |                  |                  |                  |
-| `pyahocorasick`                    |         15.1 MB/s |                – |                – |                – |
-| `ahocorasick_rs`                   |         47.3 MB/s |        53.3 MB/s |        50.3 MB/s |                – |
-| `stringzillas.Substrings<1xSPR>`   |         95.1 MB/s |        66.8 MB/s |        27.7 MB/s |        29.4 MB/s |
-| `stringzillas.Substrings<16xSPR>`  |        794.2 MB/s |       496.9 MB/s |       158.9 MB/s |       195.2 MB/s |
-| `stringzillas.Substrings<H100>`    | __15,230.0 MB/s__ | __8,120.0 MB/s__ |   __617.2 MB/s__ | __2,160.0 MB/s__ |
+> Measured October 14, 2026.
 
-### Least Frequent 1% of the Vocabulary
+### Python
 
-| Library                            |             Count |             Cover |              Find |          Replace |
-| :--------------------------------- | ----------------: | ----------------: | ----------------: | ---------------: |
-| Rust                               |                   |                   |                   |                  |
-| `aho_corasick<DFA>`                |        465.0 MB/s |                 – |                 – |                – |
-| `aho_corasick<ContiguousNFA>`      |        417.7 MB/s |                 – |                 – |                – |
-| `aho_corasick`                     |                 – |        435.9 MB/s |        432.0 MB/s |       430.7 MB/s |
-| `daachorse`                        |      1,170.0 MB/s |      1,070.0 MB/s |                 – |                – |
-| `regex::find_iter`                 |                 – |        440.6 MB/s |                 – |                – |
-| `stringzillas::Substrings<1xSPR>`  |        360.2 MB/s |        354.9 MB/s |        182.7 MB/s |       175.2 MB/s |
-| `stringzillas::Substrings<16xSPR>` |      4,090.0 MB/s |      4,040.0 MB/s |      2,000.0 MB/s |     2,010.0 MB/s |
-| `stringzillas::Substrings<H100>`   | __32,170.0 MB/s__ | __25,980.0 MB/s__ | __28,160.0 MB/s__ | __8,540.0 MB/s__ |
-|                                    |                   |                   |                   |                  |
-| Python                             |                   |                   |                   |                  |
-| `pyahocorasick`                    |          7.6 MB/s |                 – |                 – |                – |
-| `ahocorasick_rs`                   |        228.5 MB/s |        237.7 MB/s |        236.4 MB/s |                – |
-| `stringzillas.Substrings<1xSPR>`   |        376.4 MB/s |        360.3 MB/s |        125.9 MB/s |       157.4 MB/s |
-| `stringzillas.Substrings<16xSPR>`  |      3,680.0 MB/s |      3,420.0 MB/s |      1,340.0 MB/s |     1,010.0 MB/s |
-| `stringzillas.Substrings<H100>`    | __25,040.0 MB/s__ | __26,680.0 MB/s__ | __15,400.0 MB/s__ | __2,670.0 MB/s__ |
+| StringZilla                                        |      Speed | Speedup | Alternative | Speed |
+| :------------------------------------------------- | ---------: | ------: | :---------- | ----: |
+| `stringzilla.Substrings`, most frequent 1% count   |    56 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, most frequent 1% BM25    |  26.2 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, most frequent 10% count  |    39 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, most frequent 10% BM25   |  7.87 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, least frequent 1% count  |    68 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, least frequent 1% BM25   |  86.3 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, least frequent 10% count |    48 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, least frequent 10% BM25  |  25.8 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, entire vocabulary count  |  32.2 GB/s |       – | –           |     – |
+| `stringzilla.Substrings`, entire vocabulary BM25   | 4.233 GB/s |       – | –           |     – |
 
-### Least Frequent 10% of the Vocabulary
-
-| Library                            |             Count |             Cover |             Find |          Replace |
-| :--------------------------------- | ----------------: | ----------------: | ---------------: | ---------------: |
-| Rust                               |                   |                   |                  |                  |
-| `aho_corasick<DFA>`                |        141.2 MB/s |                 – |                – |                – |
-| `aho_corasick<ContiguousNFA>`      |        174.6 MB/s |                 – |                – |                – |
-| `aho_corasick`                     |                 – |        167.7 MB/s |       170.8 MB/s |       153.3 MB/s |
-| `daachorse`                        |        277.9 MB/s |        279.3 MB/s |                – |                – |
-| `regex::find_iter`                 |                 – |        178.1 MB/s |                – |                – |
-| `stringzillas::Substrings<1xSPR>`  |        171.5 MB/s |        150.6 MB/s |        86.1 MB/s |        73.3 MB/s |
-| `stringzillas::Substrings<16xSPR>` |      1,740.0 MB/s |      1,380.0 MB/s |       872.2 MB/s |       702.1 MB/s |
-| `stringzillas::Substrings<H100>`   | __18,050.0 MB/s__ | __11,380.0 MB/s__ | __9,660.0 MB/s__ | __4,810.0 MB/s__ |
-|                                    |                   |                   |                  |                  |
-| Python                             |                   |                   |                  |                  |
-| `pyahocorasick`                    |          5.0 MB/s |                 – |                – |                – |
-| `ahocorasick_rs`                   |        108.8 MB/s |        114.8 MB/s |       121.1 MB/s |                – |
-| `stringzillas.Substrings<1xSPR>`   |        182.2 MB/s |        153.1 MB/s |        61.2 MB/s |        75.1 MB/s |
-| `stringzillas.Substrings<16xSPR>`  |      1,250.0 MB/s |      1,140.0 MB/s |       538.3 MB/s |       423.9 MB/s |
-| `stringzillas.Substrings<H100>`    | __17,960.0 MB/s__ | __10,900.0 MB/s__ | __3,990.0 MB/s__ | __2,350.0 MB/s__ |
-
-### Entire Vocabulary
-
-| Library                            |            Count |            Cover |             Find |          Replace |
-| :--------------------------------- | ---------------: | ---------------: | ---------------: | ---------------: |
-| Rust                               |                  |                  |                  |                  |
-| `aho_corasick<DFA>`                |        24.6 MB/s |                – |                – |                – |
-| `aho_corasick<ContiguousNFA>`      |        40.9 MB/s |                – |                – |                – |
-| `aho_corasick`                     |                – |        42.3 MB/s |        40.5 MB/s |        35.7 MB/s |
-| `daachorse`                        |        65.6 MB/s |        81.4 MB/s |                – |                – |
-| `regex::find_iter`                 |                – |        49.6 MB/s |                – |                – |
-| `stringzillas::Substrings<1xSPR>`  |        43.4 MB/s |        26.7 MB/s |        22.2 MB/s |        14.4 MB/s |
-| `stringzillas::Substrings<16xSPR>` |       552.6 MB/s |       315.7 MB/s |       248.1 MB/s |       145.0 MB/s |
-| `stringzillas::Substrings<H100>`   | __9,310.0 MB/s__ | __4,000.0 MB/s__ | __1,670.0 MB/s__ | __2,020.0 MB/s__ |
-|                                    |                  |                  |                  |                  |
-| Python                             |                  |                  |                  |                  |
-| `pyahocorasick`                    |         8.1 MB/s |                – |                – |                – |
-| `ahocorasick_rs`                   |        24.2 MB/s |        32.3 MB/s |        25.4 MB/s |                – |
-| `stringzillas.Substrings<1xSPR>`   |        62.6 MB/s |        41.1 MB/s |        13.4 MB/s |        17.2 MB/s |
-| `stringzillas.Substrings<16xSPR>`  |       602.5 MB/s |       264.0 MB/s |       101.0 MB/s |       145.7 MB/s |
-| `stringzillas.Substrings<H100>`    | __8,740.0 MB/s__ | __3,780.0 MB/s__ |   __255.0 MB/s__ | __1,340.0 MB/s__ |
-
-### BM25 Scoring Across Vocabulary Sizes
-
-| Library                            | Index Build |  Most Frequent 1% | Most Frequent 10% | Least Frequent 1% | Least Frequent 10% | Entire Vocabulary |
-| :--------------------------------- | ----------: | ----------------: | ----------------: | ----------------: | -----------------: | ----------------: |
-| Rust                               |             |                   |                   |                   |                    |                   |
-| `stringzillas::Substrings<1xSPR>`  |           – |        214.5 MB/s |         73.3 MB/s |        366.2 MB/s |         165.5 MB/s |         36.6 MB/s |
-| `stringzillas::Substrings<16xSPR>` |           – |      2,300.0 MB/s |        702.8 MB/s |      3,910.0 MB/s |       1,530.0 MB/s |        375.2 MB/s |
-| `stringzillas::Substrings<H100>`   |           – | __20,870.0 MB/s__ |  __8,460.0 MB/s__ | __47,270.0 MB/s__ |  __17,130.0 MB/s__ |  __4,460.0 MB/s__ |
-| `bm25::Scorer`                     |   13.6 MB/s |          5.6 MB/s |        518.0 kB/s |          5.9 MB/s |         474.9 kB/s |                 – |
-|                                    |             |                   |                   |                   |                    |                   |
-| Python                             |             |                   |                   |                   |                    |                   |
-| `stringzillas.Substrings<1xSPR>`   |           – |        218.6 MB/s |         88.5 MB/s |        377.0 MB/s |         191.8 MB/s |         45.9 MB/s |
-| `stringzillas.Substrings<16xSPR>`  |           – |      2,180.0 MB/s |        685.9 MB/s |      3,740.0 MB/s |       1,660.0 MB/s |        481.0 MB/s |
-| `stringzillas.Substrings<H100>`    |           – |     29,010.0 MB/s |     12,200.0 MB/s | __49,860.0 MB/s__ |      23,180.0 MB/s |      7,120.0 MB/s |
-| `bm25s.BM25`                       |   15.7 MB/s |      8,730.0 MB/s |        854.6 MB/s |      9,480.0 MB/s |         972.7 MB/s |         85.7 MB/s |
-| `rank_bm25.BM25Okapi`              |   19.8 MB/s |          6.1 MB/s |        633.2 kB/s |          6.5 MB/s |         631.8 kB/s |         64.8 kB/s |
-| `sklearn.TfidfVectorizer`          |   14.5 MB/s |      3,340.0 MB/s |      1,740.0 MB/s |      5,250.0 MB/s |       3,810.0 MB/s |      2,100.0 MB/s |
-| `cuml.TfidfVectorizer<H100>`       |  343.1 MB/s | __39,610.0 MB/s__ | __25,130.0 MB/s__ |     35,440.0 MB/s |  __30,290.0 MB/s__ |  __9,820.0 MB/s__ |
+> Measured October 14, 2026.
 
 ## Reproducing
 
@@ -225,13 +178,13 @@ uv run --group substrings substrings/bench.py
 
 ```sh
 STRINGWARS_FILTER='cover-most_frequent_1%' cargo bench --features bench_substrings --bench bench_substrings
-STRINGWARS_FILTER='stringzillas' uv run --group substrings substrings/bench.py
+STRINGWARS_FILTER='stringzilla' uv run --group substrings substrings/bench.py
 ```
 
 A note on the Python numbers: `pyahocorasick` and `ahocorasick_rs` return one Python object per match, so a dense dictionary charges them interpreter overhead the byte-level engines never pay, and their gap widens with the match count rather than with the corpus size.
-`stringzillas.Substrings` returns NumPy arrays, so its per-match cost stays in C.
+`stringzilla.Substrings` returns NumPy arrays, so its per-match cost stays in C.
 
 `re.finditer` carries no cell in the tables above, and the code measures it on the narrowest dictionary alone.
-Python's `re` walks an alternation branch by branch with no literal prefilter, so at 3,462 needles a single pass over 64 MiB ran past twelve minutes without finishing — under 0.09 MB/s, roughly 1,200x behind Rust's `regex` on the same slice.
+Python's `re` walks an alternation branch by branch with no literal prefilter, so at 3,462 needles a single pass over 64 MiB ran past twelve minutes without finishing, so those rows are omitted.
 Rust's `regex` carries such a prefilter and sweeps all five slices, which is the comparison worth drawing.
 Reproduce the Python row with a smaller `STRINGWARS_BYTES`, where it costs seconds rather than hours.
