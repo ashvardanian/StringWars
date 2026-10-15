@@ -267,6 +267,42 @@ fn perform_uniform_benchmarks(
         },
     );
 
+    // The most depended-upon edit-distance crate, checked against the engine on the same pairs.
+    let name = "uniform/strsim::levenshtein<Chars,1cpu>";
+    if settings.selects(name) {
+        let cpu = Stream::default(Capabilities::cpu_enabled());
+        let (queries, candidates) = crossproduct_halves(tape_bytes_view, baseline_side);
+        let mut engine = expect_ok(LevenshteinEngine::new(
+            &queries,
+            LevenshteinSymbol::Runes,
+            &cpu,
+        ));
+        let mut distances = vec![0usize; baseline_side * baseline_side];
+        expect_ok(cpu.scope(|scope| {
+            let candidates = StringsView::from_slices(&candidates);
+            engine.distances(scope, candidates, &mut distances, baseline_side)
+        }));
+        let pair = |index: usize| (&chars_view[index], &chars_view[baseline_side + index]);
+        assert!(
+            (0..baseline_side).all(|index| {
+                let (query, candidate) = pair(index);
+                strsim::levenshtein(query, candidate) == distances[index * baseline_side + index]
+            }),
+            "{name} disagrees with StringZilla"
+        );
+        measure(
+            settings,
+            name,
+            MeasureSpec::new(Unit::Cups, baseline_chars_work),
+            || {
+                for index in 0..baseline_side {
+                    let (query, candidate) = pair(index);
+                    std::hint::black_box(strsim::levenshtein(query, candidate));
+                }
+            },
+        );
+    }
+
     for (symbol, label) in [
         (LevenshteinSymbol::Bytes, "Bytes"),
         (LevenshteinSymbol::Runes, "Runes"),

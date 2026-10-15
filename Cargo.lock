@@ -4793,6 +4793,7 @@ dependencies = [
  "sodiumoxide",
  "stringtape",
  "stringzilla",
+ "strsim 0.11.1",
  "toml",
  "twox-hash",
  "unicase",

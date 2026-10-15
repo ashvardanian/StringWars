@@ -14,6 +14,7 @@ import Crypto as pycryptodome
 import cv2
 import numpy as np
 import pyarrow
+import pyarrow.compute
 import stringzilla as sz
 from Crypto.Cipher import AES as PyCryptoDomeAES
 
@@ -212,6 +213,25 @@ def main() -> int:
     column = sz.Strings(tokens_b)
     column_work = MeasureSpec(unit="bytes", elements=dataset.token_count, total_bytes=dataset.token_bytes)
     measure(settings, "lookup-table/stringzilla.Strings.translate", column_work, lambda: column.translate(reverse))
+
+    # A byte table is a gather of its 256 entries by every byte, so `take` maps the values buffer and the
+    # column keeps its offsets.
+    name = "lookup-table/pyarrow.compute.take"
+    if settings.selects(name):
+        arrow_column = pyarrow.array(tokens_b, type=pyarrow.binary())
+        _, arrow_offsets, arrow_values = arrow_column.buffers()
+        arrow_bytes = pyarrow.Array.from_buffers(pyarrow.uint8(), int(dataset.token_bytes), [None, arrow_values])
+        arrow_table = pyarrow.array(reverse_np)
+
+        def arrow_translate() -> pyarrow.Array:
+            mapped = pyarrow.compute.take(arrow_table, arrow_bytes)
+            return pyarrow.Array.from_buffers(
+                pyarrow.binary(), len(arrow_column), [None, arrow_offsets, mapped.buffers()[1]]
+            )
+
+        if arrow_translate().to_pylist() != list(map(bytes, column.translate(reverse))):
+            raise SystemExit(f"{name} disagrees with StringZilla")
+        measure(settings, name, column_work, arrow_translate)
 
     # Gathering a whole column into one tape of bytes and offsets, the column-level copy
     print()

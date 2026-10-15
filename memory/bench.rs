@@ -12,7 +12,9 @@ use std::hint::black_box;
 use std::process::ExitCode;
 use std::ptr;
 
-use arrow::array::BinaryArray;
+use arrow::array::{AsArray, BinaryArray, UInt8Array};
+use arrow::compute::take;
+use arrow::datatypes::UInt8Type;
 use rand::{Rng, SeedableRng};
 use stringzilla::sz;
 use stringzilla::sz::{Capabilities, Stream, Strings, StringsView};
@@ -111,6 +113,32 @@ fn bench_lookup_table(settings: &Settings, tokens: &mut [&mut [u8]]) {
             black_box(expect_ok(column.lookup_in(&lookup_invert_case, Global, &cpu)));
         },
     );
+
+    // A byte table is a gather of its 256 entries by every byte, so `take` maps the values buffer
+    // and the column keeps its offsets.
+    let name = "lookup-table/arrow::compute::take";
+    if settings.selects(name) {
+        let table = UInt8Array::from(lookup_invert_case.to_vec());
+        let column = BinaryArray::from_iter_values(sources.iter().copied());
+        let bytes = UInt8Array::new(column.values().clone().into(), None);
+        let lookup = || {
+            let mapped = expect_ok(take(&table, &bytes, None));
+            let values = mapped.as_primitive::<UInt8Type>().values().inner().clone();
+            BinaryArray::new(column.offsets().clone(), values, None)
+        };
+        let expected = expect_ok(StringsView::from_slices(&sources).lookup_in(
+            &lookup_invert_case,
+            Global,
+            &cpu,
+        ));
+        assert!(
+            expected.view().iter().eq(lookup().iter().flatten()),
+            "{name} disagrees with StringZilla"
+        );
+        measure(settings, name, MeasureSpec::new(Unit::Bytes, pass), || {
+            black_box(lookup());
+        });
+    }
 }
 
 /// Benchmarks random-string generation, filling one token per call and cycling the dataset.

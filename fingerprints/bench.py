@@ -1,7 +1,9 @@
 """MinHash fingerprinting and exact window-overlap benchmarks in Python. Mirrors `fingerprints/bench.rs`.
 
 StringZilla v6 has no MinHash engine, so its MinHash rows are noted as unavailable, and its
-`OverlapEngine` scores the exact n-gram overlap that MinHash estimates.
+`OverlapEngine` scores the exact n-gram overlap that MinHash estimates. scikit-learn's sparse window
+counts reproduce those scores, and cuDF's `jaccard_index` scores the same pairs under Jaccard's
+normalization.
 
 Run from the repository root, configured only through `STRINGWARS_*` variables:
 
@@ -18,6 +20,7 @@ from typing import Any
 import numpy as np
 import stringzilla as sz
 from datasketch import MinHash
+from sklearn.feature_extraction.text import CountVectorizer
 
 from stringwars import (
     Bytes,
@@ -123,6 +126,17 @@ def benchmark_overlap(settings: Settings, dataset: Dataset) -> None:
         finally:
             sz.cuda_stream_free(stream)
 
+    name = "overlap/sklearn.CountVectorizer<1cpu>"
+    if settings.selects(name):
+        benchmark_overlap_sklearn(settings, name, dataset.tokens[: len(queries)], dataset.tokens, work)
+
+    for ordinal in gpu_ordinals(settings):
+        name = f"overlap/cudf.Series.str.jaccard_index<aligned,cuda:{ordinal}>"
+        if not CUDF_AVAILABLE:
+            note_unavailable(name, "cudf not installed")
+        elif settings.selects(name) and gpu_require(settings, ordinal):
+            benchmark_overlap_cudf(settings, name, documents[: len(queries)], documents, work)
+
 
 def benchmark_overlap_gpu(
     settings: Settings,
@@ -156,6 +170,92 @@ def benchmark_overlap_gpu(
     if not np.allclose(scores, expected, atol=1e-4):
         raise SystemExit(f"{name} disagrees with the host engine on its first round")
     measure(settings, name, work, one_round)
+
+
+def byte_windows(width: int, text: str) -> list[str]:
+    """Every `width`-character window of `text`, which spells bytes when the text is decoded as Latin-1."""
+    return [text[offset : offset + width] for offset in range(len(text) - width + 1)]
+
+
+def sklearn_overlap(queries: list[bytes]) -> Callable[[list[str], np.ndarray], None]:
+    """The shares `OverlapEngine` reports, from scikit-learn's sparse window counts.
+
+    The product `Q × Cᵀ` of the queries' binary window indicators and the candidates' window counts is how
+    many of a candidate's windows occur among a query's distinct ones, the engine's numerator, and the
+    longer side's window count is its denominator. Candidates arrive Latin-1 decoded, one character per
+    byte, so the character windows are the engine's byte windows.
+    """
+    query_lengths = np.fromiter(map(len, queries), dtype=np.int64, count=len(queries))
+    query_texts = [query.decode("latin-1") for query in queries]
+    stages = []
+    for width in NGRAM_WIDTHS:
+        # A callable analyzer, as `analyzer="char"` collapses the whitespace runs byte windows keep.
+        windows = functools.partial(byte_windows, width)
+        indicators = CountVectorizer(analyzer=windows, binary=True)
+        query_matrix = indicators.fit_transform(query_texts)
+        counter = CountVectorizer(analyzer=windows, vocabulary=indicators.vocabulary_)
+        stages.append((width, query_matrix, counter))
+
+    def scores_into(candidates: list[str], scores: np.ndarray) -> None:
+        lengths = np.fromiter(map(len, candidates), dtype=np.int64, count=len(candidates))
+        for index, (width, query_matrix, counter) in enumerate(stages):
+            matches = (query_matrix @ counter.transform(candidates).T).toarray()
+            longer = np.maximum.outer(np.maximum(query_lengths - width + 1, 0), np.maximum(lengths - width + 1, 0))
+            np.divide(matches, longer, out=scores[:, :, index], where=longer > 0)
+
+    return scores_into
+
+
+def benchmark_overlap_sklearn(
+    settings: Settings, name: str, queries: list[bytes], documents: list[bytes], work: MeasureSpec
+) -> None:
+    """scikit-learn's exact window overlap, checked against `OverlapEngine` over the first candidates."""
+    try:
+        scores_into = sklearn_overlap(queries)
+    except ValueError as error:  # a width past every query leaves its vocabulary empty
+        note_unavailable(name, str(error))
+        return
+    candidates = [document.decode("latin-1") for document in documents]
+    probe = documents[:1024]
+    expected = np.zeros((len(queries), len(probe), len(NGRAM_WIDTHS)), dtype=np.float32)
+    sz.OverlapEngine(sz.Strings(queries), NGRAM_WIDTHS).scores(sz.Strings(probe), expected)
+    actual = np.zeros_like(expected)
+    scores_into(candidates[: len(probe)], actual)
+    # StringZilla hashes windows into 32 bits, so a rare collision adds a match the exact count lacks.
+    if np.mean(np.isclose(actual, expected, atol=1e-4)) < 0.999:
+        raise SystemExit(f"{name} disagrees with StringZilla over the first {len(probe)} candidates")
+    scores = np.zeros((len(queries), len(candidates), len(NGRAM_WIDTHS)), dtype=np.float32)
+    measure(settings, name, work, functools.partial(scores_into, candidates, scores))
+
+
+def benchmark_overlap_cudf(
+    settings: Settings, name: str, queries: list[str], documents: list[str], work: MeasureSpec
+) -> None:
+    """cuDF's character n-gram Jaccard index over the same query and candidate pairs, laid out as aligned
+    rows since it scores pairs rather than a cross product, its first round checked against `OverlapEngine`."""
+    import cupy as cp
+
+    left = cudf.Series(queries).repeat(len(documents))
+    right = cudf.concat([cudf.Series(documents)] * len(queries), ignore_index=True)
+
+    def one_pass() -> list[Any]:
+        indices = [left.str.jaccard_index(right, width) for width in NGRAM_WIDTHS]
+        cp.cuda.runtime.deviceSynchronize()
+        return indices
+
+    try:
+        first = one_pass()
+    except Exception as error:  # cuDF raises its own types for an unusable device or kernel
+        note_unavailable(name, f"{type(error).__name__}: {error}")
+        return
+    shape = (len(queries), len(documents), len(NGRAM_WIDTHS))
+    jaccard = np.stack([index.to_numpy() for index in first], axis=-1).reshape(shape)
+    expected = np.zeros(shape, dtype=np.float32)
+    sz.OverlapEngine(sz.Strings(queries), NGRAM_WIDTHS).scores(sz.Strings(documents), expected)
+    # Jaccard normalizes differently, so only the pairs sharing no window must agree, up to hash collisions.
+    if np.mean((jaccard > 0) == (expected > 0)) < 0.999:
+        raise SystemExit(f"{name} disagrees with StringZilla on its first round")
+    measure(settings, name, work, one_pass)
 
 
 def benchmark_datasketch(
@@ -233,6 +333,7 @@ def main() -> int:
     libraries = {
         "StringZilla": f"{sz.__version__} with {sz.cpu_capabilities_enabled().name}",
         "DataSketch": pkg_version("datasketch"),
+        "scikit-learn": pkg_version("scikit-learn"),
     }
     if CUDF_AVAILABLE:
         libraries["cuDF"] = cudf.__version__

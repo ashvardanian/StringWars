@@ -90,6 +90,7 @@ bench_sequence = [
 ]
 bench_similarities = [
   "rapidfuzz", # Levenshtein distance
+  "strsim",    # Levenshtein distance, the most depended-upon crate
   "bio",       # Needleman-Wunsch score
   "forkunion", # One edit-distance engine per pool thread
 ]
@@ -189,6 +190,10 @@ version = "0.2.11"
 [dependencies.rapidfuzz]
 optional = true
 version = "0.5.0"
+
+[dependencies.strsim]
+optional = true
+version = "0.11.1"
 
 [dependencies.forkunion]
 optional = true

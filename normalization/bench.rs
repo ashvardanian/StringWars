@@ -68,6 +68,25 @@ fn bench_case_fold(settings: &Settings, haystack: &[u8]) {
             black_box(lowered);
         },
     );
+
+    let name = "case-fold/icu::CaseMapper::fold_string";
+    if settings.selects(name) {
+        let case_mapper = CaseMapper::new();
+        let length = expect_ok(sz::utf8_uncased_fold(haystack, &mut fold_buffer));
+        assert_eq!(
+            case_mapper.fold_string(haystack_str).as_bytes(),
+            &fold_buffer[..length],
+            "{name} disagrees with StringZilla"
+        );
+        measure(
+            settings,
+            name,
+            MeasureSpec::new(Unit::Bytes, WorkUnits::bytes(haystack_length)),
+            || {
+                black_box(case_mapper.fold_string(black_box(haystack_str)));
+            },
+        );
+    }
 }
 /// Benchmarks Unicode normalization (NFC / NFD / NFKC / NFKD) throughput.
 ///
@@ -305,6 +324,35 @@ fn bench_case_insensitive_compare(settings: &Settings, needles: &[&[u8]]) {
                 for &(left_str, right_str) in pairs_str.iter() {
                     let equal = left_str.to_lowercase() == right_str.to_lowercase();
                     black_box(equal);
+                }
+            },
+        );
+    }
+
+    let name = "case-insensitive-compare/icu::CaseMapper::fold_string.eq";
+    if settings.selects(name) {
+        let case_mapper = CaseMapper::new();
+        let fold_equal = |(left, right): &(&str, &str)| {
+            case_mapper.fold_string(left) == case_mapper.fold_string(right)
+        };
+        let expected = pairs
+            .iter()
+            .filter(|(left, right)| {
+                sz::utf8_uncased_order(left, right) == std::cmp::Ordering::Equal
+            })
+            .count();
+        assert_eq!(
+            pairs_str.iter().filter(|&pair| fold_equal(pair)).count(),
+            expected,
+            "{name} disagrees with StringZilla"
+        );
+        measure(
+            settings,
+            name,
+            MeasureSpec::new(Unit::Bytes, pair_work),
+            || {
+                for pair in pairs_str.iter() {
+                    black_box(fold_equal(pair));
                 }
             },
         );
