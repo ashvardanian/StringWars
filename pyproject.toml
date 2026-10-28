@@ -7,7 +7,7 @@ license = { text = "Apache 2.0" }
 name = "stringwars"
 readme = "README.md"
 requires-python = ">=3.13"
-version = "1.8.3"
+version = "6.0.0-rc.1"
 
 dependencies = []
 

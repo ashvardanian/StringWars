@@ -11,7 +11,7 @@ readme = "README.md"
 repository = "https://github.com/ashvardanian/StringWars"
 # The standard `Allocator` API that places GPU batches in unified memory is stable since 1.100.
 rust-version = "1.100"
-version = "1.8.3"
+version = "6.0.0-rc.1"
 
 # The harness is a real library target rather than a `#[path]` include, so it
 # compiles once instead of ten times, `pub` means something, and the normative

@@ -1206,7 +1206,7 @@ wheels = [
 
 [[package]]
 name = "stringwars"
-version = "1.8.3"
+version = "6.0.0rc1"
 source = { editable = "." }
 
 [package.dev-dependencies]
