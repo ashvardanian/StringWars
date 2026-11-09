@@ -26,7 +26,7 @@ doc = false
 stringtape = "2.4.1"
 
 # A local checkout overrides it through a `[patch]` table in the gitignored `.cargo/config.toml`.
-stringzilla = { version = "6.0.0-rc.1", default-features = false }
+stringzilla = { version = "6.0.0-rc.1", git = "https://github.com/ashvardanian/StringZilla", default-features = false }
 
 # Feature-based dependencies for benchmarks
 [features]
@@ -197,6 +197,7 @@ version = "0.11.1"
 [dependencies.forkunion]
 optional = true
 version = "4.0.0-rc.1"
+git = "https://github.com/ashvardanian/ForkUnion"
 
 [dependencies.fancy-regex]
 optional = true

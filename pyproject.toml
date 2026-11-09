@@ -3,7 +3,7 @@ authors = [
   { name = "Ash Vardanian", email = "1983160+ashvardanian@users.noreply.github.com" },
 ]
 description = "Comparing performance-oriented string-processing libraries for substring search, multi-pattern matching, hashing, edit-distances, sketching, and sorting across CPUs and GPUs in Python 🐍"
-license = { text = "Apache 2.0" }
+license = "Apache-2.0"
 name = "stringwars"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -30,6 +30,7 @@ hash = [
   "numpy>=2.5.1",
   "xxhash>=3.8.1",
 ]
+# OpenCV (memory) and Polars (sequence) have no free-threaded wheels yet: `uv run --python 3.15 --group <suite>`.
 memory = ["stringzilla>=6.0.0-rc.1", "numpy>=2.5.1", "opencv-python>=5.0.0.93", "pyarrow>=25.0.0", "pycryptodome>=3.23.0"]
 normalization = ["stringzilla>=6.0.0-rc.1", "pyicu>=2.16.2", "pyunormalize>=17.0.0", "regex>=2025.11.3"]
 regex = ["stringzilla>=6.0.0-rc.1", "google-re2>=1.1.20251105", "hyperscan>=0.9.1", "numpy>=2.5.1", "regex>=2025.11.3"]
@@ -108,3 +109,6 @@ target-version = ["py313"]
 [build-system]
 build-backend = "hatchling.build"
 requires = ["hatchling>=1.21.1"]
+
+[tool.uv.sources]
+stringzilla = { git = "https://github.com/ashvardanian/StringZilla", branch = "main-v6" }
